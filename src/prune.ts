@@ -26,7 +26,9 @@ export function prune(
   const anchors = inject ? collectSummaryAnchors(state, indexById) : [];
 
   return stripOrphanedToolResults(
-    rebuildMessages(messages, covered, firstUserIndex, anchors),
+    stripOrphanedToolCalls(
+      rebuildMessages(messages, covered, firstUserIndex, anchors),
+    ),
   );
 }
 
@@ -115,5 +117,21 @@ function stripOrphanedToolResults(messages: CoreMessage[]): CoreMessage[] {
       m.contentType !== "tool-result" ||
       !m.toolCallId ||
       knownCallIds.has(m.toolCallId),
+  );
+}
+
+function stripOrphanedToolCalls(messages: CoreMessage[]): CoreMessage[] {
+  const knownResultIds = new Set<string>();
+  for (const m of messages) {
+    if (m.contentType === "tool-result" && m.toolCallId) {
+      knownResultIds.add(m.toolCallId);
+    }
+  }
+  return messages.filter(
+    (m) =>
+      m.contentType !== "tool-call" ||
+      !m.toolCallId ||
+      m.toolName === "compress" ||
+      knownResultIds.has(m.toolCallId),
   );
 }

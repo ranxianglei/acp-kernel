@@ -16,6 +16,7 @@ import { collectOldGenBlocks, mergeMarkedBlocks } from "./merge.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
 import { renderRefsNode } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
+import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import {
   computeProtectedRefs,
   buildCompressibleRanges,
@@ -477,6 +478,11 @@ function applySingleRange(input: SingleRangeInput): number {
     state: input.state,
   });
 
+  const rangeMessageIds = applyToolPairAdjustment(
+    resolved,
+    input.messages,
+  );
+
   const isBlockBoundary = resolved.boundaryKind === "block";
   const targetTier = resolveTargetTier(
     input.state,
@@ -492,7 +498,7 @@ function applySingleRange(input: SingleRangeInput): number {
     return block?.active && block.tier === targetTier;
   });
 
-  const effectiveMessageIds = new Set<string>(resolved.messageIds);
+  const effectiveMessageIds = new Set<string>(rangeMessageIds);
   for (const consumedId of consumedBlockIds) {
     const consumed = blockById(input.state, consumedId);
     if (consumed) {
@@ -562,6 +568,32 @@ function applySingleRange(input: SingleRangeInput): number {
   }
 
   return compressedTokens;
+}
+
+function applyToolPairAdjustment(
+  resolved: { startIndex: number; endIndex: number; messageIds: string[]; boundaryKind: string },
+  messages: CoreMessage[],
+): string[] {
+  if (resolved.boundaryKind === "block") {
+    return resolved.messageIds;
+  }
+  const adjusted = adjustBoundariesForToolPairs(
+    resolved.startIndex,
+    resolved.endIndex,
+    messages,
+  );
+  if (
+    adjusted.startIndex === resolved.startIndex &&
+    adjusted.endIndex === resolved.endIndex
+  ) {
+    return resolved.messageIds;
+  }
+  const ids: string[] = [];
+  for (let i = adjusted.startIndex; i <= adjusted.endIndex; i++) {
+    const msg = messages[i];
+    if (msg) ids.push(msg.id);
+  }
+  return ids;
 }
 
 function validateCompressionRange(

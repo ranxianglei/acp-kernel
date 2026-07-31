@@ -1,0 +1,849 @@
+import { assignRefs, highestUsedIndex } from "./refs.js";
+import { prune } from "./prune.js";
+import { syncBlocks } from "./sync.js";
+import { advanceSurvival, activeBlocks, blockById } from "./state.js";
+import {
+  allocateBlockId,
+  allocateRunId,
+  createInitialState,
+} from "./state.js";
+import { defaultCountTokens } from "./tokenize.js";
+import { validateConfig } from "./config.js";
+import { resolveBoundaries } from "./boundaries.js";
+import { truncateLargeToolOutputs } from "./truncate-tools.js";
+import { hideConsumedCompressCalls } from "./hide-consumed.js";
+import { collectOldGenBlocks, mergeMarkedBlocks } from "./merge.js";
+import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
+import { renderRefsNode } from "./render-refs.js";
+import { isMessageProtected } from "./protected.js";
+import {
+  computeProtectedRefs,
+  buildCompressibleRanges,
+} from "./recommend.js";
+import {
+  runPipeline,
+  type PipelineContext,
+  type PipelineNode,
+  type NodeIO,
+} from "./pipeline.js";
+import type {
+  ApplyCompressionResult,
+  CompressionBlock,
+  CompressionState,
+  CompressionTier,
+  Config,
+  ContextBreakdown,
+  CoreMessage,
+  NudgeConfig,
+  NudgeDecision,
+  ProcessTurnResult,
+  Recommendation,
+  StatusReport,
+} from "./types.js";
+
+export interface Ports {
+  countTokens?: (text: string) => number;
+}
+
+export interface CompressionCore {
+  processTurn(input: ProcessTurnInput): ProcessTurnResult;
+  applyCompression(input: ApplyCompressionInput): ApplyCompressionResult;
+  defaultNodes(): PipelineNode[];
+  decompress(
+    blockId: string,
+    state: CompressionState,
+  ): CompressionBlock | undefined;
+  search(query: string, state: CompressionState): CompressionBlock[];
+  status(
+    state: CompressionState,
+    tokenCount: number,
+    config: Config,
+  ): StatusReport;
+}
+
+export interface ProcessTurnInput {
+  messages: CoreMessage[];
+  state: CompressionState;
+  config: Config;
+  tokenCount: number;
+}
+
+export interface ApplyCompressionInput {
+  ranges: {
+    startRef: string;
+    endRef: string;
+    summary: string;
+    topic?: string;
+    compressCallId?: string;
+    summaryMaxChars?: number;
+  }[];
+  messages: CoreMessage[];
+  state: CompressionState;
+  config: Config;
+  protectedMessageIds?: Set<string>;
+}
+
+export function createCore(ports: Ports = {}): CompressionCore {
+  const countTokens = ports.countTokens ?? defaultCountTokens;
+
+  function applyCompression(
+    input: ApplyCompressionInput,
+  ): ApplyCompressionResult {
+    const state: CompressionState = cloneState(input.state);
+    const runId = allocateRunId(state);
+    let blocksCreated = 0;
+    let tokensCompressed = 0;
+    const errors: string[] = [];
+
+    const preExistingCoverage = collectCoverage(state);
+
+    const rangeIndexSets: { spec: typeof input.ranges[number]; indices: number[] }[] = [];
+    for (const spec of input.ranges) {
+      let resolved;
+      try {
+        resolved = resolveBoundaries({
+          startRef: spec.startRef,
+          endRef: spec.endRef,
+          messages: input.messages,
+          state,
+        });
+      } catch {
+        continue;
+      }
+      const indices = resolved.messageIds.map((id) =>
+        input.messages.findIndex((m) => m.id === id),
+      ).filter((i) => i >= 0);
+      rangeIndexSets.push({ spec, indices });
+    }
+    const sortedRanges = [...rangeIndexSets].sort((a, b) => {
+      const aMin = a.indices.length > 0 ? Math.min(...a.indices) : Infinity;
+      const bMin = b.indices.length > 0 ? Math.min(...b.indices) : Infinity;
+      return aMin - bMin;
+    });
+    for (let i = 1; i < sortedRanges.length; i++) {
+      const prev = sortedRanges[i - 1]!;
+      const curr = sortedRanges[i]!;
+      const prevMax = prev.indices.length > 0 ? Math.max(...prev.indices) : -1;
+      const currMin = curr.indices.length > 0 ? Math.min(...curr.indices) : -1;
+      if (prevMax >= currMin && prevMax >= 0) {
+        return {
+          state: input.state,
+          result: {
+            blocksCreated: 0,
+            tokensCompressed: 0,
+            errors: [
+              `content: range (${prev.spec.startRef}..${prev.spec.endRef}) overlaps (${curr.spec.startRef}..${curr.spec.endRef}). Overlapping ranges cannot be compressed in the same batch.`,
+            ],
+          },
+        };
+      }
+    }
+
+    if (input.config.compress.minCompressRange > 0 && input.ranges.length > 0) {
+      let totalRangeChars = 0;
+      let hasBlockBoundaryRange = false;
+      for (const spec of input.ranges) {
+        let resolved;
+        try {
+          resolved = resolveBoundaries({
+            startRef: spec.startRef,
+            endRef: spec.endRef,
+            messages: input.messages,
+            state,
+          });
+        } catch {
+          continue;
+        }
+        if (resolved.boundaryKind === "block") {
+          hasBlockBoundaryRange = true;
+          continue;
+        }
+        for (const id of resolved.messageIds) {
+          const msg = input.messages.find((m) => m.id === id);
+          totalRangeChars += msg?.text?.length ?? 0;
+        }
+      }
+      if (!hasBlockBoundaryRange && totalRangeChars < input.config.compress.minCompressRange) {
+        return {
+          state: input.state,
+          result: {
+            blocksCreated: 0,
+            tokensCompressed: 0,
+            errors: [
+              `Total compressible content too small (${totalRangeChars} chars across ${input.ranges.length} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`,
+            ],
+          },
+        };
+      }
+    }
+
+    for (const spec of input.ranges) {
+      try {
+        const compressed = applySingleRange({
+          spec,
+          messages: input.messages,
+          state,
+          runId,
+          config: input.config,
+          protectedMessageIds: input.protectedMessageIds,
+          countTokens,
+          preExistingCoverage,
+        });
+        blocksCreated++;
+        tokensCompressed += compressed;
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    state.stats.compressionCount += blocksCreated;
+    state.stats.tokensCompressed += tokensCompressed;
+
+    if (blocksCreated > 0) {
+      // Compress succeeded: clear the growth baseline so the next turn
+      // re-establishes it at the new (lower) token count. Without this the
+      // nudge re-fires in a feedback loop (the §5.7 baseline-reset bug).
+      state.nudge.lastPerMessageNudgeTokens = 0;
+      state.nudge.lastNudgeShownTokens = 0;
+    }
+
+    return { state, result: { blocksCreated, tokensCompressed, errors } };
+  }
+
+  function processTurn(input: ProcessTurnInput): ProcessTurnResult {
+    const configErrors = validateConfig(input.config);
+    if (configErrors.length > 0) {
+      console.warn(`[acp-kernel] Config validation warnings: ${configErrors.join("; ")}. Thresholds may not fire correctly.`);
+    }
+    const ctx: PipelineContext = {
+      config: input.config,
+      tokenCount: input.tokenCount,
+      countTokens,
+    };
+    const initial: NodeIO = {
+      messages: input.messages,
+      state: input.state,
+      effects: {},
+    };
+    const result = runPipeline(defaultNodes(), initial, ctx);
+    return {
+      messages: result.messages,
+      state: result.state,
+      nudge: result.effects.nudge,
+    };
+  }
+
+  function decompress(blockId: string, state: CompressionState) {
+    return blockById(state, blockId);
+  }
+
+  function search(query: string, state: CompressionState): CompressionBlock[] {
+    const terms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((term) => term.length > 0);
+    if (terms.length === 0) return [];
+    const scored = activeBlocks(state)
+      .map((block) => ({ block, score: scoreRelevance(block, terms) }))
+      .filter((entry) => entry.score > 0.1)
+      .sort((left, right) => right.score - left.score);
+    return scored.map((entry) => entry.block);
+  }
+
+  function status(
+    state: CompressionState,
+    tokenCount: number,
+    config: Config,
+  ): StatusReport {
+    const active = activeBlocks(state);
+    const usage =
+      config.modelContextLimit > 0 ? tokenCount / config.modelContextLimit : 0;
+    return {
+      contextUsage: usage,
+      tokenCount,
+      modelContextLimit: config.modelContextLimit,
+      activeBlocks: active.length,
+      totalBlocks: state.blocks.length,
+      tokensCompressed: state.stats.tokensCompressed,
+      breakdown: { active: active.length, total: state.blocks.length },
+    };
+  }
+
+  function defaultNodes(): PipelineNode[] {
+    return [
+      assignRefsNode,
+      syncBlocksNode,
+      mergeBlocksNode,
+      pruneNode,
+      filterNode,
+      hideCompressCallsNode,
+      recommendNode,
+      nudgeNode,
+      emergencyTruncateNode,
+      renderRefsNode,
+    ];
+  }
+
+  return { processTurn, applyCompression, defaultNodes, decompress, search, status };
+}
+
+// --- Pipeline nodes -------------------------------------------------------
+// Each node owns ONE concern. The ref map has a SINGLE writer (assignRefsNode);
+// tags are DERIVED at the end (renderRefsNode) — no dual source of truth, so
+// the old stripHallucinations band-aid is gone. Truncation is the LAST
+// token-reducing safety valve; render-refs is the final annotation pass.
+
+const assignRefsNode: PipelineNode = {
+  name: "assign-refs",
+  run(io, ctx) {
+    const hasProtection =
+      ctx.config.protectedTools.length > 0 || !!ctx.config.isToolProtected;
+    const protectedFn = hasProtection
+      ? (m: CoreMessage) => isMessageProtected(m, ctx.config)
+      : undefined;
+    const refResult = assignRefs(io.messages, {
+      existing: io.state.messageRefs,
+      nextIndex: highestUsedIndex(io.state.messageRefs) + 1,
+      isProtected: protectedFn,
+    });
+    return { ...io, state: { ...io.state, messageRefs: refResult.map } };
+  },
+};
+
+const syncBlocksNode: PipelineNode = {
+  name: "sync-blocks",
+  run(io, ctx) {
+    const synced = syncBlocks(io.messages, io.state);
+    advanceSurvival(synced.state, ctx.config.promotionThreshold);
+    return { ...io, state: synced.state };
+  },
+};
+
+const mergeBlocksNode: PipelineNode = {
+  name: "merge-blocks",
+  run(io, ctx) {
+    const oldGen = collectOldGenBlocks(
+      io.state,
+      ctx.config.merge.maxSummaryLength,
+    );
+    if (oldGen.length < ctx.config.merge.minOldGenBlocks) return io;
+    const ids = oldGen.map((b) => b.blockId);
+    const merged = mergeMarkedBlocks(
+      io.state,
+      ids,
+      ctx.config.merge.maxSummaryLength,
+      ctx.countTokens,
+    );
+    if (merged.mergedCount === 0) return io;
+    return {
+      ...io,
+      state: merged.state,
+      effects: { ...io.effects, mergedCount: merged.mergedCount },
+    };
+  },
+};
+
+const pruneNode: PipelineNode = {
+  name: "prune",
+  run(io) {
+    return { ...io, messages: prune(io.messages, io.state) };
+  },
+};
+
+const filterNode: PipelineNode = {
+  name: "filter",
+  enabled: (_io, ctx) =>
+    !!ctx.config.messageFilters?.enabled && listMessageFilters().length > 0,
+  run(io, ctx) {
+    const applied = applyMessageFilters(io.messages, ctx.config.messageFilters);
+    return { ...io, messages: applied.messages };
+  },
+};
+
+const hideCompressCallsNode: PipelineNode = {
+  name: "hide-compress-calls",
+  run(io) {
+    const hidden = hideConsumedCompressCalls(io.state, io.messages);
+    return { ...io, messages: hidden.messages };
+  },
+};
+
+const recommendNode: PipelineNode = {
+  name: "recommend",
+  run(io, ctx) {
+    const protectedRefs = computeProtectedRefs(
+      io.messages,
+      io.state,
+      ctx.config,
+    );
+    const contextRanges = buildCompressibleRanges(
+      io.messages,
+      io.state,
+      ctx.config,
+      protectedRefs,
+    );
+    const nothingToCompress = contextRanges.compressible.length === 0;
+    const recommendation: Recommendation = {
+      contextRanges,
+      recommendedRanges: contextRanges.compressible,
+      nothingToCompress,
+    };
+    return { ...io, effects: { ...io.effects, recommendation } };
+  },
+};
+
+const nudgeNode: PipelineNode = {
+  name: "nudge-inject",
+  run(io, ctx) {
+    const nudge = decideNudge({
+      tokenCount: ctx.tokenCount,
+      config: ctx.config,
+      state: io.state,
+      messages: io.messages,
+      recommendation: io.effects.recommendation,
+    });
+
+    const baseline = io.state.nudge.lastPerMessageNudgeTokens;
+    const nudgeGrowthTokens = resolveAdaptiveGrowth(
+      ctx.config.modelContextLimit,
+      ctx.config.nudge,
+    );
+
+    let stamped = { ...io.state.nudge };
+
+    if (
+      baseline > 0 &&
+      ctx.tokenCount < baseline - nudgeGrowthTokens
+    ) {
+      stamped.lastPerMessageNudgeTokens = ctx.tokenCount;
+      stamped.lastNudgeShownTokens = 0;
+    }
+
+    if (stamped.lastPerMessageNudgeTokens === 0) {
+      stamped.lastPerMessageNudgeTokens = ctx.tokenCount;
+    }
+
+    if (nudge.shouldInject) {
+      stamped.lastNudgeShownTokens = ctx.tokenCount;
+    }
+
+    return {
+      ...io,
+      state: { ...io.state, nudge: stamped },
+      effects: { ...io.effects, nudge },
+    };
+  },
+};
+
+const emergencyTruncateNode: PipelineNode = {
+  name: "emergency-truncate",
+  run(io, ctx) {
+    const usage =
+      ctx.config.modelContextLimit > 0
+        ? ctx.tokenCount / ctx.config.modelContextLimit
+        : 0;
+    if (usage < ctx.config.truncate.threshold) return io;
+    const trunc = truncateLargeToolOutputs(
+      io.messages,
+      ctx.tokenCount,
+      ctx.config,
+      ctx.countTokens,
+      { protectRecentMessages: ctx.config.preserveRecentMessages },
+    );
+    return {
+      ...io,
+      messages: trunc.messages,
+      effects: { ...io.effects, truncatedCount: trunc.truncatedCount },
+    };
+  },
+};
+
+interface SingleRangeInput {
+  spec: { startRef: string; endRef: string; summary: string; topic?: string; compressCallId?: string; summaryMaxChars?: number };
+  messages: CoreMessage[];
+  state: CompressionState;
+  runId: string;
+  config: Config;
+  protectedMessageIds?: Set<string>;
+  countTokens: (text: string) => number;
+  preExistingCoverage: Set<string>;
+}
+
+function applySingleRange(input: SingleRangeInput): number {
+  const resolved = resolveBoundaries({
+    startRef: input.spec.startRef,
+    endRef: input.spec.endRef,
+    messages: input.messages,
+    state: input.state,
+  });
+
+  const isBlockBoundary = resolved.boundaryKind === "block";
+  const targetTier = resolveTargetTier(
+    input.state,
+    resolved.nestedBlockIds,
+    isBlockBoundary,
+  );
+  const outputTier = isBlockBoundary
+    ? (Math.min(3, targetTier + 1) as CompressionTier)
+    : 1;
+
+  const consumedBlockIds = resolved.nestedBlockIds.filter((id) => {
+    const block = blockById(input.state, id);
+    return block?.active && block.tier === targetTier;
+  });
+
+  const effectiveMessageIds = new Set<string>(resolved.messageIds);
+  for (const consumedId of consumedBlockIds) {
+    const consumed = blockById(input.state, consumedId);
+    if (consumed) {
+      for (const id of consumed.effectiveMessageIds)
+        effectiveMessageIds.add(id);
+    }
+  }
+
+  const directMessageIds = [...effectiveMessageIds].filter(
+    (id) => !input.preExistingCoverage.has(id),
+  );
+
+  const { filteredIds, appendedProtectedText } = filterProtectedToolMessages(
+    directMessageIds,
+    input.messages,
+    input.config,
+  );
+
+  validateCompressionRange(input, filteredIds, consumedBlockIds.length);
+
+  let compressedTokens = 0;
+  for (const id of filteredIds) {
+    const message = input.messages.find((entry) => entry.id === id);
+    compressedTokens += input.countTokens(message?.text ?? "");
+  }
+  for (const consumedId of consumedBlockIds) {
+    const consumed = blockById(input.state, consumedId);
+    if (consumed) {
+      compressedTokens += input.countTokens(consumed.summary);
+    }
+  }
+
+  const blockId = allocateBlockId(input.state);
+  const finalSummary =
+    appendedProtectedText.length > 0
+      ? `${input.spec.summary}\n\nThe following protected tool calls were used in this conversation as well:\n${appendedProtectedText.join("")}`
+      : input.spec.summary;
+
+  // Re-check maxSummaryLength after appending protected content (Bug fix: bypass via appended text)
+  const maxLen = input.spec.summaryMaxChars ?? input.config.compress.maxSummaryLength;
+  if (maxLen > 0 && finalSummary.length > maxLen) {
+    throw new Error(
+      `Summary too long after appending protected content (${finalSummary.length} chars, max ${maxLen}). Reduce the summary or remove protected tools from the range.`,
+    );
+  }
+  const block: CompressionBlock = {
+    blockId,
+    runId: input.runId,
+    tier: outputTier,
+    topic: input.spec.topic,
+    summary: finalSummary,
+    directMessageIds: filteredIds,
+    effectiveMessageIds: [...effectiveMessageIds],
+    directBlockIds: [...consumedBlockIds],
+    compressedTokens,
+    createdAt: Date.now(),
+    survivedCount: 0,
+    generation: "young",
+    active: true,
+    compressCallId: input.spec.compressCallId,
+  };
+  input.state.blocks.push(block);
+
+  for (const consumedId of consumedBlockIds) {
+    const consumed = blockById(input.state, consumedId);
+    if (consumed) consumed.active = false;
+  }
+
+  return compressedTokens;
+}
+
+function validateCompressionRange(
+  input: SingleRangeInput,
+  directMessageIds: string[],
+  consumedBlockCount: number,
+): void {
+  const cfg = input.config.compress;
+  const summary = input.spec.summary?.trim() ?? "";
+
+  if (summary.length === 0) {
+    throw new Error(
+      "Summary is empty — provide a meaningful summary of the compressed range.",
+    );
+  }
+
+  if (cfg.minSummaryLength > 0 && summary.length < cfg.minSummaryLength) {
+    throw new Error(
+      `Summary too short (${summary.length} chars, min ${cfg.minSummaryLength}). The summary must capture the compressed range's key information.`,
+    );
+  }
+
+  const effectiveMax = input.spec.summaryMaxChars ?? cfg.maxSummaryLength;
+  if (
+    effectiveMax > 0 &&
+    summary.length > effectiveMax
+  ) {
+    throw new Error(
+      `Summary too long (${summary.length} chars, max ${effectiveMax}). Strip noise — keep critical paths, decisions, errors, and code references. Or pass summaryMaxChars to increase the limit — don't lose critical info just to fit.`,
+    );
+  }
+
+  if (directMessageIds.length === 0 && consumedBlockCount === 0) {
+    throw new Error(
+      "Range contains no compressible messages — all are already covered by active blocks or protected.",
+    );
+  }
+}
+
+function filterProtectedToolMessages(
+  directMessageIds: string[],
+  messages: CoreMessage[],
+  config: Config,
+): { filteredIds: string[]; appendedProtectedText: string[] } {
+  const removedToolCallIds = new Set<string>();
+  const allProtectedCallIds = new Set<string>();
+  const removedIds = new Set<string>();
+  const appendedProtectedText: string[] = [];
+  for (const msg of messages) {
+    if (isMessageProtected(msg, config) && msg.toolCallId) {
+      allProtectedCallIds.add(msg.toolCallId);
+    }
+  }
+
+  for (const id of directMessageIds) {
+    const msg = messages.find((m) => m.id === id);
+    if (!msg) continue;
+    if (!isMessageProtected(msg, config)) continue;
+
+    removedIds.add(id);
+    if (msg.toolCallId) removedToolCallIds.add(msg.toolCallId);
+    if (msg.text) {
+      appendedProtectedText.push(
+        `\n### Protected: ${msg.toolName ?? "tool"}\n${msg.text}`,
+      );
+    }
+  }
+
+  for (const id of directMessageIds) {
+    if (removedIds.has(id)) continue;
+    const msg = messages.find((m) => m.id === id);
+    if (!msg) continue;
+    if (
+      msg.contentType === "tool-result" &&
+      msg.toolCallId &&
+      (removedToolCallIds.has(msg.toolCallId) ||
+        allProtectedCallIds.has(msg.toolCallId))
+    ) {
+      removedIds.add(id);
+    }
+  }
+
+  return {
+    filteredIds: directMessageIds.filter((id) => !removedIds.has(id)),
+    appendedProtectedText,
+  };
+}
+
+function resolveTargetTier(
+  state: CompressionState,
+  nestedBlockIds: string[],
+  isBlockBoundary: boolean,
+): CompressionTier {
+  if (!isBlockBoundary) return 1;
+  if (nestedBlockIds.length === 0) return 1;
+  let minTier: CompressionTier = 3;
+  for (const id of nestedBlockIds) {
+    const block = blockById(state, id);
+    if (block && block.tier < minTier) minTier = block.tier;
+  }
+  return minTier;
+}
+
+function collectCoverage(state: CompressionState): Set<string> {
+  const coverage = new Set<string>();
+  for (const block of activeBlocks(state)) {
+    for (const id of block.effectiveMessageIds) coverage.add(id);
+  }
+  return coverage;
+}
+
+interface NudgeInput {
+  tokenCount: number;
+  config: Config;
+  state: CompressionState;
+  messages: CoreMessage[];
+  recommendation?: Recommendation;
+}
+
+function resolveAdaptiveGrowth(
+  modelContextLimit: number,
+  nudge: NudgeConfig,
+): number {
+  if (!modelContextLimit || modelContextLimit <= 0) return nudge.growthFloor;
+  return Math.min(
+    nudge.growthCap,
+    Math.max(
+      nudge.growthFloor,
+      Math.round(modelContextLimit * nudge.growthRatio),
+    ),
+  );
+}
+
+function decideNudge(input: NudgeInput): NudgeDecision {
+  const { config, state, tokenCount, recommendation } = input;
+  const limit = config.modelContextLimit;
+  const usage = limit > 0 ? tokenCount / limit : 0;
+
+  const nudgeGrowthTokens = resolveAdaptiveGrowth(limit, config.nudge);
+
+  const emergencyOverride = usage >= config.nudge.emergencyThresholdPct;
+
+  const baseline = state.nudge.lastPerMessageNudgeTokens;
+  const hadPendingNudge = state.nudge.lastNudgeShownTokens > 0;
+
+  const hasPendingNudge = hadPendingNudge;
+  const effectiveThreshold = hasPendingNudge
+    ? Math.floor(nudgeGrowthTokens / 2)
+    : nudgeGrowthTokens;
+
+  const growthReference =
+    state.nudge.lastNudgeShownTokens > 0
+      ? state.nudge.lastNudgeShownTokens
+      : baseline > 0
+        ? baseline
+        : tokenCount;
+
+  const growthFloor = Math.max(
+    config.nudge.minGrowthFloor,
+    config.nudge.minGrowthRatio * nudgeGrowthTokens,
+  );
+
+  const growthSinceReference = tokenCount - growthReference;
+
+  const growthTriggered = growthSinceReference >= effectiveThreshold;
+
+  let shouldContextNudge = emergencyOverride || growthTriggered;
+
+  if (shouldContextNudge && !emergencyOverride) {
+    shouldContextNudge = growthSinceReference >= growthFloor;
+  }
+
+  let tier: CompressionTier | null = null;
+  if (config.tiers.enabled) {
+    const active = activeBlocks(state);
+    const activeT1 = active.filter((b) => b.tier === 1);
+    const activeT2 = active.filter((b) => b.tier === 2);
+    if (activeT2.length >= config.tiers.tier3Trigger) tier = 3;
+    else if (activeT1.length >= config.tiers.tier2Trigger) tier = 2;
+  }
+
+  const rec = recommendation;
+  const nothingToCompress = rec ? rec.contextRanges.compressible.length === 0 : false;
+
+  const shouldInject = shouldContextNudge || tier !== null;
+
+  let reason: string;
+  if (!shouldInject) {
+    reason = `growth ${growthSinceReference} < threshold ${effectiveThreshold}${hasPendingNudge ? " (halved)" : ""} (floor ${growthFloor})`;
+  } else if (emergencyOverride) {
+    reason = `EMERGENCY: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.emergencyThresholdPct * 100)}%`;
+  } else if (tier !== null) {
+    reason = `tier-${tier} distillation trigger`;
+  } else if (nothingToCompress) {
+    reason = `growth ${growthSinceReference} >= ${effectiveThreshold} but no specific ranges worth compressing`;
+  } else {
+    reason = `growth ${growthSinceReference} >= ${effectiveThreshold}${hasPendingNudge ? " (halved)" : ""}, usage ${Math.round(usage * 100)}%`;
+  }
+
+  const ctxBreakdown = computeContextBreakdown(input.messages, tokenCount, growthSinceReference);
+
+  return {
+    shouldInject,
+    reason,
+    compressibleRanges: rec?.recommendedRanges ?? [],
+    protectedRanges: rec?.contextRanges.protected ?? [],
+    contextUsage: usage,
+    tier,
+    breakdown: {
+      usage,
+      growth: growthSinceReference,
+      growthReference,
+      effectiveThreshold,
+      nudgeGrowthTokens,
+      growthFloor,
+      hasPendingNudge: hasPendingNudge ? 1 : 0,
+      emergencyOverride: emergencyOverride ? 1 : 0,
+    },
+    contextBreakdown: ctxBreakdown,
+  };
+}
+
+function computeContextBreakdown(messages: CoreMessage[], total: number, growth: number): ContextBreakdown {
+  let system = 0, tool = 0, summaries = 0, code = 0, text = 0;
+  for (const msg of messages) {
+    const tokens = Math.ceil((msg.text ?? "").length / 4);
+    if (msg.text?.startsWith("[Compressed conversation section]")) {
+      summaries += tokens;
+    } else if (msg.contentType === "tool-call" || msg.contentType === "tool-result") {
+      tool += tokens;
+    } else if (msg.role === "system") {
+      system += tokens;
+    } else if (msg.text?.includes("```")) {
+      code += tokens;
+    } else {
+      text += tokens;
+    }
+  }
+  return { system, tool, summaries, code, text, total, growth };
+}
+
+function cloneState(state: CompressionState): CompressionState {
+  return {
+    blocks: state.blocks.map((block) => ({
+      ...block,
+      directMessageIds: [...block.directMessageIds],
+      effectiveMessageIds: [...block.effectiveMessageIds],
+      directBlockIds: [...block.directBlockIds],
+    })),
+    messageRefs: {
+      byRaw: { ...state.messageRefs.byRaw },
+      byRef: { ...state.messageRefs.byRef },
+    },
+    nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
+    stats: { ...state.stats },
+    nextBlockId: state.nextBlockId,
+    nextRunId: state.nextRunId,
+  };
+}
+
+function scoreRelevance(block: CompressionBlock, terms: string[]): number {
+  const topic = (block.topic ?? "").toLowerCase();
+  const summary = block.summary.toLowerCase();
+  let score = 0;
+  for (const term of terms) {
+    const topicHits = countOccurrences(topic, term);
+    if (topicHits > 0) score += Math.min(topicHits * 0.15, 0.45);
+    const summaryHits = countOccurrences(summary, term);
+    if (summaryHits > 0) score += Math.min(summaryHits * 0.04, 0.2);
+  }
+  return Math.min(score, 1);
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (!haystack || !needle) return 0;
+  let count = 0;
+  let position = 0;
+  while ((position = haystack.indexOf(needle, position)) !== -1) {
+    count++;
+    position += needle.length;
+  }
+  return count;
+}
+
+export { createInitialState };

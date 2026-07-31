@@ -135,7 +135,7 @@ function formatPaddedRef(index: number): string {
   return `m${String(index).padStart(5, "0")}`;
 }
 
-function earliestIndexOfIds(
+export function earliestIndexOfIds(
   ids: string[],
   indexByRawId: Map<string, number>,
 ): number | null {

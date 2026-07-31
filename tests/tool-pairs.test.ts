@@ -132,7 +132,7 @@ describe("compression with tool-pair protection", () => {
       ranges: [{
         startRef: "m00001",
         endRef: "m00003",
-        summary: "Compressed range with tool-call but not its result. The range should auto-extend to include the result.",
+        summary: "Compressed range with tool-call but not its result — extension should pull the result in.",
       }],
       messages,
       state: stateWithRefs,
@@ -162,7 +162,7 @@ describe("compression with tool-pair protection", () => {
       ranges: [{
         startRef: "m00003",
         endRef: "m00004",
-        summary: "Compressed range with tool-result but not its call. The range should auto-extend backward to include the call.",
+        summary: "Compressed range with tool-result but not its call — extension pulls the call in.",
       }],
       messages,
       state: stateWithRefs,
@@ -175,10 +175,105 @@ describe("compression with tool-pair protection", () => {
     assert.ok(block!.effectiveMessageIds.includes("m2"), "tool-call m2 should be auto-included");
     assert.ok(block!.effectiveMessageIds.includes("m4"), "tool-result m4 should be in block");
   });
+
+  it("block-boundary range skips tool-pair adjustment (tier detection preserved)", () => {
+    const core = createCore();
+    const messages = [
+      textMsg("m1"),
+      toolCall("m2", "c1"),
+      toolResult("m3", "c1"),
+      textMsg("m4"),
+      toolCall("m5", "c2"),
+      toolResult("m6", "c2"),
+      textMsg("m7"),
+    ];
+    const state = createInitialState();
+    const s1 = core.processTurn({ messages, state, config: cfg, tokenCount: 1000 }).state;
+
+    const r1 = core.applyCompression({
+      ranges: [{
+        startRef: "m00001",
+        endRef: "m00004",
+        summary: "First tier-1 block covering initial text and a complete tool pair for reading configuration.",
+        topic: "Phase 1",
+      }],
+      messages,
+      state: s1,
+      config: cfg,
+    });
+    assert.equal(r1.result.blocksCreated, 1);
+    const b1 = r1.state.blocks.find((b) => b.blockId === "b1");
+    assert.ok(b1);
+    assert.equal(b1!.tier, 1);
+
+    const r2 = core.applyCompression({
+      ranges: [{
+        startRef: "b1",
+        endRef: "b1",
+        summary: "Tier-2 distillation of the first phase, condensing the initial setup and configuration reads.",
+        topic: "Distilled Phase 1",
+      }],
+      messages,
+      state: r1.state,
+      config: cfg,
+    });
+    assert.equal(r2.result.blocksCreated, 1, `b1→b1 should create b2, errors: ${JSON.stringify(r2.result.errors)}`);
+    const b2 = r2.state.blocks.find((b) => b.blockId === "b2");
+    assert.ok(b2, "tier-2 block b2 should be created");
+    assert.equal(b2!.tier, 2, "b2 should be tier-2");
+    const b1After = r2.state.blocks.find((b) => b.blockId === "b1");
+    assert.ok(!b1After!.active, "b1 should be consumed by b2");
+    assert.deepEqual(b2!.directBlockIds, ["b1"], "b2 should list b1 as consumed");
+  });
+
+  it("tool-pair extension re-scans for nested blocks in adjusted range", () => {
+    const core = createCore();
+    const messages = [
+      toolCall("m1", "c1"),
+      toolResult("m2", "c1"),
+      textMsg("m3"),
+      toolCall("m4", "c2"),
+      toolResult("m5", "c2"),
+      textMsg("m6"),
+    ];
+    const state = createInitialState();
+    const s1 = core.processTurn({ messages, state, config: cfg, tokenCount: 1000 }).state;
+
+    const r1 = core.applyCompression({
+      ranges: [{
+        startRef: "m00001",
+        endRef: "m00002",
+        summary: "Block covering the first complete tool pair for initial file read operations.",
+        topic: "Pair 1",
+      }],
+      messages,
+      state: s1,
+      config: cfg,
+    });
+    assert.equal(r1.result.blocksCreated, 1);
+
+    const r2 = core.applyCompression({
+      ranges: [{
+        startRef: "m00004",
+        endRef: "m00005",
+        summary: "Second complete tool pair covering the second file read and its result output.",
+        topic: "Pair 2",
+      }],
+      messages,
+      state: r1.state,
+      config: cfg,
+    });
+    assert.equal(r2.result.blocksCreated, 1);
+    const b2 = r2.state.blocks.find((b) => b.blockId === "b2");
+    assert.ok(b2);
+    assert.ok(!b2!.directBlockIds.includes("b1"), "b1 should NOT be consumed (its anchor is outside the range)");
+  });
 });
 
 describe("prune stripOrphanedToolCalls (defense-in-depth)", () => {
-  it("strips orphaned tool-call when result is compressed away", () => {
+  const cfg = { ...defaultConfig(100000), compress: { ...defaultConfig(100000).compress, minCompressRange: 0 } };
+
+  it("complete pair survives when other pair is compressed", () => {
     const core = createCore();
     const messages = [
       textMsg("m1"),
@@ -189,7 +284,7 @@ describe("prune stripOrphanedToolCalls (defense-in-depth)", () => {
       textMsg("m6"),
     ];
     const state = createInitialState();
-    const stateWithRefs = core.processTurn({ messages, state, config: { ...defaultConfig(100000), compress: { ...defaultConfig(100000).compress, minCompressRange: 0 } }, tokenCount: 1000 }).state;
+    const stateWithRefs = core.processTurn({ messages, state, config: cfg, tokenCount: 1000 }).state;
 
     const result = core.applyCompression({
       ranges: [{
@@ -199,13 +294,13 @@ describe("prune stripOrphanedToolCalls (defense-in-depth)", () => {
       }],
       messages,
       state: stateWithRefs,
-      config: { ...defaultConfig(100000), compress: { ...defaultConfig(100000).compress, minCompressRange: 0 } },
+      config: cfg,
     });
 
     const pruned = core.processTurn({
       messages,
       state: result.state,
-      config: { ...defaultConfig(100000), compress: { ...defaultConfig(100000).compress, minCompressRange: 0 } },
+      config: cfg,
       tokenCount: 500,
     }).messages;
 
@@ -214,5 +309,43 @@ describe("prune stripOrphanedToolCalls (defense-in-depth)", () => {
     assert.ok(ids.includes("m3"), "uncompressed tool-result m3 survives");
     assert.ok(!ids.includes("m4"), "compressed tool-call m4 removed");
     assert.ok(!ids.includes("m5"), "compressed tool-result m5 removed");
+  });
+
+  it("orphaned tool-result stripped when its call is compressed beyond maxScan", () => {
+    const core = createCore();
+    const messages: CoreMessage[] = [
+      toolCall("m1", "c1"),
+    ];
+    for (let i = 0; i < 25; i++) {
+      messages.push(textMsg(`gap${i}`));
+    }
+    messages.push(toolResult("result", "c1"));
+
+    const state = createInitialState();
+    const stateWithRefs = core.processTurn({ messages, state, config: cfg, tokenCount: 5000 }).state;
+
+    const result = core.applyCompression({
+      ranges: [{
+        startRef: "m00001",
+        endRef: "m00001",
+        summary: "Compress just the tool-call. Result is >20 messages away so extension can't reach it.",
+      }],
+      messages,
+      state: stateWithRefs,
+      config: cfg,
+    });
+
+    assert.equal(result.result.blocksCreated, 1);
+
+    const pruned = core.processTurn({
+      messages,
+      state: result.state,
+      config: cfg,
+      tokenCount: 4000,
+    }).messages;
+
+    const ids = pruned.map((m) => m.id);
+    assert.ok(!ids.includes("m1"), "compressed tool-call m1 removed");
+    assert.ok(!ids.includes("result"), "orphaned tool-result stripped by defense-in-depth");
   });
 });

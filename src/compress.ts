@@ -9,7 +9,7 @@ import {
 } from "./state.js";
 import { defaultCountTokens } from "./tokenize.js";
 import { validateConfig } from "./config.js";
-import { resolveBoundaries } from "./boundaries.js";
+import { resolveBoundaries, earliestIndexOfIds } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
 import { collectOldGenBlocks, mergeMarkedBlocks } from "./merge.js";
@@ -482,6 +482,24 @@ function applySingleRange(input: SingleRangeInput): number {
     resolved,
     input.messages,
   );
+
+  // Re-scan for nested blocks in the ADJUSTED range (tool-pair extension may
+  // have pulled in messages that are anchors of existing blocks).
+  if (rangeMessageIds.length > resolved.messageIds.length) {
+    const indexByRawId = new Map<string, number>();
+    input.messages.forEach((m, i) => indexByRawId.set(m.id, i));
+    const adjustedStart = indexByRawId.get(rangeMessageIds[0]!) ?? resolved.startIndex;
+    const adjustedEnd = indexByRawId.get(rangeMessageIds[rangeMessageIds.length - 1]!) ?? resolved.endIndex;
+    const nestedSeen = new Set(resolved.nestedBlockIds);
+    for (const block of activeBlocks(input.state)) {
+      if (nestedSeen.has(block.blockId)) continue;
+      const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+      if (anchor !== null && anchor >= adjustedStart && anchor <= adjustedEnd) {
+        nestedSeen.add(block.blockId);
+        resolved.nestedBlockIds.push(block.blockId);
+      }
+    }
+  }
 
   const isBlockBoundary = resolved.boundaryKind === "block";
   const targetTier = resolveTargetTier(

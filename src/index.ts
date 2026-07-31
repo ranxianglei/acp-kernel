@@ -56,6 +56,8 @@ export type { MergeResult } from "./merge.js";
 export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
 export { renderVisibleRefs, renderRefsNode } from "./render-refs.js";
+export { searchBlocks } from "./search.js";
+export type { SearchResult, SearchOptions } from "./search.js";
 export { isMessageProtected, matchToolPattern } from "./protected.js";
 export {
   runPipeline,

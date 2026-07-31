@@ -59,8 +59,8 @@ test("renderVisibleRefs derives tags from the ref map (single source of truth)",
   const messages = [msg("a", "alpha"), msg("b", "beta")];
   const state = stateWithRefs(messages);
   const rendered = renderVisibleRefs(messages, state);
-  assert.equal(rendered[0]!.text, "[m00001] alpha");
-  assert.equal(rendered[1]!.text, "[m00002] beta");
+  assert.match(rendered[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
+  assert.match(rendered[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\nbeta$/);
 });
 
 test("renderVisibleRefs is idempotent: running twice yields the same result", () => {
@@ -77,15 +77,16 @@ test("renderVisibleRefs preserves non-own ref-like content and re-derives the ow
   const messages = [msg("a", "[m00009] alpha")];
   const state = stateWithRefs(messages); // authoritative ref for "a" is m00001
   const rendered = renderVisibleRefs(messages, state);
-  assert.equal(rendered[0]!.text, "[m00001] [m00009] alpha");
+  assert.match(rendered[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\n\[m00009\] alpha$/);
 });
 
 test("renderVisibleRefs peels the message's own stale tag before re-deriving", () => {
   // A message carrying its OWN tag from a prior turn's render: idempotent re-tag.
-  const messages = [msg("a", "[m00001] alpha")];
+  const staleTag = '<acp tokens="99" type="text">m00001</acp>\nalpha';
+  const messages = [msg("a", staleTag)];
   const state = stateWithRefs(messages); // own ref for "a" is m00001
   const rendered = renderVisibleRefs(messages, state);
-  assert.equal(rendered[0]!.text, "[m00001] alpha");
+  assert.match(rendered[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
 });
 
 test("renderVisibleRefs leaves messages without a ref (BLOCKED/unmapped) untagged", () => {
@@ -138,6 +139,6 @@ test("processTurn tags every mapped message with a derived ref (end-to-end)", ()
     config: defaultConfig(100000),
     tokenCount: 100,
   });
-  assert.equal(result.messages[0]!.text, "[m00001] alpha");
-  assert.equal(result.messages[1]!.text, "[m00002] beta");
+  assert.match(result.messages[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
+  assert.match(result.messages[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\nbeta$/);
 });

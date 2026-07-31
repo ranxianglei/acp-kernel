@@ -304,11 +304,10 @@ test("composable pipeline excluding sync-blocks must not leak nudge mutations to
   assert.notEqual(result.state.nudge, state.nudge);
 });
 
-// 3-way review: render-refs stripped ANY leading "[m\d{1,5}] " token, including
-// genuine user content. After the fix it peels only the message's OWN tag.
+// 3-way review: render-refs must preserve user content that starts with
+// ref-like tokens from the OLD format. With XML tags, [mNNNNN] is just text.
 test("render-refs preserves user content that starts with a ref-like token", () => {
   const state = createInitialState();
-  // refs are assigned in order: a=m00001, b=m00002, c=m00003
   const messages = [
     msg("a", "[m1] is my first point"),
     msg("b", "[m00005] please review"),
@@ -321,9 +320,9 @@ test("render-refs preserves user content that starts with a ref-like token", () 
 
   const rendered = renderVisibleRefs(messages, state);
 
-  assert.equal(rendered[0]!.text, "[m00001] [m1] is my first point");
-  assert.equal(rendered[1]!.text, "[m00002] [m00005] please review");
-  assert.equal(rendered[2]!.text, "[m00003] dup tags");
+  assert.match(rendered[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\n\[m1\] is my first point$/);
+  assert.match(rendered[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\n\[m00005\] please review$/);
+  assert.match(rendered[2]!.text!, /^<acp tokens="\d+" type="text">m00003<\/acp>\n\[m00003\] \[m00003\] dup tags$/);
 });
 
 test("render-refs is idempotent across repeated renders", () => {
@@ -340,8 +339,8 @@ test("render-refs is idempotent across repeated renders", () => {
     once.map((m) => m.text),
     twice.map((m) => m.text),
   );
-  assert.equal(once[0]!.text, "[m00001] alpha");
-  assert.equal(once[1]!.text, "[m00002] beta");
+  assert.match(once[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
+  assert.match(once[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\n\[m00002\] beta$/);
 });
 
 test("batch: overlapping ranges are rejected", () => {

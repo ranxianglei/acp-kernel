@@ -215,30 +215,46 @@ test("nudge: full growth cycle — baseline → growth → nudge → compress �
   assert.equal(turn.nudge.shouldInject, true, "growth 25000 >= 6000, usage 55% >= 45%");
 });
 
-test("nudge: tier-2 trigger fires when active T1 blocks pile up", () => {
+test("nudge: tier flags ready but does not bypass growth check", () => {
   const core = createCore();
   const config = buildConfig({ tiers: { enabled: true, tier2Trigger: 3, tier3Trigger: 10 } });
   const messages = makeMessages(30);
   let state = createInitialState();
-  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  // First turn establishes a baseline at a high token count.
+  state = core.processTurn({ messages, state, config, tokenCount: 50000 }).state;
 
-  for (let i = 0; i < 3; i++) {
-    state = core.applyCompression({
-      ranges: [{
-        startRef: `m${String(i * 3 + 1).padStart(5, "0")}`,
-        endRef: `m${String(i * 3 + 3).padStart(5, "0")}`,
-        summary: `block ${i}`,
-      }],
-      messages,
-      state,
-      config,
-    }).state;
-  }
+  // Inject three active T1 blocks directly — we are testing the nudge tier
+  // logic, not applyCompression validation.
+  state = {
+    ...state,
+    blocks: [0, 1, 2].map((i) => ({
+      blockId: `b${i + 1}`,
+      runId: "r1",
+      tier: 1 as const,
+      summary: `tier-1 summary ${i} `.repeat(20),
+      directMessageIds: [`m${i}`],
+      effectiveMessageIds: [`m${i}`],
+      directBlockIds: [],
+      compressedTokens: 5000,
+      createdAt: Date.now(),
+      survivedCount: 0,
+      generation: "root" as const,
+      active: true,
+    })),
+  };
+  assert.equal(state.blocks.filter((b) => b.active && b.tier === 1).length, 3, "three T1 blocks present");
 
-  const turn = core.processTurn({ messages, state, config, tokenCount: 10000 });
-  assert.notEqual(turn.nudge.tier, null, "tier trigger should fire");
-  assert.equal(turn.nudge.tier, 2, "tier-2 distillation triggered");
-  assert.equal(turn.nudge.shouldInject, true);
+  // tier-2 is READY (3 T1 blocks), but growth is zero — must NOT inject.
+  // Tier changes the nudge content, not whether it fires.
+  let turn = core.processTurn({ messages, state, config, tokenCount: 50000 });
+  assert.equal(turn.nudge.tier, 2, "tier-2 is flagged as ready");
+  assert.equal(turn.nudge.shouldInject, false, "no growth → no injection even with tier ready");
+  assert.equal(turn.nudge.tierTargetBlocks?.length, 3, "target blocks listed");
+
+  // Once growth passes the threshold, the nudge fires WITH tier distillation info.
+  turn = core.processTurn({ messages, state, config, tokenCount: 80000 });
+  assert.equal(turn.nudge.shouldInject, true, "growth past threshold → injects");
+  assert.equal(turn.nudge.tier, 2, "nudge carries tier-2 distillation guidance");
 });
 
 test("nudge: production config (preserveRecentMessages > 0) computes compressible ranges", () => {

@@ -1,4 +1,4 @@
-import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown } from "./types.js";
+import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock } from "./types.js";
 import { COMPRESS_PHILOSOPHY, HOW_TO_COMPRESS_RULES, TIER2_DISTILL_RULES, TIER3_CONDENSE_RULES } from "./compression-rules.js";
 
 export type NudgeVoice = "gentle" | "emergency";
@@ -105,6 +105,18 @@ function mergeRanges(compressible: CompressibleRange[], protected_: ProtectedRan
   return merged;
 }
 
+function formatTierTargetBlocks(blocks: CompressionBlock[]): string {
+  if (blocks.length === 0) {
+    return "Target blocks: (none — no tier blocks found)";
+  }
+  const lines = blocks.map((b) => {
+    const summaryTokens = Math.ceil((b.summary ?? "").length / 4);
+    const topic = b.topic ? `  "${b.topic}"` : "";
+    return `  ${b.blockId}  ${b.effectiveMessageIds.length} msgs  ${formatK(b.compressedTokens)}→${formatK(summaryTokens)}${topic}`;
+  });
+  return `Target ${blocks[0]!.tier === 1 ? "tier-1" : "tier-2"} blocks to distill (${blocks.length}):\n${lines.join("\n")}`;
+}
+
 function formatRanges(compressible: CompressibleRange[], protected_: ProtectedRange[]): string {
   const merged = mergeRanges(compressible, protected_);
   if (merged.length === 0) {
@@ -136,6 +148,10 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
 
   if (decision.tier !== null && decision.tier >= 2) {
     const isT2 = decision.tier === 2;
+    const targets = decision.tierTargetBlocks ?? [];
+    const blockList = formatTierTargetBlocks(targets);
+    const startId = targets[0]?.blockId ?? "b1";
+    const endId = targets[targets.length - 1]?.blockId ?? "b5";
     return {
       voice: "gentle",
       text: [
@@ -145,9 +161,10 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
         "",
         `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`,
         isT2
-          ? "Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. Use block IDs as boundaries."
-          : "Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries.",
-        `Example: compress({ content: [{ startId: "b1", endId: "b5", summary: "..." }] })`,
+          ? `Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. Use block IDs as boundaries.`
+          : `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries.`,
+        blockList,
+        `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
         "",
         HOW_TO_COMPRESS_RULES,
         "",

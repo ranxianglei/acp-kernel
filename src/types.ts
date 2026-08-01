@@ -180,6 +180,9 @@ export interface NudgeDecision {
   reason: string;
   compressibleRanges: CompressibleRange[];
   protectedRanges?: ProtectedRange[];
+  /** When `tier` is set, the active lower-tier blocks that should be distilled
+   *  into a single higher-tier block. Empty when no tier nudge. */
+  tierTargetBlocks?: CompressionBlock[];
   contextUsage: number;
   tier: CompressionTier | null;
   breakdown: Record<string, number>;

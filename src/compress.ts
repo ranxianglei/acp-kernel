@@ -772,12 +772,18 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   }
 
   let tier: CompressionTier | null = null;
+  let tierTargetBlocks: CompressionBlock[] = [];
   if (config.tiers.enabled) {
     const active = activeBlocks(state);
     const activeT1 = active.filter((b) => b.tier === 1);
     const activeT2 = active.filter((b) => b.tier === 2);
-    if (activeT2.length >= config.tiers.tier3Trigger) tier = 3;
-    else if (activeT1.length >= config.tiers.tier2Trigger) tier = 2;
+    if (activeT2.length >= config.tiers.tier3Trigger) {
+      tier = 3;
+      tierTargetBlocks = activeT2;
+    } else if (activeT1.length >= config.tiers.tier2Trigger) {
+      tier = 2;
+      tierTargetBlocks = activeT1;
+    }
   }
 
   const rec = recommendation;
@@ -805,6 +811,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     reason,
     compressibleRanges: rec?.recommendedRanges ?? [],
     protectedRanges: rec?.contextRanges.protected ?? [],
+    tierTargetBlocks,
     contextUsage: usage,
     tier,
     breakdown: {

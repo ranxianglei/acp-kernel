@@ -23,11 +23,11 @@ jobs:
       - name: Check if release branch merge
         id: check
         run: |
-          MERGE_BRANCH=$(git log -1 --pretty=%B | grep -oP '(?<=Merge pull request #\d+ from ).*' || echo "")
-          if [ -z "$MERGE_BRANCH" ]; then
-            MERGE_BRANCH=$(git log -1 --pretty=%B | grep -oP '^\d{4}-\d{2}-\d{2}_release-v' || echo "")
-          fi
-          if echo "$MERGE_BRANCH" | grep -qP '^\d{4}-\d{2}-\d{2}_release-v'; then
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          MERGE_BRANCH=$(echo "$COMMIT_MSG" | sed -n 's/^Merge pull request #[0-9]* from [^/]*\/\(.*\)$/\1/p' || echo "")
+          if echo "$MERGE_BRANCH" | grep -q '^\d\{4\}-\d\{2\}-\d\{2\}_release-v'; then
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          elif echo "$COMMIT_MSG" | grep -q '^\d\{4\}-\d\{2\}-\d\{2\}_release-v'; then
             echo "is_release=true" >> $GITHUB_OUTPUT
           else
             echo "is_release=false" >> $GITHUB_OUTPUT

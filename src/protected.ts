@@ -7,6 +7,32 @@ import type { Config, CoreMessage } from "./types.js";
  *  compressed away breaks decompress and the "summary is historical" contract. */
 export const ALWAYS_PROTECTED_TOOLS = ["compress"] as const;
 
+/** Tool results that must NEVER participate in the soft-protected recent zone
+ *  (preserveRecentMessages / preserveRecentTokens / last user message).
+ *
+ *  `decompress` returns large restored content as an inline tool result. If it
+ *  lands in the last-N window it becomes un-compressible: the model cannot
+ *  reclaim that context, and it never appears in the compressible-ranges
+ *  recommendation list. Excluding it from the protected zone lets the model
+ *  compress it again immediately, while still leaving it visible (the host's
+ *  preserveRecent is about not compressing the active working set, not about
+ *  which tool results are in scope).
+ *
+ *  Note: this only affects the recent-zone computation. Such messages remain
+ *  fully visible and compressible like any ordinary message. */
+export const NEVER_PRESERVE_RECENT_TOOLS = ["decompress"] as const;
+
+/** True for tool-call / tool-result messages whose toolName is in the
+ *  NEVER_PRESERVE_RECENT_TOOLS list — i.e. tool results (like decompress)
+ *  that should be excluded from the soft-protected recent zone. */
+export function isNeverPreserveRecent(msg: CoreMessage): boolean {
+  if (msg.contentType !== "tool-call" && msg.contentType !== "tool-result") {
+    return false;
+  }
+  if (!msg.toolName) return false;
+  return (NEVER_PRESERVE_RECENT_TOOLS as readonly string[]).includes(msg.toolName);
+}
+
 export function matchToolPattern(toolName: string, pattern: string): boolean {
   if (pattern.endsWith("*")) {
     return toolName.startsWith(pattern.slice(0, -1));

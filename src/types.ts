@@ -226,6 +226,10 @@ export interface ApplyCompressionResult {
     blocksCreated: number;
     tokensCompressed: number;
     errors: string[];
+    /** Non-fatal notices (e.g. protected messages excluded from a range).
+     *  The compression still succeeded; the host should surface these to the
+     *  model so it understands what was skipped. */
+    warnings: string[];
   };
 }
 

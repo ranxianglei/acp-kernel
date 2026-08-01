@@ -94,6 +94,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
     let blocksCreated = 0;
     let tokensCompressed = 0;
     const errors: string[] = [];
+    const warnings: string[] = [];
 
     // Default to the soft-protected zone (recent-N + last user message) when the
     // caller doesn't pass an explicit set. This makes applyCompression safe by
@@ -141,6 +142,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
             errors: [
               `content: range (${prev.spec.startRef}..${prev.spec.endRef}) overlaps (${curr.spec.startRef}..${curr.spec.endRef}). Overlapping ranges cannot be compressed in the same batch.`,
             ],
+            warnings: [],
           },
         };
       }
@@ -179,6 +181,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
             errors: [
               `Total compressible content too small (${totalRangeChars} chars across ${input.ranges.length} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`,
             ],
+            warnings: [],
           },
         };
       }
@@ -186,7 +189,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
 
     for (const spec of input.ranges) {
       try {
-        const compressed = applySingleRange({
+        const outcome = applySingleRange({
           spec,
           messages: input.messages,
           state,
@@ -197,7 +200,8 @@ export function createCore(ports: Ports = {}): CompressionCore {
           preExistingCoverage,
         });
         blocksCreated++;
-        tokensCompressed += compressed;
+        tokensCompressed += outcome.tokens;
+        warnings.push(...outcome.warnings);
       } catch (error) {
         errors.push(error instanceof Error ? error.message : String(error));
       }
@@ -218,7 +222,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
       state.nudge.lastShownByTier = {};
     }
 
-    return { state, result: { blocksCreated, tokensCompressed, errors } };
+    return { state, result: { blocksCreated, tokensCompressed, errors, warnings } };
   }
 
   function processTurn(input: ProcessTurnInput): ProcessTurnResult {
@@ -462,7 +466,13 @@ interface SingleRangeInput {
   preExistingCoverage: Set<string>;
 }
 
-function applySingleRange(input: SingleRangeInput): number {
+interface SingleRangeOutcome {
+  tokens: number;
+  warnings: string[];
+}
+
+function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
+  const warnings: string[] = [];
   const resolved = resolveBoundaries({
     startRef: input.spec.startRef,
     endRef: input.spec.endRef,
@@ -521,18 +531,21 @@ function applySingleRange(input: SingleRangeInput): number {
     (id) => !input.preExistingCoverage.has(id),
   );
 
-  const filteredIds = filterProtectedToolMessages(
+  let filteredIds = filterProtectedToolMessages(
     directMessageIds,
     input.messages,
     input.config,
   );
 
-  // HARD PROTECTION: never let the recent-N / last-user-message zone be
-  // compressed, even if the model ignores the nudge and calls compress
-  // directly on those refs. `protectedMessageIds` holds REF ids (mNNNNN)
-  // from computeProtectedRefs; filteredIds holds RAW message ids, so convert
-  // via state.messageRefs.byRaw before testing membership. applySingleRange
-  // enforces this as the real backstop; the recommend/nudge path is advisory.
+  // SOFT PROTECTION: the recent-N / last-user-message zone is advisory-only at
+  // compress time. Instead of failing the whole range when it brushes protected
+  // messages, exclude those messages and proceed with the rest (so the model
+  // isn't blocked when it picks a range that slightly overlaps the recent
+  // window). If excluding them empties the range entirely AND there are no
+  // consumed blocks to merge, we still fail — there is genuinely nothing to
+  // compress. `protectedMessageIds` holds REF ids (mNNNNN) from
+  // computeProtectedRefs; filteredIds holds RAW message ids, so convert via
+  // state.messageRefs.byRaw before testing membership.
   const protectedRefs = input.protectedMessageIds;
   const hitProtectedRaw = protectedRefs
     ? filteredIds.filter((id) => {
@@ -541,14 +554,28 @@ function applySingleRange(input: SingleRangeInput): number {
       })
     : [];
   if (hitProtectedRaw.length > 0) {
-    const recentN = input.config.preserveRecentMessages;
+    const protectedSet = new Set(hitProtectedRaw);
+    filteredIds = filteredIds.filter((id) => !protectedSet.has(id));
+    // Remove protected messages from effective coverage too, so they are NOT
+    // hidden by the new block (they must stay fully visible).
+    for (const id of hitProtectedRaw) effectiveMessageIds.delete(id);
+
     const hitRefs = hitProtectedRaw
       .map((id) => input.state.messageRefs.byRaw[id])
-      .filter(Boolean);
-    throw new Error(
-      `Range includes protected messages (the last ${recentN} messages and/or the most recent user message) which must not be compressed: ${hitRefs.join(
+      .filter((v): v is string => typeof v === "string");
+
+    if (filteredIds.length === 0 && consumedBlockIds.length === 0) {
+      const recentN = input.config.preserveRecentMessages;
+      throw new Error(
+        `Range is entirely within the protected zone (the last ${recentN} messages and/or the most recent user message): ${hitRefs.join(
+          ", ",
+        )}. Adjust startId/endId to older messages.`,
+      );
+    }
+    warnings.push(
+      `Excluded ${hitProtectedRaw.length} protected message(s) ${hitRefs.join(
         ", ",
-      )}. Adjust startId/endId to exclude them.`,
+      )} from compression range (recent/last-user zone).`,
     );
   }
 
@@ -590,7 +617,7 @@ function applySingleRange(input: SingleRangeInput): number {
     if (consumed) consumed.active = false;
   }
 
-  return compressedTokens;
+  return { tokens: compressedTokens, warnings };
 }
 
 function applyToolPairAdjustment(

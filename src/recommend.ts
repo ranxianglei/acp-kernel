@@ -23,6 +23,7 @@ import type { CompressionState } from "./types.js";
 import {
   collectProtectedToolCallIds,
   isMessageProtectedWithPairing,
+  isNeverPreserveRecent,
 } from "./protected.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -77,6 +78,12 @@ export function computeProtectedRefs(
 
   for (const msg of messages) {
     if (isSyntheticOrPruned(msg, state)) continue;
+    // Exclude decompress-style tool results from the recent-zone window.
+    // These are large inline restorations that the model should be free to
+    // compress again immediately; counting them toward the last-N window
+    // would make them un-compressible and hide them from recommendations.
+    // The message stays fully visible — this only affects protection scope.
+    if (isNeverPreserveRecent(msg)) continue;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
     visible.push({ ref, tokens: estimateMessageTokens(msg) });
@@ -103,6 +110,10 @@ export function computeProtectedRefs(
   // same switch as Rule 1, so setting preserveRecentMessages = 0 fully opts
   // out (needed by tests that compress the tail). Production defaultConfig
   // uses 5, so the last user message is always protected in practice.
+  // Note: we scan the raw messages array (not `visible`) here so the last
+  // user message is still found even when a decompress tool result was
+  // skipped above — user intent is always protected regardless of recent
+  // tool results.
   if (preserveN > 0) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]!;

@@ -7,11 +7,48 @@ one stable interface, multiple strategies, zero runtime dependencies.
 ## Quick start
 
 ```ts
-import { searchBlocks } from "acp-kernel";
+import { searchBlocks, blockDocs, messageDocs } from "acp-kernel";
 
-const results = searchBlocks(state, "auth token", { limit: 5 });
-// → [{ blockId: "b3", tier: 1, score: 0.92, topic: "...", preview: "...match context...", block }]
+// Search both blocks and historical messages
+const docs = [
+  ...blockDocs(state),                              // all blocks (active + inactive)
+  ...messageDocs([...historyMsgs]),                 // original message text
+];
+const results = searchBlocks(docs, "auth token", { limit: 5 });
+// → [{ kind: "message", ref: "m00350", blockId: "b3", score: 0.92,
+//     title: "...", preview: "...match...", role: "user", tokens: 120 }]
 ```
+
+`SearchResult` now carries `kind` ("block" | "message"), `ref`, `blockId`
+(owning block for a message hit), `role`, and `tokens` (size). A message hit
+links to the block that compressed it → `decompress({blockId})` recovers the
+surrounding detail. This closes the **search → decompress** loop: cheaply
+locate detail, then pay decompress cost only for what you need.
+
+## Two data sources
+
+| source | text searched | ref | when |
+|--------|---------------|-----|------|
+| **blocks** | summary (+ topic) | `b3` | active AND inactive blocks (inactive fix) |
+| **messages** | original content from session log | `m00350` | detail that compression folded into a summary |
+
+Messages are host-supplied (pai-acp reads them from pi's append-only session
+log via `getEntries()`). Each message maps to the block that compressed it
+(via `effectiveMessageIds`), so a hit tells the model exactly which block to
+decompress for surrounding context.
+
+## Role weighting
+
+Messages carry a role; per-role weights prioritize human intent over noise:
+
+| role | default weight | why |
+|------|---------------|-----|
+| user | 1.5 | questions, decisions, requirements — high signal |
+| assistant | 1.0 | reasoning and findings |
+| tool | 0.6 | logs, listings — large volume, lower density |
+| block | 1.0 | model-authored summaries |
+
+Override via `SearchOptions.roleWeights`.
 
 ## Why the default is "hybrid"
 

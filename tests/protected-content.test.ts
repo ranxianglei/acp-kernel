@@ -246,3 +246,56 @@ test("Feature 2+3: both protectedTools and isToolProtected work together", () =>
   assert.ok(block.summary.includes("Protected: skill"), "skill content appended");
   assert.ok(block.summary.includes("Protected: edit"), "edit content appended");
 });
+
+test("compress tool is ALWAYS protected, even with empty protectedTools", () => {
+  const core = createCore();
+  const messages = [
+    msg("a", longText),
+    toolCall("b", "compress", "call1", JSON.stringify({ content: [{ startId: "m00001", endId: "m00001", summary: "x".repeat(60) }] })),
+    toolResult("c", "call1", "compressed"),
+    msg("d", longText),
+  ];
+  const state = setupRefs(messages);
+  // No protectedTools configured at all — compress must still be protected.
+  const config = cfg({ protectedTools: [] });
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00004", summary: validSummary }],
+    messages,
+    state,
+    config,
+  });
+
+  const block = result.state.blocks[0]!;
+  assert.ok(!block.directMessageIds.includes("b"), "compress tool-call excluded regardless of config");
+  assert.ok(!block.directMessageIds.includes("c"), "compress tool-result excluded regardless of config");
+  assert.ok(block.directMessageIds.includes("a"), "regular msg remains");
+  assert.ok(block.directMessageIds.includes("d"), "regular msg remains");
+});
+
+test("compress tool-result is protected by toolCallId pairing even without toolName", () => {
+  // Hosts often project a tool-result with only toolCallId (no toolName).
+  // The result half of a compress call must still be protected via pairing.
+  const core = createCore();
+  const messages = [
+    msg("a", longText),
+    toolCall("b", "compress", "callX", "{}"),
+    { id: "c", role: "tool", contentType: "tool-result", toolCallId: "callX", text: "result".repeat(50) },
+    msg("d", longText),
+  ];
+  const state = setupRefs(messages);
+  const config = cfg({ protectedTools: [] });
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00004", summary: validSummary }],
+    messages,
+    state,
+    config,
+  });
+
+  const block = result.state.blocks[0]!;
+  assert.ok(!block.directMessageIds.includes("b"), "compress tool-call excluded");
+  assert.ok(!block.directMessageIds.includes("c"), "compress tool-result (no toolName) excluded via pairing");
+  assert.ok(block.directMessageIds.includes("a"), "regular msg remains");
+  assert.ok(block.directMessageIds.includes("d"), "regular msg remains");
+});

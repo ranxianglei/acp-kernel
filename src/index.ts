@@ -51,8 +51,6 @@ export { buildStatusReport, buildRecap } from "./report.js";
 export type { StatusReportOptions } from "./report.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";
 export type { HideConsumedResult } from "./hide-consumed.js";
-export { mergeMarkedBlocks, collectOldGenBlocks } from "./merge.js";
-export type { MergeResult } from "./merge.js";
 export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
 export { renderVisibleRefs, renderRefsNode } from "./render-refs.js";

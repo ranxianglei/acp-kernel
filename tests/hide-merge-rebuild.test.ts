@@ -1,10 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hideConsumedCompressCalls } from "../src/hide-consumed.js";
-import { mergeMarkedBlocks, collectOldGenBlocks } from "../src/merge.js";
 import { rebuildCompressionState } from "../src/rebuild.js";
 import { createInitialState } from "../src/state.js";
-import { defaultCountTokens } from "../src/tokenize.js";
 import { defaultConfig } from "../src/config.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "../src/types.js";
 
@@ -43,51 +41,6 @@ test("hideConsumedCompressCalls keeps active-block compress calls and recent orp
     assert.ok(remainingCallIds.includes("call-active"));
     assert.ok(!remainingCallIds.includes("call-consumed"));
     assert.ok(result.messages.some((m) => m.text === "hello"));
-});
-
-test("mergeMarkedBlocks merges old-gen blocks into one summary", () => {
-    const state: CompressionState = {
-        ...createInitialState(),
-        blocks: [
-            block({ blockId: "b1", summary: "first summary", effectiveMessageIds: ["m1"], generation: "old", active: true }),
-            block({ blockId: "b2", summary: "second summary", effectiveMessageIds: ["m2"], generation: "old", active: true }),
-        ],
-    };
-    const result = mergeMarkedBlocks(state, ["b1", "b2"], 5000, defaultCountTokens);
-    assert.equal(result.mergedCount, 2);
-    assert.ok(result.savedTokens >= 0);
-    const merged = result.state.blocks.find((b) => b.blockId === "b2" || b.active && b.summary.includes("---"));
-    const newBlock = result.state.blocks.find((b) => b.directBlockIds.length === 2);
-    assert.ok(newBlock);
-    assert.ok(newBlock!.summary.includes("first summary"));
-    assert.ok(newBlock!.summary.includes("second summary"));
-    assert.deepEqual(newBlock!.directBlockIds.sort(), ["b1", "b2"]);
-    assert.ok(result.state.blocks.find((b) => b.blockId === "b1")!.active === false);
-});
-
-test("mergeMarkedBlocks refuses to merge fewer than 2 blocks", () => {
-    const state: CompressionState = {
-        ...createInitialState(),
-        blocks: [block({ blockId: "b1", active: true })],
-    };
-    const result = mergeMarkedBlocks(state, ["b1"], 5000, defaultCountTokens);
-    assert.equal(result.mergedCount, 0);
-});
-
-test("collectOldGenBlocks gathers old-generation or oversized active blocks", () => {
-    const state: CompressionState = {
-        ...createInitialState(),
-        blocks: [
-            block({ blockId: "b1", generation: "young", active: true }),
-            block({ blockId: "b2", generation: "old", active: true }),
-            block({ blockId: "b3", generation: "young", summary: "x".repeat(100), active: true }),
-            block({ blockId: "b4", generation: "old", active: false }),
-        ],
-    };
-    const collected = collectOldGenBlocks(state, 50);
-    assert.equal(collected.length, 2);
-    assert.ok(collected.some((b) => b.blockId === "b2"));
-    assert.ok(collected.some((b) => b.blockId === "b3"));
 });
 
 test("rebuildCompressionState replays historical compress tool calls", () => {

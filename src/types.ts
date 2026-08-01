@@ -94,14 +94,6 @@ export interface TruncateConfig {
   threshold: number;
 }
 
-export interface MergeConfig {
-  // Hard cap on a merged block summary length (chars). Old-gen blocks merged
-  // by the merge-blocks node are truncated to this.
-  maxSummaryLength: number;
-  // Minimum number of old-gen blocks required to trigger a batch merge.
-  minOldGenBlocks: number;
-}
-
 export interface CompressValidationConfig {
   /** Minimum total chars of original messages in a range to allow compression. 0 = disabled. Default 5000. */
   minCompressRange: number;
@@ -118,7 +110,6 @@ export interface Config {
   // deactivation is GONE — blocks are never dropped for being old.
   promotionThreshold: number;
   truncate: TruncateConfig;
-  merge: MergeConfig;
   compress: CompressValidationConfig;
   protectedTools: string[];
   isToolProtected?: (toolName: string, toolInputText?: string) => boolean;

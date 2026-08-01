@@ -12,7 +12,6 @@ import { validateConfig } from "./config.js";
 import { resolveBoundaries, earliestIndexOfIds } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
-import { collectOldGenBlocks, mergeMarkedBlocks } from "./merge.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
 import { renderRefsNode } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
@@ -274,7 +273,6 @@ export function createCore(ports: Ports = {}): CompressionCore {
     return [
       assignRefsNode,
       syncBlocksNode,
-      mergeBlocksNode,
       pruneNode,
       filterNode,
       hideCompressCallsNode,
@@ -317,30 +315,6 @@ const syncBlocksNode: PipelineNode = {
     const synced = syncBlocks(io.messages, io.state);
     advanceSurvival(synced.state, ctx.config.promotionThreshold);
     return { ...io, state: synced.state };
-  },
-};
-
-const mergeBlocksNode: PipelineNode = {
-  name: "merge-blocks",
-  run(io, ctx) {
-    const oldGen = collectOldGenBlocks(
-      io.state,
-      ctx.config.merge.maxSummaryLength,
-    );
-    if (oldGen.length < ctx.config.merge.minOldGenBlocks) return io;
-    const ids = oldGen.map((b) => b.blockId);
-    const merged = mergeMarkedBlocks(
-      io.state,
-      ids,
-      ctx.config.merge.maxSummaryLength,
-      ctx.countTokens,
-    );
-    if (merged.mergedCount === 0) return io;
-    return {
-      ...io,
-      state: merged.state,
-      effects: { ...io.effects, mergedCount: merged.mergedCount },
-    };
   },
 };
 

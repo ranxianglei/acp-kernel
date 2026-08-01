@@ -10,7 +10,6 @@ export interface NodeEffects {
   nudge?: NudgeDecision;
   recommendation?: import("./types.js").Recommendation;
   truncatedCount?: number;
-  mergedCount?: number;
   readonly [key: string]: unknown;
 }
 

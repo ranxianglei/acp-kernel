@@ -1,4 +1,4 @@
-import type { NudgeDecision, CompressibleRange, ContextBreakdown, CompressionBlock } from "./types.js";
+import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock } from "./types.js";
 import { COMPRESS_PHILOSOPHY, HOW_TO_COMPRESS_RULES, TIER2_DISTILL_RULES, TIER3_CONDENSE_RULES } from "./compression-rules.js";
 
 export type NudgeVoice = "gentle" | "emergency";
@@ -43,31 +43,81 @@ function formatTierTargetBlocks(blocks: CompressionBlock[]): string {
   return `Target ${blocks[0]!.tier === 1 ? "tier-1" : "tier-2"} blocks to distill (${blocks.length}):\n${lines.join("\n")}`;
 }
 
-function formatRanges(compressible: CompressibleRange[]): string {
-  if (compressible.length === 0) {
+function formatRanges(compressible: CompressibleRange[], protectedRanges: ProtectedRange[]): string {
+  if (compressible.length === 0 && protectedRanges.length === 0) {
     return "[No specific ranges detected — compress any consumed content.]";
   }
 
-  // List compressible ranges oldest-first (by numeric ref). The model reads
-  // context chronologically and compresses from old to new; listing in size
-  // order made ranges jump around (m02466 before m01466) and disagree with
-  // acp_status, which preserves source order. This keeps them aligned and
-  // scannable.
+  // Merge compressible + protected into a single oldest-first list, mirroring
+  // opencode-acp's formatCompressibleRanges. Splitting them into two sections
+  // lost the time order and hid overlaps; a range can be partly compressible
+  // and partly protected, which only the merged view shows correctly.
+  interface Merged {
+    startRef: string; endRef: string; startNum: number; endNum: number;
+    count: number; tokens: number;
+    compressibleTokens: number; compressibleCount: number;
+    protectedTokens: number; protectedCount: number; protectedTools: string[];
+    toolPct: number; textPct: number; dangerous: boolean;
+  }
   const refNum = (ref: string): number => {
     const m = ref.match(/\d+/);
     return m ? parseInt(m[0], 10) : 0;
   };
-  const sorted = [...compressible].sort((a, b) => refNum(a.startRef) - refNum(b.startRef));
-  const lines = sorted.map((e) => {
-    const suffix = e.dangerous ? "  ⚠️ NOT recommended unless you are certain." : "";
+  const entries: Merged[] = [];
+  for (const r of compressible) {
+    entries.push({
+      startRef: r.startRef, endRef: r.endRef, startNum: refNum(r.startRef), endNum: refNum(r.endRef),
+      count: r.count, tokens: r.tokens, toolPct: r.toolPct, textPct: r.textPct,
+      compressibleTokens: r.tokens, compressibleCount: r.count,
+      protectedTokens: 0, protectedCount: 0, protectedTools: [], dangerous: r.dangerous ?? false,
+    });
+  }
+  for (const r of protectedRanges) {
+    entries.push({
+      startRef: r.startRef, endRef: r.endRef, startNum: refNum(r.startRef), endNum: refNum(r.endRef),
+      count: r.count, tokens: r.tokens, toolPct: 0, textPct: 0,
+      compressibleTokens: 0, compressibleCount: 0,
+      protectedTokens: r.tokens, protectedCount: r.count, protectedTools: [...r.tools], dangerous: false,
+    });
+  }
+  entries.sort((a, b) => a.startNum - b.startNum);
+  // Merge adjacent/overlapping ranges (gap ≤ 1 ref).
+  const merged: Merged[] = [];
+  for (const e of entries) {
+    const last = merged[merged.length - 1];
+    if (last && e.startNum <= last.endNum + 1) {
+      last.endRef = e.endRef;
+      last.endNum = Math.max(last.endNum, e.endNum);
+      last.count += e.count;
+      last.tokens += e.tokens;
+      last.compressibleTokens += e.compressibleTokens;
+      last.compressibleCount += e.compressibleCount;
+      last.protectedTokens += e.protectedTokens;
+      last.protectedCount += e.protectedCount;
+      if (e.dangerous) last.dangerous = true;
+      for (const t of e.protectedTools) {
+        if (!last.protectedTools.includes(t)) last.protectedTools.push(t);
+      }
+    } else {
+      merged.push({ ...e });
+    }
+  }
+  const lines = merged.map((e) => {
+    const suffix = e.dangerous && e.compressibleTokens > 0 ? "  ⚠️ NOT recommended unless you are certain." : "";
+    if (e.protectedTokens > 0 && e.compressibleTokens === 0) {
+      return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [PROTECTED: ${e.protectedTools.join(", ")} — not compressible]${suffix}`;
+    }
+    if (e.protectedTokens > 0 && e.compressibleTokens > 0) {
+      return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [${formatK(e.compressibleTokens)} compressible | ${formatK(e.protectedTokens)} protected: ${e.protectedTools.join(", ")}]${suffix}`;
+    }
     return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [tool ${e.toolPct}% | text ${e.textPct}%]${suffix}`;
   });
-  return `Compressible ranges (${compressible.length}, oldest first):\n${lines.join("\n")}`;
+  return `Compressible ranges (${merged.length}, oldest first):\n${lines.join("\n")}`;
 }
 
 export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
-  const rangesStr = formatRanges(decision.compressibleRanges);
+  const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
 
   if (decision.tier !== null && decision.tier >= 2) {
     const isT2 = decision.tier === 2;

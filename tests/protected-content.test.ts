@@ -33,6 +33,7 @@ const validSummary = "A meaningful summary that captures the key information of 
 function cfg(overrides: Partial<Config> = {}): Config {
   return defaultConfig(200000, {
     compress: { minCompressRange: 0, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 0, preserveRecentTokens: 0,
     ...overrides,
   });
 }

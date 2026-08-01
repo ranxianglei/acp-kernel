@@ -55,12 +55,18 @@ function assignAll(
 
 // ─── computeProtectedRefs ─────────────────────────────────────────────────────
 
-test("computeProtectedRefs: protects last user message even when both preserve options are 0", () => {
+test("computeProtectedRefs: last user message is protected when preserveRecentMessages > 0", () => {
+  const messages = [msg("a", "x"), msg("b", "y", "assistant")];
+  const state = assignAll(messages);
+  const refs = computeProtectedRefs(messages, state, config({ preserveRecentMessages: 5 }));
+  assert.ok(refs.has("m00001"), "last user message (a) protected by Rule 3 when recent protection is on");
+});
+
+test("computeProtectedRefs: last user message is NOT protected when preserveRecentMessages = 0 (full opt-out)", () => {
   const messages = [msg("a", "x"), msg("b", "y", "assistant")];
   const state = assignAll(messages);
   const refs = computeProtectedRefs(messages, state, config());
-  assert.equal(refs.size, 1);
-  assert.ok(refs.has("m00001"), "last user message (a) protected by Rule 3");
+  assert.ok(!refs.has("m00001"), "Rule 3 follows preserveRecentMessages — 0 opts out of all recent protection");
 });
 
 test("computeProtectedRefs: preserves last N messages by count", () => {

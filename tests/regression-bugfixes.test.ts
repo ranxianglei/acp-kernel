@@ -135,7 +135,7 @@ test("compressibleRanges use real assigned refs, not array-index arithmetic", ()
   const result = core.processTurn({
     messages,
     state,
-    config: config({ protectedTools: ["skill"], nudge: { ...config().nudge, growthRatio: 0 } }),
+    config: config({ protectedTools: ["skill"], preserveRecentMessages: 2, nudge: { ...config().nudge, growthRatio: 0 } }),
     tokenCount: 99000,
   });
 

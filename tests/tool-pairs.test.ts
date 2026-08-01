@@ -114,7 +114,7 @@ describe("adjustBoundariesForToolPairs", () => {
 });
 
 describe("compression with tool-pair protection", () => {
-  const cfg = { ...defaultConfig(100000), compress: { ...defaultConfig(100000).compress, minCompressRange: 0 } };
+  const cfg = { ...defaultConfig(100000), compress: { ...defaultConfig(100000).compress, minCompressRange: 0 }, preserveRecentMessages: 0, preserveRecentTokens: 0 };
 
   it("compression auto-includes orphaned tool-result", () => {
     const core = createCore();
@@ -271,7 +271,7 @@ describe("compression with tool-pair protection", () => {
 });
 
 describe("prune stripOrphanedToolCalls (defense-in-depth)", () => {
-  const cfg = { ...defaultConfig(100000), compress: { ...defaultConfig(100000).compress, minCompressRange: 0 } };
+  const cfg = { ...defaultConfig(100000), compress: { ...defaultConfig(100000).compress, minCompressRange: 0 }, preserveRecentMessages: 0, preserveRecentTokens: 0 };
 
   it("complete pair survives when other pair is compressed", () => {
     const core = createCore();

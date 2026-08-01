@@ -209,10 +209,34 @@ function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
     lines.push("");
     if (visible.length === 0) {
         lines.push("  (no uncompressed messages)");
-    } else {
-        for (const message of visible.slice(0, 30)) {
-            lines.push(`  ${message.ref} (${formatTokens(message.tokens)}) ${message.tool}`);
+        return lines.join("\n");
+    }
+    // Merge consecutive messages into ranges (by numeric ref), aggregating
+    // token counts and dominant tool so the view reads as blocks, not a
+    // per-message firehose — mirroring the Compressible Ranges output.
+    interface Merged { startRef: string; endRef: string; startNum: number; count: number; tokens: number; tool: string; }
+    const refNum = (ref: string): number => {
+        const m = ref.match(/\d+/);
+        return m ? parseInt(m[0], 10) : 0;
+    };
+    const merged: Merged[] = [];
+    for (const m of visible) {
+        const num = refNum(m.ref);
+        const last = merged[merged.length - 1];
+        if (last && num === last.startNum + last.count) {
+            last.endRef = m.ref;
+            last.count += 1;
+            last.tokens += m.tokens;
+        } else {
+            merged.push({ startRef: m.ref, endRef: m.ref, startNum: num, count: 1, tokens: m.tokens, tool: m.tool });
         }
+    }
+    for (const r of merged.slice(0, 30)) {
+        const range = r.count === 1 ? r.startRef : `${r.startRef}–${r.endRef}`;
+        lines.push(`  ${range}  (${r.count} msgs, ${formatTokens(r.tokens)}${r.count > 1 ? ` (${Math.round(r.tokens / r.count)}/msg)` : ""}) ${r.tool}`);
+    }
+    if (merged.length > 30) {
+        lines.push(`  ... and ${merged.length - 30} more ranges`);
     }
     return lines.join("\n");
 }

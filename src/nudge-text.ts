@@ -48,15 +48,21 @@ function formatRanges(compressible: CompressibleRange[]): string {
     return "[No specific ranges detected — compress any consumed content.]";
   }
 
-  // List compressible ranges as-is (NOT merged, NOT capped) so the model
-  // sees every compressible range and never misses content to compress.
-  // Sorted by size descending so the biggest wins show first.
-  const sorted = [...compressible].sort((a, b) => b.tokens - a.tokens);
+  // List compressible ranges oldest-first (by numeric ref). The model reads
+  // context chronologically and compresses from old to new; listing in size
+  // order made ranges jump around (m02466 before m01466) and disagree with
+  // acp_status, which preserves source order. This keeps them aligned and
+  // scannable.
+  const refNum = (ref: string): number => {
+    const m = ref.match(/\d+/);
+    return m ? parseInt(m[0], 10) : 0;
+  };
+  const sorted = [...compressible].sort((a, b) => refNum(a.startRef) - refNum(b.startRef));
   const lines = sorted.map((e) => {
     const suffix = e.dangerous ? "  ⚠️ NOT recommended unless you are certain." : "";
     return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [tool ${e.toolPct}% | text ${e.textPct}%]${suffix}`;
   });
-  return `Compressible ranges (${compressible.length}, largest first):\n${lines.join("\n")}`;
+  return `Compressible ranges (${compressible.length}, oldest first):\n${lines.join("\n")}`;
 }
 
 export function renderNudgeText(decision: NudgeDecision): RenderedNudge {

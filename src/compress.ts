@@ -95,6 +95,13 @@ export function createCore(ports: Ports = {}): CompressionCore {
     let tokensCompressed = 0;
     const errors: string[] = [];
 
+    // Default to the soft-protected zone (recent-N + last user message) when the
+    // caller doesn't pass an explicit set. This makes applyCompression safe by
+    // default; applySingleRange enforces it as a hard backstop.
+    const protectedMessageIds =
+      input.protectedMessageIds ??
+      computeProtectedRefs(input.messages, input.state, input.config);
+
     const preExistingCoverage = collectCoverage(state);
 
     const rangeIndexSets: { spec: typeof input.ranges[number]; indices: number[] }[] = [];
@@ -185,7 +192,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
           state,
           runId,
           config: input.config,
-          protectedMessageIds: input.protectedMessageIds,
+          protectedMessageIds,
           countTokens,
           preExistingCoverage,
         });
@@ -508,6 +515,31 @@ function applySingleRange(input: SingleRangeInput): number {
     input.messages,
     input.config,
   );
+
+  // HARD PROTECTION: never let the recent-N / last-user-message zone be
+  // compressed, even if the model ignores the nudge and calls compress
+  // directly on those refs. `protectedMessageIds` holds REF ids (mNNNNN)
+  // from computeProtectedRefs; filteredIds holds RAW message ids, so convert
+  // via state.messageRefs.byRaw before testing membership. applySingleRange
+  // enforces this as the real backstop; the recommend/nudge path is advisory.
+  const protectedRefs = input.protectedMessageIds;
+  const hitProtectedRaw = protectedRefs
+    ? filteredIds.filter((id) => {
+        const ref = input.state.messageRefs.byRaw[id];
+        return ref !== undefined && protectedRefs.has(ref);
+      })
+    : [];
+  if (hitProtectedRaw.length > 0) {
+    const recentN = input.config.preserveRecentMessages;
+    const hitRefs = hitProtectedRaw
+      .map((id) => input.state.messageRefs.byRaw[id])
+      .filter(Boolean);
+    throw new Error(
+      `Range includes protected messages (the last ${recentN} messages and/or the most recent user message) which must not be compressed: ${hitRefs.join(
+        ", ",
+      )}. Adjust startId/endId to exclude them.`,
+    );
+  }
 
   validateCompressionRange(input, filteredIds, consumedBlockIds.length);
 

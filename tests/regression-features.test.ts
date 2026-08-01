@@ -82,6 +82,7 @@ test("Bug 1: maxSummaryLength enforced after appending protected content", () =>
   const config = defaultConfig(200000, {
     protectedTools: ["skill"],
     compress: { minCompressRange: 0, maxSummaryLength: 100, minSummaryLength: 0 },
+    preserveRecentMessages: 0, preserveRecentTokens: 0,
   });
   let state = setupRefs(messages, {
     blocks: [],
@@ -126,6 +127,7 @@ test("Bug 2: orphaned tool-call — protected call outside range, result inside"
   const config = defaultConfig(200000, {
     protectedTools: ["skill"],
     compress: { minCompressRange: 0, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 0, preserveRecentTokens: 0,
   });
   let state = setupRefs(messages, {
     blocks: [],

@@ -55,7 +55,7 @@ test("rebuildCompressionState replays historical compress tool calls", () => {
         { id: "raw3", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call1", text: compressInput },
         { id: "raw4", role: "user", contentType: "text", text: "later message" },
     ];
-    const config = defaultConfig(200000, { compress: { minCompressRange: 0, maxSummaryLength: 0, minSummaryLength: 0 } });
+    const config = defaultConfig(200000, { compress: { minCompressRange: 0, maxSummaryLength: 0, minSummaryLength: 0 }, preserveRecentMessages: 0, preserveRecentTokens: 0 });
     const result = rebuildCompressionState(createInitialState(), messages, config);
     assert.ok(result.blocksRebuilt >= 1);
     const rebuiltBlock = result.state.blocks.find((b) => b.summary.includes("rebuilt summary"));
@@ -68,6 +68,6 @@ test("rebuildCompressionState returns zero blocks when no compress calls exist",
     const messages: CoreMessage[] = [
         { id: "raw1", role: "user", contentType: "text", text: "plain" },
     ];
-    const result = rebuildCompressionState(createInitialState(), messages, defaultConfig(200000));
+    const result = rebuildCompressionState(createInitialState(), messages, defaultConfig(200000, { preserveRecentMessages: 0, preserveRecentTokens: 0 }));
     assert.equal(result.blocksRebuilt, 0);
 });

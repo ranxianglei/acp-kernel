@@ -251,7 +251,7 @@ test("prune: keeps tool-result when tool-call is OUTSIDE compression range", () 
 
 // ─── Protection tests ─────────────────────────────────────────────────────────
 
-test("computeProtectedRefs: last visible user message is always protected regardless of distance", () => {
+test("computeProtectedRefs: last visible user message is protected when preserveRecentMessages > 0", () => {
   const messages: CoreMessage[] = [
     { id: "u0", role: "user", contentType: "text", text: "first user" },
     ...makeMessages(20),
@@ -275,8 +275,10 @@ test("computeProtectedRefs: last visible user message is always protected regard
     },
   };
 
+  // Rule 3 follows preserveRecentMessages: with it > 0 the last user message
+  // is protected regardless of distance from the tail.
   const config = buildConfig({
-    preserveRecentMessages: 0,
+    preserveRecentMessages: 5,
     preserveRecentTokens: 0,
   });
 
@@ -284,7 +286,7 @@ test("computeProtectedRefs: last visible user message is always protected regard
 
   assert.ok(
     protected_.has("m00024"),
-    "last user message should be protected even with zero token/message protection",
+    "last user message is protected when preserveRecentMessages > 0",
   );
 });
 

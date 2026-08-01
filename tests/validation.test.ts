@@ -29,7 +29,7 @@ test("validation: empty summary is rejected", () => {
     msg("b", longText),
   ];
   const state = setupRefs(messages);
-  const config = defaultConfig(200000);
+  const config = defaultConfig(200000, { preserveRecentMessages: 0, preserveRecentTokens: 0 });
 
   const result = core.applyCompression({
     ranges: [{ startRef: "m00001", endRef: "m00002", summary: "" }],
@@ -46,7 +46,7 @@ test("validation: whitespace-only summary is rejected", () => {
   const core = createCore();
   const messages = [msg("a", longText), msg("b", longText)];
   const state = setupRefs(messages);
-  const config = defaultConfig(200000);
+  const config = defaultConfig(200000, { preserveRecentMessages: 0, preserveRecentTokens: 0 });
 
   const result = core.applyCompression({
     ranges: [{ startRef: "m00001", endRef: "m00002", summary: "   \n\t  " }],
@@ -63,6 +63,7 @@ test("validation: summary below minSummaryLength is rejected", () => {
   const messages = [msg("a", longText), msg("b", longText)];
   const state = setupRefs(messages);
   const config = defaultConfig(200000, {
+    preserveRecentMessages: 0, preserveRecentTokens: 0,
     compress: { minCompressRange: 0, maxSummaryLength: 0, minSummaryLength: 100 },
   });
 
@@ -81,6 +82,7 @@ test("validation: summary above maxSummaryLength is rejected", () => {
   const messages = [msg("a", longText), msg("b", longText)];
   const state = setupRefs(messages);
   const config = defaultConfig(200000, {
+    preserveRecentMessages: 0, preserveRecentTokens: 0,
     compress: { minCompressRange: 0, maxSummaryLength: 50, minSummaryLength: 0 },
   });
 
@@ -99,6 +101,7 @@ test("validation: range below minCompressRange is rejected", () => {
   const messages = [msg("a", "short"), msg("b", "text")];
   const state = setupRefs(messages);
   const config = defaultConfig(200000, {
+    preserveRecentMessages: 0, preserveRecentTokens: 0,
     compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
   });
 
@@ -120,6 +123,7 @@ test("validation: batch aggregate — many small ranges pass if total >= minComp
   ];
   const state = setupRefs(messages);
   const config = defaultConfig(200000, {
+    preserveRecentMessages: 0, preserveRecentTokens: 0,
     compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
   });
 
@@ -149,7 +153,7 @@ test("validation: range with zero compressible messages (covered by non-nested b
     msg("d", longText),
   ];
   let state = setupRefs(messages);
-  const config = defaultConfig(200000);
+  const config = defaultConfig(200000, { preserveRecentMessages: 0, preserveRecentTokens: 0 });
 
   const first = core.applyCompression({
     ranges: [{ startRef: "m00001", endRef: "m00003", summary: validSummary }],
@@ -176,7 +180,7 @@ test("validation: block-boundary compress with 0 direct msgs but consumed blocks
   const core = createCore();
   const messages = [msg("a", longText), msg("b", longText), msg("c", longText)];
   let state = setupRefs(messages);
-  const config = defaultConfig(200000);
+  const config = defaultConfig(200000, { preserveRecentMessages: 0, preserveRecentTokens: 0 });
 
   const t1 = core.applyCompression({
     ranges: [{ startRef: "m00001", endRef: "m00002", summary: validSummary }],
@@ -202,6 +206,7 @@ test("validation: all checks disabled (0s) allows any input", () => {
   const messages = [msg("a", "x"), msg("b", "y")];
   const state = setupRefs(messages);
   const config = defaultConfig(200000, {
+    preserveRecentMessages: 0, preserveRecentTokens: 0,
     compress: { minCompressRange: 0, maxSummaryLength: 0, minSummaryLength: 0 },
   });
 
@@ -224,7 +229,7 @@ test("validation: errors are collected per-range in batch compress", () => {
     msg("d", longText),
   ];
   const state = setupRefs(messages);
-  const config = defaultConfig(200000);
+  const config = defaultConfig(200000, { preserveRecentMessages: 0, preserveRecentTokens: 0 });
 
   const result = core.applyCompression({
     ranges: [

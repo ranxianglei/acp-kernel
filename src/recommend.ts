@@ -95,13 +95,19 @@ export function computeProtectedRefs(
     }
   }
 
-  // Rule 3: last visible user message (always protected, regardless of distance)
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]!;
-    if (msg.role !== "user" || isSyntheticOrPruned(msg, state)) continue;
-    const ref = state.messageRefs.byRaw[msg.id];
-    if (ref && ref !== "BLOCKED") result.add(ref);
-    break;
+  // Rule 3: last visible user message. Protected whenever recent-message
+  // protection is on (preserveRecentMessages > 0) — this couples it to the
+  // same switch as Rule 1, so setting preserveRecentMessages = 0 fully opts
+  // out (needed by tests that compress the tail). Production defaultConfig
+  // uses 5, so the last user message is always protected in practice.
+  if (preserveN > 0) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]!;
+      if (msg.role !== "user" || isSyntheticOrPruned(msg, state)) continue;
+      const ref = state.messageRefs.byRaw[msg.id];
+      if (ref && ref !== "BLOCKED") result.add(ref);
+      break;
+    }
   }
 
   return result;

@@ -55,9 +55,9 @@ export type { HideConsumedResult } from "./hide-consumed.js";
 export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
 export { renderVisibleRefs, renderRefsNode } from "./render-refs.js";
-export { searchBlocks, searchBlocksAsync } from "./search.js";
-export type { SearchResult, SearchOptions, SearchAlgorithm, SearchDoc, ScoredBlock } from "./search.js";
-export { DEFAULT_ALGORITHM, registerSearchAlgorithm, getSearchAlgorithm, listSearchAlgorithms } from "./search.js";
+export { searchBlocks, searchBlocksAsync, blockDocs, messageDocs } from "./search.js";
+export type { SearchResult, SearchOptions, SearchAlgorithm, AsyncSearchAlgorithm, AnySearchAlgorithm, SearchDoc, SearchDocKind, ScoredBlock, MessageRole, RoleWeights, MessageInput } from "./search.js";
+export { DEFAULT_ALGORITHM, DEFAULT_ROLE_WEIGHTS, registerSearchAlgorithm, getSearchAlgorithm, listSearchAlgorithms } from "./search.js";
 export { isMessageProtected, matchToolPattern } from "./protected.js";
 export {
   runPipeline,

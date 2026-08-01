@@ -21,16 +21,16 @@ export const bm25Algorithm: SearchAlgorithm = {
         const k1 = 1.2;
         const b = 0.75;
         const parsed = docs.map((d) => {
-            const text = d.topic + " " + d.summary;
+            const text = d.text;
             const tf = tfMap(text, true);
             let len = 0;
             for (const v of tf.values()) len += v;
-            return { id: d.blockId, tf, len };
+            return { id: d.ref, tf, len };
         });
         const avgdl = parsed.reduce((s, d) => s + d.len, 0) / (N || 1);
 
         const qTerms = tokenize(query, { stem: true });
-        if (qTerms.length === 0) return docs.map((d) => ({ blockId: d.blockId, score: 0 }));
+        if (qTerms.length === 0) return docs.map((d) => ({ ref: d.ref, score: 0 }));
 
         const idf = new Map<string, number>();
         for (const t of new Set(qTerms)) {
@@ -47,7 +47,7 @@ export const bm25Algorithm: SearchAlgorithm = {
                 const idfT = idf.get(t) ?? 0;
                 score += (idfT * (f * (k1 + 1))) / (f + k1 * (1 - b + (b * d.len) / (avgdl || 1)));
             }
-            return { blockId: d.id, score };
+            return { ref: d.id, score };
         });
     },
 };

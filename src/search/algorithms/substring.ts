@@ -11,12 +11,12 @@ export const substringAlgorithm: SearchAlgorithm = {
     description: "Exact substring counting (original baseline). Predictable, no normalization.",
     score(docs: SearchDoc[], query: string): ScoredBlock[] {
         const terms = query.toLowerCase().trim().split(/\s+/).filter((t) => t.length > 0);
-        if (terms.length === 0) return docs.map((d) => ({ blockId: d.blockId, score: 0 }));
+        if (terms.length === 0) return docs.map((d) => ({ ref: d.ref, score: 0 }));
         return docs.map((d) => {
-            const haystack = (d.topic + " " + d.summary).toLowerCase();
+            const haystack = d.text.toLowerCase();
             let score = 0;
             for (const term of terms) score += countOccurrences(haystack, term);
-            return { blockId: d.blockId, score };
+            return { ref: d.ref, score };
         });
     },
 };

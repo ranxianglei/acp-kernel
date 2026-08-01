@@ -78,10 +78,10 @@ export function createSemanticAlgorithm(opts: SemanticOptions): AsyncSearchAlgor
             // 1. find docs needing (re)embedding
             const stale: Array<{ id: string; text: string; hash: string }> = [];
             for (const d of docs) {
-                const text = d.topic + " " + d.summary;
+                const text = d.text;
                 const hash = hashText(text);
-                const cached = cache.get(d.blockId);
-                if (!cached || cached.hash !== hash) stale.push({ id: d.blockId, text, hash });
+                const cached = cache.get(d.ref);
+                if (!cached || cached.hash !== hash) stale.push({ id: d.ref, text, hash });
             }
 
             // 2. batch-embed stale docs + query in one round-trip
@@ -89,7 +89,7 @@ export function createSemanticAlgorithm(opts: SemanticOptions): AsyncSearchAlgor
             toEmbed.push(query);
             const vecs = await opts.embed(toEmbed);
             if (vecs.length !== toEmbed.length) {
-                return docs.map((d) => ({ blockId: d.blockId, score: 0 }));
+                return docs.map((d) => ({ ref: d.ref, score: 0 }));
             }
             const qVec = vecs[vecs.length - 1]!;
             for (let j = 0; j < stale.length; j++) {
@@ -98,8 +98,8 @@ export function createSemanticAlgorithm(opts: SemanticOptions): AsyncSearchAlgor
 
             // 3. cosine similarity
             return docs.map((d) => {
-                const cached = cache.get(d.blockId);
-                return { blockId: d.blockId, score: cached ? cosine(qVec, cached.vec) : 0 };
+                const cached = cache.get(d.ref);
+                return { ref: d.ref, score: cached ? cosine(qVec, cached.vec) : 0 };
             });
         },
     };

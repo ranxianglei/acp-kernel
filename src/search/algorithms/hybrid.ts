@@ -30,11 +30,11 @@ export const hybridAlgorithm: SearchAlgorithm = {
         const fz = fuzzyAlgorithm.score(docs, query);
         const maxBm = Math.max(...bm.map((r) => r.score), 1e-9);
         const maxFz = Math.max(...fz.map((r) => r.score), 1e-9);
-        const bmMap = new Map(bm.map((r) => [r.blockId, r.score / maxBm]));
-        const fzMap = new Map(fz.map((r) => [r.blockId, r.score / maxFz]));
+        const bmMap = new Map(bm.map((r) => [r.ref, r.score / maxBm]));
+        const fzMap = new Map(fz.map((r) => [r.ref, r.score / maxFz]));
         return docs.map((d) => ({
-            blockId: d.blockId,
-            score: W_BM25 * (bmMap.get(d.blockId) ?? 0) + W_FUZZY * (fzMap.get(d.blockId) ?? 0),
+            ref: d.ref,
+            score: W_BM25 * (bmMap.get(d.ref) ?? 0) + W_FUZZY * (fzMap.get(d.ref) ?? 0),
         }));
     },
 };

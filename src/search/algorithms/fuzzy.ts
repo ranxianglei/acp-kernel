@@ -17,18 +17,18 @@ export const fuzzyAlgorithm: SearchAlgorithm = {
     description: "Character bigram overlap. Typo-tolerant, script-agnostic, high recall.",
     score(docs: SearchDoc[], query: string): ScoredBlock[] {
         const qTokens = query.toLowerCase().split(/[\s,]+/).filter((t) => t.length >= 4);
-        if (qTokens.length === 0) return docs.map((d) => ({ blockId: d.blockId, score: 0 }));
+        if (qTokens.length === 0) return docs.map((d) => ({ ref: d.ref, score: 0 }));
 
         const qGrams = new Set<string>();
         for (const t of qTokens) for (const g of charBigrams(t)) qGrams.add(g);
-        if (qGrams.size === 0) return docs.map((d) => ({ blockId: d.blockId, score: 0 }));
+        if (qGrams.size === 0) return docs.map((d) => ({ ref: d.ref, score: 0 }));
 
         return docs.map((d) => {
-            const haystack = (d.topic + " " + d.summary).toLowerCase();
+            const haystack = d.text.toLowerCase();
             const docGrams = new Set(charBigrams(haystack));
             let hits = 0;
             for (const g of qGrams) if (docGrams.has(g)) hits++;
-            return { blockId: d.blockId, score: hits / qGrams.size };
+            return { ref: d.ref, score: hits / qGrams.size };
         });
     },
 };

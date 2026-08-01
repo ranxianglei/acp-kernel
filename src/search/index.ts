@@ -1,10 +1,10 @@
 /**
  * searchBlocks — public search entry point.
  *
- * Selects an algorithm by name (default "hybrid"), scores all active
- * blocks, sorts by score desc, and returns the top results with a
- * match-context preview (snippet around the first hit, not just the
- * head — so the user sees WHY a block matched).
+ * Scores a unified document set (block summaries + historical messages)
+ * and returns ranked results. The model uses search to cheaply locate
+ * detail that compression folded into summaries, then decompresses the
+ * owning block for the full content.
  *
  * Two entry points:
  *  - searchBlocks()      — sync. Works for all lexical algorithms.
@@ -14,12 +14,64 @@
 
 import type { CompressionState, CompressionBlock } from "../types.js";
 import { getSearchAlgorithm } from "./registry.js";
-import type { SearchDoc, ScoredBlock } from "./types.js";
-import type { SearchResult, SearchOptions } from "./types.js";
-import { DEFAULT_ALGORITHM } from "./types.js";
+import type { SearchDoc, ScoredBlock, MessageInput } from "./types.js";
+import type { SearchResult, SearchOptions, RoleWeights } from "./types.js";
+import { DEFAULT_ALGORITHM, DEFAULT_ROLE_WEIGHTS } from "./types.js";
+
+/** Build SearchDoc[] from all blocks (active AND inactive) of the state. */
+export function blockDocs(state: CompressionState): SearchDoc[] {
+    return state.blocks.map((b: CompressionBlock): SearchDoc => ({
+        kind: "block",
+        ref: b.blockId,
+        text: `${b.topic ?? ""} ${b.summary ?? ""}`,
+        title: b.topic ?? b.blockId,
+        blockId: b.blockId,
+        tier: b.tier ?? 1,
+        tokens: b.compressedTokens,
+    }));
+}
+
+/**
+ * Build SearchDoc[] from historical messages supplied by the host. The host
+ * (pai-acp) reads these from the append-only session log — they include the
+ * original text of messages that compression later folded into block summaries.
+ *
+ * `ownerOf(ref)` maps a message ref to the block id that compressed it, so a
+ * message hit tells the model exactly which block to decompress for detail.
+ */
+export function messageDocs(msgs: MessageInput[]): SearchDoc[] {
+    return msgs.map((m): SearchDoc => ({
+        kind: "message",
+        ref: m.ref,
+        text: m.text,
+        title: `${m.role}: ${m.text.slice(0, 60)}`,
+        role: m.role,
+        blockId: m.blockId,
+        tier: m.tier,
+        tokens: m.tokens,
+    }));
+}
+
+function applyRoleWeight(scored: ScoredBlock[], docs: SearchDoc[], rw: Required<RoleWeights>): ScoredBlock[] {
+    if (docs.length === 0) return scored;
+    const docByRef = new Map(docs.map((d) => [d.ref, d]));
+    return scored.map((s) => {
+        const doc = docByRef.get(s.ref);
+        if (!doc) return s;
+        const w =
+            doc.kind === "message"
+                ? doc.role === "user"
+                    ? rw.user
+                    : doc.role === "assistant"
+                      ? rw.assistant
+                      : rw.tool
+                : rw.block;
+        return { ref: s.ref, score: s.score * w };
+    });
+}
 
 function runSearch(
-    state: CompressionState,
+    docs: SearchDoc[],
     query: string,
     options: SearchOptions,
 ): SearchResult[] | Promise<SearchResult[]> {
@@ -27,52 +79,46 @@ function runSearch(
     const previewLength = options.previewLength ?? 200;
     const minScore = options.minScore ?? 0.01;
     const algoName = options.algorithm ?? DEFAULT_ALGORITHM;
+    const rw = { ...DEFAULT_ROLE_WEIGHTS, ...options.roleWeights };
 
     const algo = getSearchAlgorithm(algoName);
     if (!algo) return [];
-
-    const active = state.blocks.filter((b: CompressionBlock) => b.active);
-    if (active.length === 0) return [];
-
-    const docs: SearchDoc[] = active.map((b) => ({
-        blockId: b.blockId,
-        topic: b.topic ?? "",
-        summary: b.summary ?? "",
-        block: b,
-    }));
+    if (docs.length === 0) return [];
 
     const scoredOrPromise = algo.score(docs, query);
 
-    const buildResults = (scored: ScoredBlock[]): SearchResult[] => {
-        const results: SearchResult[] = active.map((b) => {
-            const s = scored.find((x) => x.blockId === b.blockId);
-            return {
-                blockId: b.blockId,
-                tier: b.tier ?? 1,
-                score: s?.score ?? 0,
-                topic: b.topic ?? "(no topic)",
-                preview: makePreview(b.summary ?? "", b.topic ?? "", query, previewLength),
-                block: b,
-            };
-        });
-        return results
-            .filter((r) => r.score >= minScore)
+    const buildResults = (weighted: ScoredBlock[]): SearchResult[] => {
+        const byRef = new Map(docs.map((d) => [d.ref, d]));
+        return weighted
+            .map((s): SearchResult | null => {
+                const doc = byRef.get(s.ref);
+                if (!doc) return null;
+                return {
+                    kind: doc.kind,
+                    ref: doc.ref,
+                    blockId: doc.blockId,
+                    tier: doc.tier ?? 1,
+                    score: s.score,
+                    title: doc.title,
+                    preview: makePreview(doc.text, query, previewLength),
+                    role: doc.role,
+                    tokens: doc.tokens,
+                };
+            })
+            .filter((r): r is SearchResult => r !== null && r.score >= minScore)
             .sort((a, b) => b.score - a.score)
             .slice(0, limit);
     };
 
     if (scoredOrPromise instanceof Promise) {
-        return scoredOrPromise.then(buildResults);
+        return scoredOrPromise.then((raw) => buildResults(applyRoleWeight(raw, docs, rw)));
     }
-    return buildResults(scoredOrPromise);
+    return buildResults(applyRoleWeight(scoredOrPromise, docs, rw));
 }
 
-export function searchBlocks(
-    state: CompressionState,
-    query: string,
-    options: SearchOptions = {},
-): SearchResult[] {
-    const result = runSearch(state, query, options);
+/** Sync entry — throws for async algorithms. Pass docs from blockDocs() + messageDocs(). */
+export function searchBlocks(docs: SearchDoc[], query: string, options: SearchOptions = {}): SearchResult[] {
+    const result = runSearch(docs, query, options);
     if (result instanceof Promise) {
         throw new Error(
             `searchBlocks: algorithm "${options.algorithm ?? DEFAULT_ALGORITHM}" is async (e.g. semantic). Use searchBlocksAsync() instead.`,
@@ -81,21 +127,15 @@ export function searchBlocks(
     return result;
 }
 
-export async function searchBlocksAsync(
-    state: CompressionState,
-    query: string,
-    options: SearchOptions = {},
-): Promise<SearchResult[]> {
-    return await runSearch(state, query, options);
+export async function searchBlocksAsync(docs: SearchDoc[], query: string, options: SearchOptions = {}): Promise<SearchResult[]> {
+    return await runSearch(docs, query, options);
 }
 
 /**
- * Build a preview that centers on the first query-term hit (case-insensitive).
- * Falls back to the summary head when no term hits. Makes search results
- * self-explaining: the user sees the matching context, not an arbitrary prefix.
+ * Preview centered on the first query-term hit (case-insensitive).
+ * Falls back to the head when no term hits.
  */
-function makePreview(summary: string, topic: string, query: string, len: number): string {
-    const text = summary || topic || "";
+function makePreview(text: string, query: string, len: number): string {
     if (!text) return "";
     const terms = query.toLowerCase().trim().split(/\s+/).filter((t) => t.length > 1);
     if (terms.length === 0) return text.slice(0, len);

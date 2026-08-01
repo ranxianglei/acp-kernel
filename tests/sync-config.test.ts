@@ -62,7 +62,6 @@ test("defaultConfig provides sensible production defaults", () => {
   assert.equal(cfg.modelContextLimit, 200000);
   assert.equal(cfg.promotionThreshold, 5);
   assert.equal(cfg.truncate.threshold, 1);
-  assert.equal(cfg.merge.maxSummaryLength, 3000);
   assert.equal(cfg.nudge.maxContextLimitPct, 0.55);
   assert.ok(cfg.tiers.tier3Trigger > cfg.tiers.tier2Trigger);
 });

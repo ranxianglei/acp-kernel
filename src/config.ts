@@ -21,7 +21,6 @@ export function defaultConfig(
     },
     promotionThreshold: 5,
     truncate: { threshold: 1 },
-    merge: { maxSummaryLength: 3000, minOldGenBlocks: 3 },
     compress: {
       minCompressRange: 5000,
       maxSummaryLength: 20000,
@@ -38,7 +37,6 @@ export function defaultConfig(
     tiers: { ...base.tiers, ...overrides.tiers },
     nudge: { ...base.nudge, ...overrides.nudge },
     truncate: { ...base.truncate, ...overrides.truncate },
-    merge: { ...base.merge, ...overrides.merge },
     compress: { ...base.compress, ...overrides.compress },
   };
 }
@@ -61,12 +59,6 @@ export function validateConfig(config: Config): string[] {
   }
   if (config.truncate.threshold <= 0 || config.truncate.threshold > 1) {
     errors.push("truncate.threshold must be in (0, 1]");
-  }
-  if (config.merge.maxSummaryLength < 1) {
-    errors.push("merge.maxSummaryLength must be >= 1");
-  }
-  if (config.merge.minOldGenBlocks < 1) {
-    errors.push("merge.minOldGenBlocks must be >= 1");
   }
   for (const tier of [config.tiers.tier2Trigger, config.tiers.tier3Trigger]) {
     if (tier < 1) errors.push("tier triggers must be >= 1");

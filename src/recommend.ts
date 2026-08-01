@@ -20,7 +20,10 @@ import type {
   ProtectedRange,
 } from "./types.js";
 import type { CompressionState } from "./types.js";
-import { isMessageProtected } from "./protected.js";
+import {
+  collectProtectedToolCallIds,
+  isMessageProtectedWithPairing,
+} from "./protected.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,6 +150,10 @@ export function buildCompressibleRanges(
     tools: string[];
   }[] = [];
 
+  // Pairing: a tool-result may carry only toolCallId (no toolName). Collect the
+  // callIds of protected tool-calls first, then protect matching results too.
+  const protectedCallIds = collectProtectedToolCallIds(messages, config);
+
   for (const msg of messages) {
     if (isSyntheticOrPruned(msg, state)) continue;
     const ref = state.messageRefs.byRaw[msg.id];
@@ -154,7 +161,7 @@ export function buildCompressibleRanges(
 
     const rn = refNum(ref);
 
-    if (isMessageProtected(msg, config)) {
+    if (isMessageProtectedWithPairing(msg, config, protectedCallIds)) {
       protectedMsgs.push({
         ref,
         refNum: rn,

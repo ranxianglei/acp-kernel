@@ -6,6 +6,7 @@ import {
     findActiveAncestor,
     deactivateBlock,
     buildRestoredContentPreview,
+    collectBlockContent,
 } from "../src/decompress.js";
 import { buildStatusReport, buildRecap } from "../src/report.js";
 import { createInitialState } from "../src/state.js";
@@ -168,4 +169,103 @@ test("buildRecap reports missing and inactive blocks", () => {
     assert.ok(missing.includes("not found"));
     const inactive = buildRecap(state, "b1");
     assert.ok(inactive.includes("inactive"));
+});
+
+test("collectBlockContent: full=false shows nested active child summary + direct messages", () => {
+    const messages: CoreMessage[] = [
+        { id: "m1", role: "user", contentType: "text", text: "hello" },
+        { id: "m2", role: "assistant", contentType: "tool-result", toolName: "read", text: "file a" },
+        { id: "m3", role: "assistant", contentType: "text", text: "found bug" },
+        { id: "m4", role: "user", contentType: "text", text: "direct message" },
+    ];
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            // T1 child covering m1,m2 — stays folded, its summary shown
+            block({ blockId: "b1", effectiveMessageIds: ["m1", "m2"], active: true, summary: "child summary", topic: "intro" }),
+            // T2 parent covering m1..m4, consumes b1
+            block({ blockId: "b2", effectiveMessageIds: ["m1", "m2", "m3", "m4"], directBlockIds: ["b1"], active: true }),
+        ],
+    };
+    const parent = state.blocks.find((b) => b.blockId === "b2")!;
+    const result = collectBlockContent(state, parent, messages);
+    assert.ok(result.count > 0);
+    // child summary rendered with topic label
+    assert.match(result.text, /\[Compressed conversation section\] — b1: intro/);
+    assert.ok(result.text.includes("child summary"));
+    // m1,m2 NOT shown (covered by active child); m3,m4 shown in full
+    assert.ok(!result.text.includes("hello"));
+    assert.ok(!result.text.includes("file a"));
+    assert.ok(result.text.includes("found bug"));
+    assert.ok(result.text.includes("direct message"));
+});
+
+test("collectBlockContent: full=true recurses to all original messages", () => {
+    const messages: CoreMessage[] = [
+        { id: "m1", role: "user", contentType: "text", text: "hello" },
+        { id: "m2", role: "assistant", contentType: "tool-result", toolName: "read", text: "file a" },
+        { id: "m3", role: "assistant", contentType: "text", text: "found bug" },
+    ];
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b1", effectiveMessageIds: ["m1", "m2"], active: true, summary: "child summary" }),
+            block({ blockId: "b2", effectiveMessageIds: ["m1", "m2", "m3"], directBlockIds: ["b1"], active: true }),
+        ],
+    };
+    const parent = state.blocks.find((b) => b.blockId === "b2")!;
+    const result = collectBlockContent(state, parent, messages, { full: true });
+    assert.equal(result.count, 3);
+    // ALL original messages shown, no summary
+    assert.ok(result.text.includes("hello"));
+    assert.ok(result.text.includes("file a"));
+    assert.ok(result.text.includes("found bug"));
+    assert.ok(!result.text.includes("child summary"));
+    assert.ok(!result.text.includes("[Compressed"));
+});
+
+test("collectBlockContent: full=false with inactive nested child shows child's messages directly", () => {
+    // If the nested child is inactive (e.g. already decompressed), its messages
+    // are NOT considered covered and are shown in full — only ACTIVE children fold.
+    const messages: CoreMessage[] = [
+        { id: "m1", role: "user", contentType: "text", text: "hello" },
+        { id: "m2", role: "assistant", contentType: "text", text: "world" },
+    ];
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b1", effectiveMessageIds: ["m1"], active: false, summary: "inactive child" }),
+            block({ blockId: "b2", effectiveMessageIds: ["m1", "m2"], directBlockIds: ["b1"], active: true }),
+        ],
+    };
+    const parent = state.blocks.find((b) => b.blockId === "b2")!;
+    const result = collectBlockContent(state, parent, messages);
+    assert.equal(result.count, 2);
+    assert.ok(result.text.includes("hello"));
+    assert.ok(result.text.includes("world"));
+    assert.ok(!result.text.includes("inactive child"));
+});
+
+test("collectBlockContent: does not mutate state", () => {
+    const messages: CoreMessage[] = [
+        { id: "m1", role: "user", contentType: "text", text: "hello" },
+    ];
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [block({ blockId: "b1", effectiveMessageIds: ["m1"], active: true })],
+    };
+    const before = JSON.stringify(state);
+    collectBlockContent(state, state.blocks[0]!, messages, { full: true });
+    const after = JSON.stringify(state);
+    assert.equal(after, before, "state must not be mutated");
+});
+
+test("collectBlockContent: empty block returns empty", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [block({ blockId: "b1", effectiveMessageIds: [], active: true })],
+    };
+    const result = collectBlockContent(state, state.blocks[0]!, []);
+    assert.equal(result.count, 0);
+    assert.equal(result.text, "");
 });

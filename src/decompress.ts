@@ -1,3 +1,4 @@
+import { SUMMARY_HEADER } from "./prune.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "./types.js";
 
 export function parseBlockIdArg(arg: string): string | null {
@@ -126,6 +127,89 @@ export function buildRestoredContentPreview(
     }
 
     return { preview: lines.join("\n"), restoredCount: restored.length };
+}
+
+export interface CollectedContentResult {
+    /** Rendered, human-readable content string (empty when count is 0). */
+    text: string;
+    /** Number of items rendered: direct messages + nested summaries (full=false) or all messages (full=true). */
+    count: number;
+}
+
+export interface CollectContentOptions {
+    /** When true, recurse through all nested tiers to original messages. Default: false (one tier up — nested active children stay folded, their summaries shown). */
+    full?: boolean;
+}
+
+/**
+ * Collect a block's content as a readable string WITHOUT modifying state.
+ *
+ * This is the cache-safe decompress primitive: the block stays compressed
+ * (folded), its summary stays in place, and the full content is returned as
+ * text for the caller to surface (e.g. as a tool result appended to the
+ * conversation). Unlike deactivateBlock + prune, this does not mutate the
+ * message-array prefix, so prompt cache is preserved.
+ *
+ * full=false (default): one tier up. Nested ACTIVE children of this block
+ *   stay folded; their summaries are rendered in place of their messages.
+ *   The block's own direct messages (not covered by any active child) are
+ *   rendered in full.
+ * full=true: recurse through all nested tiers; every effective message is
+ *   rendered in full.
+ *
+ * Returns { text: "", count: 0 } when the block covers no messages.
+ */
+export function collectBlockContent(
+    state: CompressionState,
+    block: CompressionBlock,
+    messages: CoreMessage[],
+    options: CollectContentOptions = {},
+): CollectedContentResult {
+    const full = options.full ?? false;
+    const targetIds = new Set(block.effectiveMessageIds);
+
+    if (full) {
+        const msgs = messages.filter((m) => targetIds.has(m.id));
+        if (msgs.length === 0) return { text: "", count: 0 };
+        return { text: msgs.map(formatMessage).join("\n\n"), count: msgs.length };
+    }
+
+    // One tier up: messages covered by nested ACTIVE children stay folded
+    // (their summaries shown); the block's own direct messages shown in full.
+    const nestedChildren: CompressionBlock[] = [];
+    const nestedCovered = new Set<string>();
+    for (const childId of block.directBlockIds) {
+        const child = state.blocks.find((b) => b.blockId === childId);
+        if (!child?.active) continue;
+        nestedChildren.push(child);
+        for (const id of child.effectiveMessageIds) nestedCovered.add(id);
+    }
+
+    const parts: string[] = [];
+    for (const child of nestedChildren) {
+        const label = child.topic ? `${child.blockId}: ${child.topic}` : child.blockId;
+        parts.push(`${SUMMARY_HEADER} — ${label}\n${child.summary}`);
+    }
+
+    let directCount = 0;
+    for (const m of messages) {
+        if (targetIds.has(m.id) && !nestedCovered.has(m.id)) {
+            parts.push(formatMessage(m));
+            directCount++;
+        }
+    }
+
+    const count = directCount + nestedChildren.length;
+    if (count === 0) return { text: "", count: 0 };
+    return { text: parts.join("\n\n"), count };
+}
+
+function formatMessage(message: CoreMessage): string {
+    const text = message.text ?? "";
+    if (message.toolName && message.contentType !== "text") {
+        return `[${message.role} • ${message.toolName}]\n${text}`;
+    }
+    return `[${message.role}]\n${text}`;
 }
 
 function numericPart(blockId: string): number {

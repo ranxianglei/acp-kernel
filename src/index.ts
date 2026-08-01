@@ -45,8 +45,9 @@ export {
     findActiveAncestor,
     deactivateBlock,
     buildRestoredContentPreview,
+    collectBlockContent,
 } from "./decompress.js";
-export type { DeactivateOptions } from "./decompress.js";
+export type { DeactivateOptions, CollectedContentResult, CollectContentOptions } from "./decompress.js";
 export { buildStatusReport, buildRecap } from "./report.js";
 export type { StatusReportOptions } from "./report.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";

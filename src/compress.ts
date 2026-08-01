@@ -849,7 +849,17 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       .map((t) => `T${t} (cadence)`);
     const blockedHint = blocked.length > 0 ? `, blocked: ${blocked.join(", ")}` : "";
     const maxPending = Math.max(0, ...Object.values(tiers).map((t) => t.pending));
-    reason = `max compressible ${maxPending} < threshold ${nudgeGrowthTokens}${readyHint}${blockedHint}, growth ${growthSinceReference} (floor ${growthFloor})`;
+    // Report the ACTUAL blocking condition, not a fixed template. A session
+    // can have plenty to compress (pending >= threshold) but still not
+    // inject because growth/floor/cadence isn't met — the old fixed
+    // "< threshold" string lied in that case.
+    const pendingShort = maxPending < nudgeGrowthTokens;
+    const growthShort = growthSinceReference < growthFloor;
+    const parts: string[] = [];
+    if (pendingShort) parts.push(`max compressible ${maxPending} < threshold ${nudgeGrowthTokens}`);
+    if (growthShort) parts.push(`growth ${growthSinceReference} < floor ${growthFloor}`);
+    if (parts.length === 0) parts.push(`max compressible ${maxPending}, growth ${growthSinceReference}`);
+    reason = `${parts.join("; ")}${readyHint}${blockedHint}`;
   }
 
   const ctxBreakdown = computeContextBreakdown(input.messages, tokenCount, growthSinceReference);

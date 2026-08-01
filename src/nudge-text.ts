@@ -48,18 +48,15 @@ function formatRanges(compressible: CompressibleRange[]): string {
     return "[No specific ranges detected — compress any consumed content.]";
   }
 
-  // List compressible ranges as-is (NOT merged) so the model sees the exact
-  // same ranges acp_status reports. Merging adjacent ranges hid the real
-  // count (23 ranges collapsed to ~2) and made the nudge list disagree with
-  // acp_status. Sort by size descending so the biggest wins show first.
+  // List compressible ranges as-is (NOT merged, NOT capped) so the model
+  // sees every compressible range and never misses content to compress.
+  // Sorted by size descending so the biggest wins show first.
   const sorted = [...compressible].sort((a, b) => b.tokens - a.tokens);
-  const shown = sorted.slice(0, 30);
-  const lines = shown.map((e) => {
+  const lines = sorted.map((e) => {
     const suffix = e.dangerous ? "  ⚠️ NOT recommended unless you are certain." : "";
     return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [tool ${e.toolPct}% | text ${e.textPct}%]${suffix}`;
   });
-  const more = sorted.length > shown.length ? `\n  ... and ${sorted.length - shown.length} more (acp_status for full list)` : "";
-  return `Compressible ranges (${compressible.length}, largest first):\n${lines.join("\n")}${more}`;
+  return `Compressible ranges (${compressible.length}, largest first):\n${lines.join("\n")}`;
 }
 
 export function renderNudgeText(decision: NudgeDecision): RenderedNudge {

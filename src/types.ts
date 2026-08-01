@@ -45,6 +45,12 @@ export interface NudgeState {
   lastNudgeShownTokens: number;
   baselineTokens: number;
   anchors: Record<string, unknown>;
+  /** Per-tier cadence baseline: the tokenCount at which that tier last had a
+   *  nudge injected. A tier is allowed to inject again only once
+   *  `tokenCount - lastShownByTier[tier] >= growthFloor`, independent of other
+   *  tiers. Using a record (not N named fields) so adding tier 4+ needs no
+   *  schema change. */
+  lastShownByTier: Record<number, number>;
 }
 
 export interface CompressionStats {

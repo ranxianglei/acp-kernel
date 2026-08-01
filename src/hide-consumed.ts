@@ -1,6 +1,10 @@
 import type { CompressionState, CoreMessage } from "./types.js";
 
-const KEEP_LAST_ORPHANED = 2;
+// Orphaned compress calls (no matching active block, e.g. failed attempts or
+// historical calls whose blocks predate compressCallId recording) are fully
+// hidden — they carry no recoverable information and only pollute context.
+// Active-block compress calls are kept (matched via compressCallId).
+const KEEP_LAST_ORPHANED = 0;
 
 export interface HideConsumedResult {
     messages: CoreMessage[];

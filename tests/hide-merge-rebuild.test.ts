@@ -23,7 +23,7 @@ function block(overrides: Partial<CompressionBlock>): CompressionBlock {
     };
 }
 
-test("hideConsumedCompressCalls keeps active-block compress calls and recent orphaned", () => {
+test("hideConsumedCompressCalls keeps active-block compress calls, hides all orphaned", () => {
     const state: CompressionState = {
         ...createInitialState(),
         blocks: [block({ blockId: "b1", compressCallId: "call-active", active: true })],
@@ -36,10 +36,13 @@ test("hideConsumedCompressCalls keeps active-block compress calls and recent orp
         { id: "m5", role: "user", contentType: "text", text: "hello" },
     ];
     const result = hideConsumedCompressCalls(state, messages);
-    assert.equal(result.hidden, 1);
+    // active-block call kept; consumed + all orphaned hidden (KEEP_LAST_ORPHANED=0).
+    assert.equal(result.hidden, 3);
     const remainingCallIds = result.messages.filter((m) => m.toolName === "compress").map((m) => m.toolCallId);
     assert.ok(remainingCallIds.includes("call-active"));
     assert.ok(!remainingCallIds.includes("call-consumed"));
+    assert.ok(!remainingCallIds.includes("call-orphan1"));
+    assert.ok(!remainingCallIds.includes("call-orphan2"));
     assert.ok(result.messages.some((m) => m.text === "hello"));
 });
 

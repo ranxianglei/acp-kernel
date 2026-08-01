@@ -43,7 +43,7 @@ function formatTierTargetBlocks(blocks: CompressionBlock[]): string {
   return `Target ${blocks[0]!.tier === 1 ? "tier-1" : "tier-2"} blocks to distill (${blocks.length}):\n${lines.join("\n")}`;
 }
 
-function formatRanges(compressible: CompressibleRange[], protectedRanges: ProtectedRange[]): string {
+export function formatRanges(compressible: CompressibleRange[], protectedRanges: ProtectedRange[]): string {
   if (compressible.length === 0 && protectedRanges.length === 0) {
     return "[No specific ranges detected — compress any consumed content.]";
   }

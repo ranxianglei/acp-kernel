@@ -862,7 +862,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     reason = `${parts.join("; ")}${readyHint}${blockedHint}`;
   }
 
-  const ctxBreakdown = computeContextBreakdown(input.messages, tokenCount, growthSinceReference);
+  const ctxBreakdown = computeContextBreakdown(input.messages, tokenCount, growthSinceReference, countTokens);
 
   return {
     shouldInject,
@@ -889,10 +889,11 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   };
 }
 
-function computeContextBreakdown(messages: CoreMessage[], total: number, growth: number): ContextBreakdown {
+function computeContextBreakdown(messages: CoreMessage[], total: number, growth: number, countTokens: (t: string) => number): ContextBreakdown {
+  const count = countTokens ?? ((t: string) => Math.ceil(t.length / 4));
   let system = 0, tool = 0, summaries = 0, code = 0, text = 0;
   for (const msg of messages) {
-    const tokens = Math.ceil((msg.text ?? "").length / 4);
+    const tokens = count(msg.text ?? "");
     if (msg.text?.startsWith("[Compressed conversation section]")) {
       summaries += tokens;
     } else if (msg.contentType === "tool-call" || msg.contentType === "tool-result") {

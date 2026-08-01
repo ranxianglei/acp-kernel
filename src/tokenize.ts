@@ -4,9 +4,12 @@ const require = createRequire(import.meta.url);
 
 export function defaultCountTokens(text: string): number {
   if (!text) return 0;
-  const ascii = text.match(/[a-zA-Z][a-zA-Z0-9_'-]*/g);
+  // CJK chars tokenize ~1:1 (chars/4 badly underestimates them). Count them
+  // directly, then estimate the non-CJK remainder with chars/4 so digits,
+  // punctuation, and symbols in code/JSON are not dropped to zero.
   const cjk = text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g);
-  return (ascii?.length ?? 0) + (cjk?.length ?? 0);
+  const cjkCount = cjk?.length ?? 0;
+  return cjkCount + Math.ceil((text.length - cjkCount) / 4);
 }
 
 export function estimateMessageTokens(text: string | undefined): number {

@@ -13,11 +13,13 @@ test("estimateTokensFast: chars/4 ratio", () => {
   assert.equal(estimateTokensFast("你好世界测试"), 2);
 });
 
-test("defaultCountTokens: English word counting", () => {
+test("defaultCountTokens: English + code via chars/4", () => {
   assert.equal(defaultCountTokens(""), 0);
-  assert.equal(defaultCountTokens("hello world"), 2);
-  assert.equal(defaultCountTokens("function test_fn() {}"), 2);
-  assert.equal(defaultCountTokens("camelCase snake_case kebab-case"), 3);
+  // "hello world": 11 non-CJK chars → ceil(11/4) = 3
+  assert.equal(defaultCountTokens("hello world"), 3);
+  // "function test_fn() {}": 21 non-CJK chars → ceil(21/4) = 6 (symbols now count)
+  assert.equal(defaultCountTokens("function test_fn() {}"), 6);
+  assert.equal(defaultCountTokens("camelCase snake_case kebab-case"), 8);
 });
 
 test("defaultCountTokens: CJK character counting", () => {
@@ -26,9 +28,11 @@ test("defaultCountTokens: CJK character counting", () => {
   assert.equal(defaultCountTokens("안녕하세요"), 5);
 });
 
-test("defaultCountTokens: mixed ASCII + CJK", () => {
-  const count = defaultCountTokens("hello 你好 world 世界");
-  assert.equal(count, 6);
+test("defaultCountTokens: digits and symbols are counted", () => {
+  // Old impl dropped digits/symbols to zero; chars/4 covers them now.
+  assert.ok(defaultCountTokens("12345 67890") > 0);
+  assert.ok(defaultCountTokens("{ } ( ) [ ] = + - * /") > 0);
+  assert.equal(defaultCountTokens("x = 1"), 2);
 });
 
 test("createBpeTokenizer: falls back when @anthropic-ai/tokenizer not installed", () => {
@@ -50,13 +54,10 @@ test("createBpeTokenizer: fallback handles CJK", () => {
   assert.equal(count, 4);
 });
 
-test("estimateTokensFast vs defaultCountTokens: different accuracy profiles", () => {
-  const text = "function compressMessages(messages: CoreMessage[]): CoreMessage[]";
-  const fast = estimateTokensFast(text);
-  const word = defaultCountTokens(text);
-
-  assert.ok(fast > word, "chars/4 should overestimate for code (many symbols)");
-  assert.ok(fast > 0 && word > 0, "both should return positive counts");
+test("defaultCountTokens: mixed ASCII + CJK", () => {
+  // 4 CJK chars (1 each) + 13 non-CJK chars → ceil(13/4) = 4 → 8 total
+  const count = defaultCountTokens("hello 你好 world 世界");
+  assert.equal(count, 8);
 });
 
 test("TokenCountFn type is compatible with createCore ports", () => {

@@ -25,9 +25,9 @@ jobs:
         run: |
           COMMIT_MSG=$(git log -1 --pretty=%B)
           MERGE_BRANCH=$(echo "$COMMIT_MSG" | sed -n 's/^Merge pull request #[0-9]* from [^/]*\/\(.*\)$/\1/p' || echo "")
-          if echo "$MERGE_BRANCH" | grep -q '^\d\{4\}-\d\{2\}-\d\{2\}_release-v'; then
+          if echo "$MERGE_BRANCH" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}_release-v'; then
             echo "is_release=true" >> $GITHUB_OUTPUT
-          elif echo "$COMMIT_MSG" | grep -q '^\d\{4\}-\d\{2\}-\d\{2\}_release-v'; then
+          elif echo "$COMMIT_MSG" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}_release-v'; then
             echo "is_release=true" >> $GITHUB_OUTPUT
           else
             echo "is_release=false" >> $GITHUB_OUTPUT

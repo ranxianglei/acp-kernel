@@ -1,4 +1,4 @@
-import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock } from "./types.js";
+import type { NudgeDecision, CompressibleRange, ContextBreakdown, CompressionBlock } from "./types.js";
 import { COMPRESS_PHILOSOPHY, HOW_TO_COMPRESS_RULES, TIER2_DISTILL_RULES, TIER3_CONDENSE_RULES } from "./compression-rules.js";
 
 export type NudgeVoice = "gentle" | "emergency";
@@ -29,81 +29,7 @@ function formatBreakdown(bd?: ContextBreakdown): string {
   return `Context breakdown: ${parts.join(" | ")}${growth}`;
 }
 
-function refToNum(ref: string | undefined): number {
-  if (!ref) return 0;
-  const m = ref.match(/^m0*(\d+)$/);
-  return m && m[1] ? parseInt(m[1], 10) : 0;
-}
 
-interface MergedEntry {
-  startRef: string;
-  endRef: string;
-  startNum: number;
-  endNum: number;
-  count: number;
-  tokens: number;
-  compressibleTokens: number;
-  compressibleCount: number;
-  protectedTokens: number;
-  protectedCount: number;
-  protectedTools: string[];
-  toolPct: number;
-  textPct: number;
-  dangerous: boolean;
-}
-
-function mergeRanges(compressible: CompressibleRange[], protected_: ProtectedRange[]): MergedEntry[] {
-  const entries: MergedEntry[] = [];
-
-  for (const r of compressible) {
-    const sNum = refToNum(r.startRef);
-    const eNum = refToNum(r.endRef);
-    entries.push({
-      startRef: r.startRef, endRef: r.endRef, startNum: sNum, endNum: eNum,
-      count: r.count, tokens: r.tokens,
-      compressibleTokens: r.tokens, compressibleCount: r.count,
-      protectedTokens: 0, protectedCount: 0, protectedTools: [],
-      toolPct: r.toolPct, textPct: r.textPct, dangerous: r.dangerous ?? false,
-    });
-  }
-
-  for (const r of protected_) {
-    const sNum = refToNum(r.startRef);
-    const eNum = refToNum(r.endRef);
-    entries.push({
-      startRef: r.startRef, endRef: r.endRef, startNum: sNum, endNum: eNum,
-      count: r.count, tokens: r.tokens,
-      compressibleTokens: 0, compressibleCount: 0,
-      protectedTokens: r.tokens, protectedCount: r.count, protectedTools: [...r.tools],
-      toolPct: 0, textPct: 0, dangerous: false,
-    });
-  }
-
-  entries.sort((a, b) => a.startNum - b.startNum);
-
-  const merged: MergedEntry[] = [];
-  for (const e of entries) {
-    const last = merged[merged.length - 1];
-    if (last && last.endNum + 1 >= e.startNum) {
-      last.endRef = e.endRef;
-      last.endNum = Math.max(last.endNum, e.endNum);
-      last.count += e.count;
-      last.tokens += e.tokens;
-      last.compressibleTokens += e.compressibleTokens;
-      last.compressibleCount += e.compressibleCount;
-      last.protectedTokens += e.protectedTokens;
-      last.protectedCount += e.protectedCount;
-      if (e.dangerous) last.dangerous = true;
-      for (const t of e.protectedTools) {
-        if (!last.protectedTools.includes(t)) last.protectedTools.push(t);
-      }
-    } else {
-      merged.push({ ...e });
-    }
-  }
-
-  return merged;
-}
 
 function formatTierTargetBlocks(blocks: CompressionBlock[]): string {
   if (blocks.length === 0) {
@@ -117,34 +43,28 @@ function formatTierTargetBlocks(blocks: CompressionBlock[]): string {
   return `Target ${blocks[0]!.tier === 1 ? "tier-1" : "tier-2"} blocks to distill (${blocks.length}):\n${lines.join("\n")}`;
 }
 
-function formatRanges(compressible: CompressibleRange[], protected_: ProtectedRange[]): string {
-  const merged = mergeRanges(compressible, protected_);
-  if (merged.length === 0) {
+function formatRanges(compressible: CompressibleRange[]): string {
+  if (compressible.length === 0) {
     return "[No specific ranges detected — compress any consumed content.]";
   }
 
-  const lines = merged.slice(0, 10).map((e) => {
-    const suffix = e.dangerous && e.compressibleTokens > 0
-      ? "  ⚠️ NOT recommended unless you are certain."
-      : "";
-
-    if (e.protectedTokens > 0 && e.compressibleTokens === 0) {
-      return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [PROTECTED: ${e.protectedTools.join(", ")} — not compressible]${suffix}`;
-    }
-
-    if (e.protectedTokens > 0 && e.compressibleTokens > 0) {
-      return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [${formatK(e.compressibleTokens)} compressible | ${formatK(e.protectedTokens)} protected: ${e.protectedTools.join(", ")}]${suffix}`;
-    }
-
+  // List compressible ranges as-is (NOT merged) so the model sees the exact
+  // same ranges acp_status reports. Merging adjacent ranges hid the real
+  // count (23 ranges collapsed to ~2) and made the nudge list disagree with
+  // acp_status. Sort by size descending so the biggest wins show first.
+  const sorted = [...compressible].sort((a, b) => b.tokens - a.tokens);
+  const shown = sorted.slice(0, 30);
+  const lines = shown.map((e) => {
+    const suffix = e.dangerous ? "  ⚠️ NOT recommended unless you are certain." : "";
     return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [tool ${e.toolPct}% | text ${e.textPct}%]${suffix}`;
   });
-
-  return `Compressible ranges (oldest first):\n${lines.join("\n")}`;
+  const more = sorted.length > shown.length ? `\n  ... and ${sorted.length - shown.length} more (acp_status for full list)` : "";
+  return `Compressible ranges (${compressible.length}, largest first):\n${lines.join("\n")}${more}`;
 }
 
 export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
-  const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
+  const rangesStr = formatRanges(decision.compressibleRanges);
 
   if (decision.tier !== null && decision.tier >= 2) {
     const isT2 = decision.tier === 2;

@@ -789,15 +789,22 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const rec = recommendation;
   const nothingToCompress = rec ? rec.contextRanges.compressible.length === 0 : false;
 
-  const shouldInject = shouldContextNudge || tier !== null;
+  // `tier` changes WHAT a nudge says (list target blocks, distillation rules),
+  // not WHETHER it fires. A tier-2/3 trigger should not bypass the growth
+  // check — otherwise once tier blocks accumulate the nudge fires on every
+  // turn regardless of how little context grew, and since tier ignores
+  // lastNudgeShownTokens the halving logic can't throttle it either. The only
+  // unconditional trigger is emergency overflow.
+  const shouldInject = shouldContextNudge;
 
   let reason: string;
   if (!shouldInject) {
-    reason = `growth ${growthSinceReference} < threshold ${effectiveThreshold}${hasPendingNudge ? " (halved)" : ""} (floor ${growthFloor})`;
+    const tierHint = tier !== null ? `, tier-${tier} ready (distill when growth reaches threshold)` : "";
+    reason = `growth ${growthSinceReference} < threshold ${effectiveThreshold}${hasPendingNudge ? " (halved)" : ""} (floor ${growthFloor})${tierHint}`;
   } else if (emergencyOverride) {
     reason = `EMERGENCY: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.emergencyThresholdPct * 100)}%`;
   } else if (tier !== null) {
-    reason = `tier-${tier} distillation trigger`;
+    reason = `growth ${growthSinceReference} >= ${effectiveThreshold}${hasPendingNudge ? " (halved)" : ""}, usage ${Math.round(usage * 100)}%, tier-${tier} distillation`;
   } else if (nothingToCompress) {
     reason = `growth ${growthSinceReference} >= ${effectiveThreshold} but no specific ranges worth compressing`;
   } else {

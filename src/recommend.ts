@@ -138,6 +138,7 @@ export function buildCompressibleRanges(
     refNum: number;
     tokens: number;
     isTool: boolean;
+    isUser: boolean;
   }[] = [];
   const protectedMsgs: {
     ref: string;
@@ -172,17 +173,23 @@ export function buildCompressibleRanges(
       refNum: rn,
       tokens: estimateMessageTokens(msg),
       isTool: isToolMessage(msg),
+      isUser: msg.role === "user",
     });
   }
 
-  // Build compressible groups (contiguous, split at gaps and user messages)
+  // Build compressible groups (contiguous, split at ref gaps and at user
+  // messages once a group has >= 3 messages). Splitting at user boundaries
+  // keeps each compressible range aligned to roughly one user turn, instead
+  // of producing one giant range spanning many turns (or, conversely, a
+  // fragment per message when ref gaps appear). Mirrors opencode-acp's
+  // buildCompressibleRanges condition.
   const compressible: CompressibleRange[] = [];
   let cur: CompressibleRange | null = null;
   let prevRefNum = -2;
 
   for (const info of compressibleMsgs) {
     const hasGap = info.refNum > prevRefNum + 1;
-    if (cur && hasGap) {
+    if (cur && ((info.isUser && cur.count >= 3) || hasGap)) {
       compressible.push(cur);
       cur = null;
     }

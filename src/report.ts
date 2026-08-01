@@ -22,18 +22,17 @@ function summaryTokensOf(block: CompressionBlock, countTokens: (t: string) => nu
 
 function effectiveCompressedTokens(
     block: CompressionBlock,
-    state: CompressionState,
-    countTokens: (t: string) => number,
-    visited: Set<string> = new Set(),
+    _state: CompressionState,
+    _countTokens: (t: string) => number,
 ): number {
-    if (visited.has(block.blockId)) return 0;
-    visited.add(block.blockId);
-    let total = block.compressedTokens;
-    for (const nestedId of block.directBlockIds) {
-        const nested = state.blocks.find((b) => b.blockId === nestedId);
-        if (nested) total += effectiveCompressedTokens(nested, state, countTokens, visited);
-    }
-    return total;
+    // block.compressedTokens already records the full input token count of the
+    // operation that created this block: for a tier-1 block that is the raw
+    // messages; for a tier-2 block it is the tier-1 summaries + the new
+    // messages it spans. Recursing into directBlockIds and summing children's
+    // compressedTokens double-counts the consumed children, so we return the
+    // block's own value directly. (The previous recursion inflated tier-2+
+    // "original" figures and mis-ordered the status report.)
+    return block.compressedTokens;
 }
 
 function tierLabel(block: CompressionBlock): string {

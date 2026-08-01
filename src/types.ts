@@ -191,8 +191,27 @@ export interface NudgeDecision {
   tierTargetBlocks?: CompressionBlock[];
   contextUsage: number;
   tier: CompressionTier | null;
-  breakdown: Record<string, number>;
+  breakdown: NudgeBreakdown;
   contextBreakdown?: ContextBreakdown;
+}
+
+/** Numeric debug/reason fields exposed alongside a nudge decision. Keeping
+ *  these typed (rather than a bare Record<string, number>) means adapters
+ *  that read e.g. emergencyOverride get a compile-time signal if a key is
+ *  renamed or removed. */
+export interface NudgeBreakdown {
+  usage: number;
+  growth: number;
+  growthReference: number;
+  effectiveThreshold: number;
+  nudgeGrowthTokens: number;
+  growthFloor: number;
+  hasPendingNudge: number;
+  emergencyOverride: number;
+  pendingT1: number;
+  pendingT2: number;
+  pendingT3: number;
+  [key: string]: number;
 }
 
 export interface ResolvedBoundary {

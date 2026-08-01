@@ -9,6 +9,7 @@ export function createInitialState(): CompressionState {
       lastNudgeShownTokens: 0,
       baselineTokens: 0,
       anchors: {},
+      lastShownByTier: {},
     },
     stats: { tokensCompressed: 0, compressionCount: 0 },
     nextBlockId: 1,

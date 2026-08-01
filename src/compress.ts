@@ -510,7 +510,7 @@ function applySingleRange(input: SingleRangeInput): number {
     (id) => !input.preExistingCoverage.has(id),
   );
 
-  const { filteredIds, appendedProtectedText } = filterProtectedToolMessages(
+  const filteredIds = filterProtectedToolMessages(
     directMessageIds,
     input.messages,
     input.config,
@@ -556,24 +556,12 @@ function applySingleRange(input: SingleRangeInput): number {
   }
 
   const blockId = allocateBlockId(input.state);
-  const finalSummary =
-    appendedProtectedText.length > 0
-      ? `${input.spec.summary}\n\nThe following protected tool calls were used in this conversation as well:\n${appendedProtectedText.join("")}`
-      : input.spec.summary;
-
-  // Re-check maxSummaryLength after appending protected content (Bug fix: bypass via appended text)
-  const maxLen = input.spec.summaryMaxChars ?? input.config.compress.maxSummaryLength;
-  if (maxLen > 0 && finalSummary.length > maxLen) {
-    throw new Error(
-      `Summary too long after appending protected content (${finalSummary.length} chars, max ${maxLen}). Reduce the summary or remove protected tools from the range.`,
-    );
-  }
   const block: CompressionBlock = {
     blockId,
     runId: input.runId,
     tier: outputTier,
     topic: input.spec.topic,
-    summary: finalSummary,
+    summary: input.spec.summary,
     directMessageIds: filteredIds,
     effectiveMessageIds: [...effectiveMessageIds],
     directBlockIds: [...consumedBlockIds],
@@ -661,28 +649,25 @@ function filterProtectedToolMessages(
   directMessageIds: string[],
   messages: CoreMessage[],
   config: Config,
-): { filteredIds: string[]; appendedProtectedText: string[] } {
-  const removedToolCallIds = new Set<string>();
-  const allProtectedCallIds = new Set<string>();
+): string[] {
+  // Protected tool calls (and their results, paired by toolCallId) stay in
+  // visible context and are simply dropped from the compressible set. They are
+  // NOT folded into the summary — the summary reflects what the author wrote,
+  // nothing auto-appended.
+  const protectedCallIds = new Set<string>();
   const removedIds = new Set<string>();
-  const appendedProtectedText: string[] = [];
   for (const msg of messages) {
     if (isMessageProtected(msg, config) && msg.toolCallId) {
-      allProtectedCallIds.add(msg.toolCallId);
+      protectedCallIds.add(msg.toolCallId);
     }
   }
 
   for (const id of directMessageIds) {
     const msg = messages.find((m) => m.id === id);
     if (!msg) continue;
-    if (!isMessageProtected(msg, config)) continue;
-
-    removedIds.add(id);
-    if (msg.toolCallId) removedToolCallIds.add(msg.toolCallId);
-    if (msg.text) {
-      appendedProtectedText.push(
-        `\n### Protected: ${msg.toolName ?? "tool"}\n${msg.text}`,
-      );
+    if (isMessageProtected(msg, config)) {
+      removedIds.add(id);
+      if (msg.toolCallId) protectedCallIds.add(msg.toolCallId);
     }
   }
 
@@ -693,17 +678,13 @@ function filterProtectedToolMessages(
     if (
       msg.contentType === "tool-result" &&
       msg.toolCallId &&
-      (removedToolCallIds.has(msg.toolCallId) ||
-        allProtectedCallIds.has(msg.toolCallId))
+      protectedCallIds.has(msg.toolCallId)
     ) {
       removedIds.add(id);
     }
   }
 
-  return {
-    filteredIds: directMessageIds.filter((id) => !removedIds.has(id)),
-    appendedProtectedText,
-  };
+  return directMessageIds.filter((id) => !removedIds.has(id));
 }
 
 function resolveTargetTier(

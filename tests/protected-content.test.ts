@@ -66,7 +66,7 @@ test("Feature 2: protected tool-call is excluded from compression range", () => 
   assert.ok(block.directMessageIds.includes("d"), "regular msg 'd' should remain");
 });
 
-test("Feature 2: protected tool content is appended to summary", () => {
+test("Feature 2: protected tool messages are filtered out, not appended", () => {
   const core = createCore();
   const messages = [
     msg("a", longText),
@@ -85,8 +85,11 @@ test("Feature 2: protected tool content is appended to summary", () => {
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(block.summary.includes("Protected: skill"), "summary should contain protected tool heading");
-  assert.ok(block.summary.includes('{"name":"git-master"}'), "summary should contain protected tool content");
+  assert.ok(!block.directMessageIds.includes("b"), "protected skill tool-call excluded from compressed set");
+  assert.ok(!block.directMessageIds.includes("c"), "protected skill tool-result excluded");
+  assert.ok(!block.summary.includes("Protected:"), "no protected content folded into summary");
+  assert.ok(!block.summary.includes('{"name":"git-master"}'), "protected tool content not leaked into summary");
+  assert.equal(block.summary, validSummary, "summary is exactly what the author wrote");
 });
 
 test("Feature 2: non-protected tool-call is NOT excluded", () => {
@@ -163,7 +166,7 @@ test("Feature 3: isToolProtected custom predicate excludes matching tools", () =
   const block = result.state.blocks[0]!;
   assert.ok(!block.directMessageIds.includes("b"), "write to .env should be excluded by predicate");
   assert.ok(!block.directMessageIds.includes("c"), "write result should be excluded too");
-  assert.ok(block.summary.includes("Protected: write"), "protected content appended");
+  assert.ok(!block.summary.includes("Protected:"), "no protected content folded into summary");
 });
 
 test("Feature 3: wildcard pattern in protectedTools works", () => {
@@ -243,8 +246,8 @@ test("Feature 2+3: both protectedTools and isToolProtected work together", () =>
   assert.ok(!block.directMessageIds.includes("e"), "edit result excluded");
   assert.ok(block.directMessageIds.includes("a"), "regular msg remains");
   assert.ok(block.directMessageIds.includes("f"), "regular msg remains");
-  assert.ok(block.summary.includes("Protected: skill"), "skill content appended");
-  assert.ok(block.summary.includes("Protected: edit"), "edit content appended");
+  assert.ok(!block.summary.includes("Protected: skill"), "skill content NOT folded into summary");
+  assert.ok(!block.summary.includes("Protected: edit"), "edit content NOT folded into summary");
 });
 
 test("compress tool is ALWAYS protected, even with empty protectedTools", () => {

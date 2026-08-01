@@ -71,7 +71,11 @@ function setupRefs(
 const longText = "x".repeat(6000);
 const validSummary = "x".repeat(60);
 
-test("Bug 1: maxSummaryLength enforced after appending protected content", () => {
+test("Bug 1: protected tool messages are filtered (no summary inflation)", () => {
+  // Was: "maxSummaryLength enforced after appending protected content" — that
+  // append-and-recheck behavior is gone. Protected messages are dropped from
+  // the compressed set; the summary is exactly what the author wrote, so a
+  // large protected tool output can never inflate/reject the summary.
   const core = createCore();
   const messages: CoreMessage[] = [
     msg("a", longText),
@@ -98,8 +102,6 @@ test("Bug 1: maxSummaryLength enforced after appending protected content", () =>
     compressionTiming: {},
   }, config);
 
-  // a=m00001, b=BLOCKED(skill), c=m00002, d=m00003
-  // Range m00001->m00003 covers all 4 messages (BLOCKED 'b' is between indices)
   const result = core.applyCompression({
     ranges: [{ startRef: "m00001", endRef: "m00003", summary: "short" }],
     messages,
@@ -108,12 +110,14 @@ test("Bug 1: maxSummaryLength enforced after appending protected content", () =>
     countTokens: defaultCountTokens,
   });
 
-  assert.equal(result.result.blocksCreated, 0);
-  assert.equal(result.result.errors.length, 1);
-  assert.match(
-    result.result.errors[0]!,
-    /Summary too long after appending protected content/,
-  );
+  assert.equal(result.result.blocksCreated, 1, "compression succeeds — no length error");
+  assert.equal(result.result.errors.length, 0, "no errors");
+  const block = result.state.blocks[0]!;
+  assert.equal(block.summary, "short", "summary is exactly the author's text");
+  assert.ok(!block.directMessageIds.includes("b"), "protected skill call excluded");
+  assert.ok(!block.directMessageIds.includes("c"), "protected skill result excluded");
+  assert.ok(block.directMessageIds.includes("a"), "regular msg compressed");
+  assert.ok(block.directMessageIds.includes("d"), "regular msg compressed");
 });
 
 test("Bug 2: orphaned tool-call — protected call outside range, result inside", () => {

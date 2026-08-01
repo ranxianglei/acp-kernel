@@ -177,6 +177,41 @@ test("buildCompressibleRanges: tool/text percentage computed", () => {
   assert.equal(ranges.compressible[0]!.toolPct + ranges.compressible[0]!.textPct, 100);
 });
 
+test("buildCompressibleRanges: splits at user-turn boundaries once a group has >= 3 messages", () => {
+  // 4 user turns: each user + assistant(tool-call) + tool-result = 3 msgs.
+  // Without user-boundary splitting these collapse into one m00001–m00012
+  // block; with it they form 4 turn-aligned blocks.
+  const messages: CoreMessage[] = [];
+  for (let i = 0; i < 4; i++) {
+    messages.push(msg("u" + i, "user turn " + i + " content".repeat(50)));
+    messages.push(toolMsg("a" + i, "bash"));
+    messages.push({ id: "t" + i, role: "tool", contentType: "tool-result", toolCallId: "c" + i, text: "result".repeat(50) });
+  }
+  const state = assignAll(messages);
+  const ranges = buildCompressibleRanges(messages, state, config());
+  assert.equal(ranges.compressible.length, 4, "one compressible block per user turn");
+  // Each block covers exactly one turn (3 msgs): u0/a0/t0, u1/a1/t1, ...
+  assert.equal(ranges.compressible[0]!.startRef, "m00001");
+  assert.equal(ranges.compressible[0]!.endRef, "m00003");
+  assert.equal(ranges.compressible[0]!.count, 3);
+  assert.equal(ranges.compressible[3]!.startRef, "m00010");
+  assert.equal(ranges.compressible[3]!.endRef, "m00012");
+});
+
+test("buildCompressibleRanges: does NOT split before a group reaches 3 messages", () => {
+  // 2 messages then a user message: group is only 2 when the user arrives,
+  // so the user message should join the existing group rather than start a new one.
+  const messages = [
+    toolMsg("a", "bash"),
+    { id: "t", role: "tool", contentType: "tool-result", toolCallId: "c", text: "result".repeat(50) },
+    msg("u", "user message"),
+  ];
+  const state = assignAll(messages);
+  const ranges = buildCompressibleRanges(messages, state, config());
+  assert.equal(ranges.compressible.length, 1, "short group not split at user boundary");
+  assert.equal(ranges.compressible[0]!.count, 3);
+});
+
 // ─── Integration: 19-token bug fix ─────────────────────────────────────────────
 
 test("integration: tiny ranges are suppressed — fixes the 19-token compression bug", () => {

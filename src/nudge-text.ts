@@ -1,4 +1,4 @@
-import type { NudgeDecision, CompressibleRange, ContextBreakdown, CompressionBlock } from "./types.js";
+import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock } from "./types.js";
 import { COMPRESS_PHILOSOPHY, HOW_TO_COMPRESS_RULES, TIER2_DISTILL_RULES, TIER3_CONDENSE_RULES } from "./compression-rules.js";
 
 export type NudgeVoice = "gentle" | "emergency";
@@ -43,7 +43,7 @@ function formatTierTargetBlocks(blocks: CompressionBlock[]): string {
   return `Target ${blocks[0]!.tier === 1 ? "tier-1" : "tier-2"} blocks to distill (${blocks.length}):\n${lines.join("\n")}`;
 }
 
-function formatRanges(compressible: CompressibleRange[]): string {
+function formatRanges(compressible: CompressibleRange[], protectedRanges: ProtectedRange[]): string {
   if (compressible.length === 0) {
     return "[No specific ranges detected — compress any consumed content.]";
   }
@@ -62,12 +62,20 @@ function formatRanges(compressible: CompressibleRange[]): string {
     const suffix = e.dangerous ? "  ⚠️ NOT recommended unless you are certain." : "";
     return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [tool ${e.toolPct}% | text ${e.textPct}%]${suffix}`;
   });
-  return `Compressible ranges (${compressible.length}, oldest first):\n${lines.join("\n")}`;
+  let out = `Compressible ranges (${compressible.length}, oldest first):\n${lines.join("\n")}`;
+  // Also list protected ranges so the model knows what must NOT be compressed
+  // and can avoid including them in a compress call.
+  if (protectedRanges.length > 0) {
+    const psorted = [...protectedRanges].sort((a, b) => refNum(a.startRef) - refNum(b.startRef));
+    const plines = psorted.map((e) => `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [PROTECTED: ${e.tools.join(", ")} — do not compress]`);
+    out += `\nProtected ranges (${protectedRanges.length}, do not compress):\n${plines.join("\n")}`;
+  }
+  return out;
 }
 
 export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
-  const rangesStr = formatRanges(decision.compressibleRanges);
+  const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
 
   if (decision.tier !== null && decision.tier >= 2) {
     const isT2 = decision.tier === 2;

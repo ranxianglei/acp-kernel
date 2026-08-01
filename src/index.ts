@@ -32,7 +32,7 @@ export { syncBlocks } from "./sync.js";
 export { resolveBoundaries, parseBoundary } from "./boundaries.js";
 export { defaultCountTokens, estimateTokensFast, createBpeTokenizer } from "./tokenize.js";
 export type { TokenCountFn } from "./tokenize.js";
-export { renderNudgeText } from "./nudge-text.js";
+export { renderNudgeText, formatRanges } from "./nudge-text.js";
 export type { NudgeVoice, RenderedNudge } from "./nudge-text.js";
 export { COMPRESS_PHILOSOPHY, HOW_TO_COMPRESS_RULES, TIER2_DISTILL_RULES, TIER3_CONDENSE_RULES } from "./compression-rules.js";
 export { truncateLargeToolOutputs } from "./truncate-tools.js";

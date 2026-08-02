@@ -10,20 +10,28 @@ export const ALWAYS_PROTECTED_TOOLS = ["compress"] as const;
 /** Tool results that must NEVER participate in the soft-protected recent zone
  *  (preserveRecentMessages / preserveRecentTokens / last user message).
  *
- *  `decompress` returns large restored content as an inline tool result. If it
- *  lands in the last-N window it becomes un-compressible: the model cannot
- *  reclaim that context, and it never appears in the compressible-ranges
- *  recommendation list. Excluding it from the protected zone lets the model
- *  compress it again immediately, while still leaving it visible (the host's
- *  preserveRecent is about not compressing the active working set, not about
- *  which tool results are in scope).
+ *  These tools return large content (restored blocks, search hits, file bodies,
+ *  command output). If such a result lands in the last-N window it becomes
+ *  un-compressible: the model cannot reclaim that context, and it never appears
+ *  in the compressible-ranges recommendation list. Excluding these tools from
+ *  the protected zone lets the model compress them again immediately, while
+ *  still leaving them visible (the host's preserveRecent is about not
+ *  compressing the active working set, not about which tool results are in
+ *  scope).
  *
- *  `search_context` returns large result lists (10 ranked hits with previews).
- *  Same reasoning: excluding it from the protected zone keeps it compressible.
+ *  - `decompress`: large restored content as an inline tool result.
+ *  - `search_context`: large result lists (10 ranked hits with previews).
+ *  - `read`: file/image contents — the largest common source of context bloat.
+ *  - `bash`: command output (build/test/logs) — frequently large and spent.
  *
  *  Note: this only affects the recent-zone computation. Such messages remain
  *  fully visible and compressible like any ordinary message. */
-export const NEVER_PRESERVE_RECENT_TOOLS = ["decompress", "search_context"] as const;
+export const NEVER_PRESERVE_RECENT_TOOLS = [
+  "decompress",
+  "search_context",
+  "read",
+  "bash",
+] as const;
 
 /** True for tool-call / tool-result messages whose toolName is in the
  *  NEVER_PRESERVE_RECENT_TOOLS list — i.e. tool results (like decompress)

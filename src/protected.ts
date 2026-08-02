@@ -18,9 +18,12 @@ export const ALWAYS_PROTECTED_TOOLS = ["compress"] as const;
  *  preserveRecent is about not compressing the active working set, not about
  *  which tool results are in scope).
  *
+ *  `search_context` returns large result lists (10 ranked hits with previews).
+ *  Same reasoning: excluding it from the protected zone keeps it compressible.
+ *
  *  Note: this only affects the recent-zone computation. Such messages remain
  *  fully visible and compressible like any ordinary message. */
-export const NEVER_PRESERVE_RECENT_TOOLS = ["decompress"] as const;
+export const NEVER_PRESERVE_RECENT_TOOLS = ["decompress", "search_context"] as const;
 
 /** True for tool-call / tool-result messages whose toolName is in the
  *  NEVER_PRESERVE_RECENT_TOOLS list — i.e. tool results (like decompress)

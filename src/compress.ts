@@ -537,6 +537,17 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     input.config,
   );
 
+  // filterProtectedToolMessages drops protected tool calls (and their paired
+  // results) from the compressible set. They must also leave effectiveMessageIds,
+  // otherwise the block would record them as covered and hide them from view.
+  // (Bug 39: protected tool messages folded into a block.)
+  if (filteredIds.length < directMessageIds.length) {
+    const kept = new Set(filteredIds);
+    for (const id of directMessageIds) {
+      if (!kept.has(id)) effectiveMessageIds.delete(id);
+    }
+  }
+
   // SOFT PROTECTION: the recent-N / last-user-message zone is advisory-only at
   // compress time. Instead of failing the whole range when it brushes protected
   // messages, exclude those messages and proceed with the rest (so the model

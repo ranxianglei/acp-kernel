@@ -64,6 +64,12 @@ test("Feature 2: protected tool-call is excluded from compression range", () => 
   assert.ok(!block.directMessageIds.includes("c"), "tool-result 'c' should be excluded");
   assert.ok(block.directMessageIds.includes("a"), "regular msg 'a' should remain");
   assert.ok(block.directMessageIds.includes("d"), "regular msg 'd' should remain");
+  // Bug 39 regression: effectiveMessageIds must also exclude protected tool
+  // messages, otherwise the block would mark them as covered and hide them.
+  assert.ok(!block.effectiveMessageIds.includes("b"), "tool-call 'b' excluded from effective coverage");
+  assert.ok(!block.effectiveMessageIds.includes("c"), "tool-result 'c' excluded from effective coverage");
+  assert.ok(block.effectiveMessageIds.includes("a"), "regular msg 'a' in effective coverage");
+  assert.ok(block.effectiveMessageIds.includes("d"), "regular msg 'd' in effective coverage");
 });
 
 test("Feature 2: protected tool messages are filtered out, not appended", () => {
@@ -87,6 +93,10 @@ test("Feature 2: protected tool messages are filtered out, not appended", () => 
   const block = result.state.blocks[0]!;
   assert.ok(!block.directMessageIds.includes("b"), "protected skill tool-call excluded from compressed set");
   assert.ok(!block.directMessageIds.includes("c"), "protected skill tool-result excluded");
+  // Bug 39 regression: effectiveMessageIds must match directMessageIds here
+  // (no consumed blocks), so protected messages are excluded from both.
+  assert.ok(!block.effectiveMessageIds.includes("b"), "protected skill tool-call excluded from effective coverage");
+  assert.ok(!block.effectiveMessageIds.includes("c"), "protected skill tool-result excluded from effective coverage");
   assert.ok(!block.summary.includes("Protected:"), "no protected content folded into summary");
   assert.ok(!block.summary.includes('{"name":"git-master"}'), "protected tool content not leaked into summary");
   assert.equal(block.summary, validSummary, "summary is exactly what the author wrote");

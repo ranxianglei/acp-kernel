@@ -80,7 +80,7 @@ The nudge system tells the model *when* to compress. It implements:
 
 ✅ **Engine complete** — 23 source modules, 167 tests, typecheck + build clean. 3-tier compression, growth-gated nudges, emergency truncation,, fork-recovery, batch merge, composable node pipeline. Ready for adapter authoring.
 
-> **Known limitation:** protected tool messages are excluded from *ref assignment* (marked `BLOCKED`) but, unlike opencode-acp's Bug 39, are **not** hard-excluded from an explicitly-referenced compress range. A model that names a range covering a `BLOCKED` message will compress it. This is an intentional simplification for the pure core; adapters that need hard-exclusion should pre-split ranges before calling `applyCompression`.
+> **Protected tool messages:** protected tool calls (per `config.protectedTools`) and their paired tool-results are hard-excluded from compression — they are dropped from the compressible set and from the new block's `effectiveMessageIds`, so they stay fully visible and are never folded into a summary. This matches opencode-acp's Bug 39 fix. The soft-protected recent zone (`preserveRecentMessages` / last user message) is handled separately: messages there are excluded from the range but do not fail it (an entirely-protected range fails with a clear error).
 
 ## License
 

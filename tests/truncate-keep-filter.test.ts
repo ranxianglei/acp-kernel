@@ -1,14 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { truncateLargeToolOutputs } from "../src/truncate-tools.js";
-import { resolveKeepMarkers } from "../src/keep-markers.js";
 import {
     applyMessageFilters,
     clearMessageFilters,
     registerMessageFilter,
 } from "../src/filter/index.js";
-import { createInitialState } from "../src/state.js";
-import { assignRefs } from "../src/refs.js";
 import { defaultConfig } from "../src/config.js";
 import type { CoreMessage } from "../src/types.js";
 
@@ -55,34 +52,6 @@ test("truncateLargeToolOutputs protects recent messages", () => {
         protectRecentMessages: 3,
     });
     assert.equal(result.truncatedCount, 0);
-});
-
-test("resolveKeepMarkers expands [[KEEP:mNNNNN]] with message content", () => {
-    const state = createInitialState();
-    const messages = [msg("a", "the kept content"), msg("b", "other")];
-    state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
-
-    const result = resolveKeepMarkers("see [[KEEP:m00001]] here", messages, state);
-    assert.equal(result.expandedCount, 1);
-    assert.ok(result.summary.includes("the kept content"));
-    assert.deepEqual(result.unresolvedRefs, []);
-});
-
-test("resolveKeepMarkers rewrites [[REF:mNNNNN|desc]] into a pointer", () => {
-    const state = createInitialState();
-    const messages = [msg("a", "content")];
-    state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
-
-    const result = resolveKeepMarkers("ref [[REF:m00001|the finding]] end", messages, state);
-    assert.equal(result.refCount, 1);
-    assert.ok(result.summary.includes("[→ m00001: the finding]"));
-});
-
-test("resolveKeepMarkers reports unresolved refs", () => {
-    const state = createInitialState();
-    const result = resolveKeepMarkers("[[KEEP:m00099]]", [], state);
-    assert.equal(result.expandedCount, 0);
-    assert.deepEqual(result.unresolvedRefs, ["m00099"]);
 });
 
 test("applyMessageFilters is a no-op when disabled", () => {

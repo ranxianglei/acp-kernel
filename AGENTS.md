@@ -111,14 +111,41 @@ PR merges are a **human-only operation**. The Agent MUST NEVER merge any PR unde
 
 Release branches: `YYYY-MM-DD_release-v{VERSION}` (e.g., `2026-08-01_release-v0.2.0`)
 
-### Process
+### Process (exact steps)
 
-1. Create release branch from master
-2. Bump `version` in `package.json`
-3. Commit, push, create PR
-4. CI runs: typecheck + test + build
-5. **Human merges PR** (Agent MUST NOT merge)
-6. CI auto-tags `v{VERSION}`, publishes to npm
+The Agent does steps 1–5, the human does 6, CI does the rest.
+
+1. **Sync master** — local master often lags behind origin:
+   ```bash
+   git checkout master && git pull --ff-only origin master
+   ```
+2. **Create the release branch** from master:
+   ```bash
+   git checkout -b $(date +%Y-%m-%d)_release-v{VERSION}
+   ```
+3. **Bump version** — edit ONLY the `"version"` field in `package.json`:
+   ```diff
+   -    "version": "0.0.14",
+   +    "version": "0.0.15",
+   ```
+4. **Local pre-flight** — run the same three checks CI runs (release.yml):
+   ```bash
+   npm run typecheck   # tsc --noEmit
+   npm test            # node --import tsx --test tests/*.test.ts
+   npm run build       # tsup + tsc --emitDeclarationOnly
+   ```
+5. **Commit, push, open PR** — release-commit convention:
+   - Message: `release v{VERSION}`
+   - The commit changes ONLY `package.json` (1 line). Never bundle other changes into a release commit.
+   - PR title: `release v{VERSION}`; body lists changes since last tag.
+6. **Human merges the PR** (Agent MUST NOT merge — see "PR Merge" above).
+7. **CI auto-publishes** — on detecting the release-branch merge, CI runs typecheck+test+build, creates git tag `v{VERSION}`, and runs `npm publish` to npmjs.org.
+8. **Verify** the published version is live:
+   ```bash
+   npm view acp-kernel version
+   ```
+
+> **Node note:** run pre-flight with real Node.js, not the bun shim (see `~/AGENTS.md` §5). `npm test` uses `node --test` which the shim does not support.
 
 ### Prerelease
 

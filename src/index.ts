@@ -37,8 +37,6 @@ export type { NudgeVoice, RenderedNudge } from "./nudge-text.js";
 export { COMPRESS_PHILOSOPHY, HOW_TO_COMPRESS_RULES, TIER2_DISTILL_RULES, TIER3_CONDENSE_RULES } from "./compression-rules.js";
 export { truncateLargeToolOutputs } from "./truncate-tools.js";
 export type { TruncateOptions, TruncateResult } from "./truncate-tools.js";
-export { resolveKeepMarkers } from "./keep-markers.js";
-export type { KeepMarkerResult } from "./keep-markers.js";
 export {
     parseBlockIdArg,
     findBlocksOverlappingMessages,

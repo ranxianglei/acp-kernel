@@ -60,7 +60,6 @@ core.status(compressed, tokenCount, config);  // context-usage report
 |--------|---------|
 | `truncateLargeToolOutputs` | Emergency context-threshold-gated truncation of large visible tool outputs (last-resort safety valve; summaries are never touched) |
 | `hideConsumedCompressCalls` | Hide historical compress tool-calls whose block is inactive |
-| `resolveKeepMarkers` | Expand `[[KEEP:mNNNNN]]` / rewrite `[[REF:mNNNNN\|desc]]` |
 | `buildStatusReport` / `buildRecap` | Context-usage report + block recap |
 | `mergeMarkedBlocks` / `collectOldGenBlocks` | Batch merge old-gen blocks into one summary |
 | `rebuildCompressionState` | Fork-recovery: replay historical compress calls |

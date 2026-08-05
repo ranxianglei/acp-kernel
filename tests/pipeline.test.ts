@@ -141,3 +141,24 @@ test("processTurn tags every mapped message with a derived ref (end-to-end)", ()
   assert.match(result.messages[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
   assert.match(result.messages[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\nbeta$/);
 });
+
+test("renderVisibleRefs skips tool-call and tool-result messages", () => {
+  const state = createInitialState();
+  const messages: CoreMessage[] = [
+    { id: "u1", role: "user", contentType: "text", text: "run echo" },
+    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
+    { id: "t1", role: "tool", contentType: "tool-result", toolName: "bash", toolCallId: "tc1", text: "hello" },
+    { id: "a2", role: "assistant", contentType: "text", text: "Done." },
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const rendered = renderVisibleRefs(messages, state);
+
+  assert.match(rendered[0]!.text!, /m00001<\/acp>/, "user message gets tag");
+  assert.equal(rendered[1]!.text, '{"command":"echo hello"}', "tool-call args unmodified");
+  assert.equal(rendered[2]!.text, "hello", "tool-result content unmodified");
+  assert.match(rendered[3]!.text!, /m00004<\/acp>/, "assistant text gets tag");
+});

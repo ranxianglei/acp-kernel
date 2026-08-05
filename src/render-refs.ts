@@ -40,6 +40,13 @@ function renderMessage(
   const ref = refForRaw(map, message.id);
   if (!ref || ref === BLOCKED_REF) return message;
 
+  if (
+    message.contentType === "tool-call" ||
+    message.contentType === "tool-result"
+  ) {
+    return message;
+  }
+
   // Strip own stale tag BEFORE computing tokens (idempotency).
   // Match the message's own ref only — foreign tags survive (content-corruption fix).
   const ownTagRe = new RegExp(

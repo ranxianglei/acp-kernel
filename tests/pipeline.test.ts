@@ -141,3 +141,71 @@ test("processTurn tags every mapped message with a derived ref (end-to-end)", ()
   assert.match(result.messages[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
   assert.match(result.messages[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\nbeta$/);
 });
+
+test("renderVisibleRefs tags tool messages by default (backward compat)", () => {
+  const state = createInitialState();
+  const messages: CoreMessage[] = [
+    { id: "u1", role: "user", contentType: "text", text: "run echo" },
+    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
+    { id: "t1", role: "tool", contentType: "tool-result", toolName: "bash", toolCallId: "tc1", text: "hello" },
+    { id: "a2", role: "assistant", contentType: "text", text: "Done." },
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const rendered = renderVisibleRefs(messages, state);
+
+  assert.match(rendered[0]!.text!, /m00001<\/acp>/, "user message gets tag");
+  assert.match(rendered[1]!.text!, /m00002<\/acp>/, "tool-call gets tag (default)");
+  assert.match(rendered[2]!.text!, /m00003<\/acp>/, "tool-result gets tag (default)");
+  assert.match(rendered[3]!.text!, /m00004<\/acp>/, "assistant text gets tag");
+});
+
+test("renderVisibleRefs skips tool messages when options.skipToolMessages is set", () => {
+  const state = createInitialState();
+  const messages: CoreMessage[] = [
+    { id: "u1", role: "user", contentType: "text", text: "run echo" },
+    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
+    { id: "t1", role: "tool", contentType: "tool-result", toolName: "bash", toolCallId: "tc1", text: "hello" },
+    { id: "a2", role: "assistant", contentType: "text", text: "Done." },
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const rendered = renderVisibleRefs(messages, state, undefined, {
+    skipToolMessages: true,
+  });
+
+  assert.match(rendered[0]!.text!, /m00001<\/acp>/, "user message gets tag");
+  assert.equal(rendered[1]!.text, '{"command":"echo hello"}', "tool-call args unmodified");
+  assert.equal(rendered[2]!.text, "hello", "tool-result content unmodified");
+  assert.match(rendered[3]!.text!, /m00004<\/acp>/, "assistant text gets tag");
+});
+
+test("renderRefsNode respects config.render.skipToolMessageTags", () => {
+  const messages: CoreMessage[] = [
+    { id: "u1", role: "user", contentType: "text", text: "run echo" },
+    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
+  ];
+  const state = createInitialState();
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const configWithSkip = { ...defaultConfig(100000), render: { skipToolMessageTags: true } };
+  const io = makeIO(messages, state);
+  const ctx = {
+    config: configWithSkip,
+    tokenCount: 100,
+    countTokens: (t: string) => Math.ceil(t.length / 4),
+  };
+  const result = renderRefsNode.run(io, ctx);
+
+  assert.match(result.messages[0]!.text!, /m00001<\/acp>/, "user text gets tag");
+  assert.equal(result.messages[1]!.text, '{"command":"echo hello"}', "tool-call args unmodified with skip flag");
+});

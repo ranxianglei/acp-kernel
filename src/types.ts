@@ -109,6 +109,10 @@ export interface CompressValidationConfig {
   minSummaryLength: number;
 }
 
+export interface RenderConfig {
+  skipToolMessageTags?: boolean;
+}
+
 export interface Config {
   tiers: TierConfig;
   nudge: NudgeConfig;
@@ -123,6 +127,7 @@ export interface Config {
   preserveRecentTokens: number;
   modelContextLimit: number;
   messageFilters?: import("./filter/types.js").MessageFiltersConfig;
+  render?: RenderConfig;
 }
 
 export type CompressMode = "range" | "message";

@@ -95,6 +95,17 @@ test("renderVisibleRefs leaves messages without a ref (BLOCKED/unmapped) untagge
   assert.equal(rendered[0]!.text, "alpha");
 });
 
+test('renderVisibleRefs strategy:"none" leaves all text untouched (ref map still built)', () => {
+  // Regression: renderMessage had no "none" branch, so "none" fell through
+  // to the default tag-everything path. Only processTurn honored "none"
+  // (by omitting the render node). The exported helper must honor it too.
+  const messages = [msg("u1", "hello"), msg("a1", "hi")];
+  const state = stateWithRefs(messages);
+  const rendered = renderVisibleRefs(messages, state, () => 1, "none");
+  assert.equal(rendered[0]!.text, "hello");
+  assert.equal(rendered[1]!.text, "hi");
+});
+
 test("runPipeline threads messages, state, and effects through nodes in order", () => {
   const order: string[] = [];
   const node = (name: string): PipelineNode => ({
@@ -140,4 +151,92 @@ test("processTurn tags every mapped message with a derived ref (end-to-end)", ()
   });
   assert.match(result.messages[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
   assert.match(result.messages[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\nbeta$/);
+});
+
+test("processTurn renderTags:\"all\" (default) injects tags into every message", () => {
+  const core = createCore();
+  const messages: CoreMessage[] = [
+    { id: "u1", role: "user", contentType: "text", text: "run echo" },
+    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
+    { id: "a2", role: "assistant", contentType: "text", text: "Done." },
+  ];
+  const state = createInitialState();
+  const config = defaultConfig(100000);
+
+  const result = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 50,
+    // renderTags defaults to "all"
+  });
+
+  assert.match(result.messages[0]!.text!, /m00001<\/acp>/, "user text tagged");
+  assert.match(result.messages[1]!.text!, /m00002<\/acp>/, "tool-call tagged (all strategy)");
+  assert.match(result.messages[2]!.text!, /m00003<\/acp>/, "assistant text tagged");
+});
+
+test("processTurn renderTags:\"text-only\" tags text but leaves tool messages pristine (proxy mode)", () => {
+  const core = createCore();
+  const messages: CoreMessage[] = [
+    { id: "u1", role: "user", contentType: "text", text: "run echo" },
+    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
+    { id: "t1", role: "tool", contentType: "tool-result", toolName: "bash", toolCallId: "tc1", text: "hello" },
+    { id: "a2", role: "assistant", contentType: "text", text: "Done." },
+  ];
+  const state = createInitialState();
+  const config = defaultConfig(100000);
+
+  const result = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 50,
+    renderTags: "text-only",
+  });
+
+  // Text messages get tags (LLM can reference them for compress ranges).
+  assert.match(result.messages[0]!.text!, /m00001<\/acp>/, "user text tagged");
+  assert.match(result.messages[3]!.text!, /m00004<\/acp>/, "assistant text tagged");
+
+  // Tool messages are pristine — structured content not polluted by a tag.
+  assert.equal(result.messages[1]!.text, '{"command":"echo hello"}', "tool-call args unmodified");
+  assert.equal(result.messages[2]!.text, "hello", "tool-result content unmodified");
+
+  // But refs ARE assigned — tool messages are in the map too.
+  const refs = result.state.messageRefs;
+  assert.equal(refs.byRaw["u1"], "m00001");
+  assert.equal(refs.byRaw["a1"], "m00002");
+  assert.equal(refs.byRaw["t1"], "m00003");
+  assert.equal(refs.byRaw["a2"], "m00004");
+});
+
+test("processTurn renderTags:\"none\" assigns refs but leaves all text untouched", () => {
+  const core = createCore();
+  const messages: CoreMessage[] = [
+    { id: "u1", role: "user", contentType: "text", text: "run echo" },
+    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
+    { id: "a2", role: "assistant", contentType: "text", text: "Done." },
+  ];
+  const state = createInitialState();
+  const config = defaultConfig(100000);
+
+  const result = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 50,
+    renderTags: "none",
+  });
+
+  // All text is pristine.
+  assert.equal(result.messages[0]!.text, "run echo");
+  assert.equal(result.messages[1]!.text, '{"command":"echo hello"}');
+  assert.equal(result.messages[2]!.text, "Done.");
+
+  // But refs ARE assigned.
+  const refs = result.state.messageRefs;
+  assert.equal(refs.byRaw["u1"], "m00001");
+  assert.equal(refs.byRaw["a1"], "m00002");
+  assert.equal(refs.byRaw["a2"], "m00003");
 });

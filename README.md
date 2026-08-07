@@ -54,6 +54,37 @@ core.search("auth token", compressed);        // relevance-ranked block search
 core.status(compressed, tokenCount, config);  // context-usage report
 ```
 
+#### `renderTags` — host-side rendering strategy
+
+`processTurn` always assigns a ref (e.g. `m00005`) to **every** mapped message,
+including tool calls — that ref map is the anchor the model cites inside
+`compress` calls. What varies is whether the `<acp>` tag is also **injected into
+message text**. Pick the strategy that matches how your host consumes the
+output:
+
+```ts
+import { processTurn, type RenderStrategy } from "acp-kernel";
+
+type RenderStrategy = "all" | "text-only" | "none";
+
+// default: every mapped message gets a visible <acp> tag.
+// Use for in-process hosts (pai-acp / billion-context-pi) where the LLM
+// reads the tag to identify compress ranges.
+processTurn({ messages, state, config, tokenCount });
+
+// proxy mode: tag user/assistant text, but leave tool-call args and tool
+// results pristine (a <acp> tag inside {"command":"echo"} corrupts the JSON).
+// Refs are still assigned to every message; only text rendering is selective.
+processTurn({ messages, state, config, tokenCount, renderTags: "text-only" });
+
+// host reads the ref map directly and never wants tags in the text.
+// processTurn honors this by omitting the render-refs node entirely.
+processTurn({ messages, state, config, tokenCount, renderTags: "none" });
+```
+
+`renderTags` is optional and defaults to `"all"`, so existing call sites keep
+working unchanged.
+
 ### Standalone modules
 
 | Module | Purpose |

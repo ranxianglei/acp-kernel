@@ -13,7 +13,8 @@ import { resolveBoundaries, earliestIndexOfIds } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
-import { renderRefsNode } from "./render-refs.js";
+import { createRenderRefsNode } from "./render-refs.js";
+import type { RenderStrategy } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import {
@@ -66,6 +67,19 @@ export interface ProcessTurnInput {
   state: CompressionState;
   config: Config;
   tokenCount: number;
+  /**
+   * Which messages get an <acp> ref tag injected into their text
+   * (the render-refs pipeline node). Refs are ALWAYS assigned regardless
+   * (assign-refs node runs unconditionally).
+   *   - "all" (default): tag every mapped message — in-process hosts
+   *     like pai-acp want tags for the LLM to reference compress ranges.
+   *   - "text-only": tag only user/assistant text; leave tool-call args
+   *     and tool-result content pristine — proxy hosts where structured
+   *     content must not be polluted.
+   *   - "none": leave all text untouched — hosts that read the ref map
+   *     directly from result.state.messageRefs.
+   */
+  renderTags?: RenderStrategy;
 }
 
 export interface ApplyCompressionInput {
@@ -240,7 +254,12 @@ export function createCore(ports: Ports = {}): CompressionCore {
       state: input.state,
       effects: {},
     };
-    const result = runPipeline(defaultNodes(), initial, ctx);
+    // Conversion (assign-refs) and rendering (render-refs) are separate
+    // concerns. Refs are always assigned; renderTags only controls which
+    // message texts receive an <acp> tag.
+    const strategy: RenderStrategy = input.renderTags ?? "all";
+    const nodes = buildNodes(strategy);
+    const result = runPipeline(nodes, initial, ctx);
     return {
       messages: result.messages,
       state: result.state,
@@ -285,7 +304,14 @@ export function createCore(ports: Ports = {}): CompressionCore {
   }
 
   function defaultNodes(): PipelineNode[] {
-    return [
+    return buildNodes("all");
+  }
+
+  /** Build the pipeline node list for a given render strategy. "none" omits
+   *  the render-refs node entirely; "all"/"text-only" append a render-refs
+   *  node bound to that strategy. */
+  function buildNodes(strategy: RenderStrategy): PipelineNode[] {
+    const base: PipelineNode[] = [
       assignRefsNode,
       syncBlocksNode,
       pruneNode,
@@ -294,8 +320,9 @@ export function createCore(ports: Ports = {}): CompressionCore {
       recommendNode,
       nudgeNode,
       emergencyTruncateNode,
-      renderRefsNode,
     ];
+    if (strategy === "none") return base;
+    return [...base, createRenderRefsNode(strategy)];
   }
 
   return { processTurn, applyCompression, defaultNodes, decompress, search, status };

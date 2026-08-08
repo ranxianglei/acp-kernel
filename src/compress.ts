@@ -9,7 +9,12 @@ import {
 } from "./state.js";
 import { defaultCountTokens } from "./tokenize.js";
 import { validateConfig } from "./config.js";
-import { resolveBoundaries, earliestIndexOfIds } from "./boundaries.js";
+import {
+  resolveBoundaries,
+  earliestIndexOfIds,
+  parseBoundary,
+  type ResolvedRange,
+} from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
@@ -84,12 +89,20 @@ export interface ProcessTurnInput {
 
 export interface ApplyCompressionInput {
   ranges: {
-    startRef: string;
-    endRef: string;
+    startRef?: string;
+    endRef?: string;
     summary: string;
     topic?: string;
     compressCallId?: string;
     summaryMaxChars?: number;
+    /**
+     * Explicit list of block ids to distill into one higher-tier block
+     * (T2/T3). Use for NON-CONTIGUOUS block distillation: consume exactly
+     * these blocks, leaving any raw messages between them visible. Mutually
+     * exclusive with startRef/endRef — when blockIds is a non-empty array it
+     * takes precedence.
+     */
+    blockIds?: string[];
   }[];
   messages: CoreMessage[];
   state: CompressionState;
@@ -123,12 +136,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
     for (const spec of input.ranges) {
       let resolved;
       try {
-        resolved = resolveBoundaries({
-          startRef: spec.startRef,
-          endRef: spec.endRef,
-          messages: input.messages,
-          state,
-        });
+        resolved = resolveRangeSpec(spec, input.messages, state);
       } catch {
         continue;
       }
@@ -154,7 +162,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
             blocksCreated: 0,
             tokensCompressed: 0,
             errors: [
-              `content: range (${prev.spec.startRef}..${prev.spec.endRef}) overlaps (${curr.spec.startRef}..${curr.spec.endRef}). Overlapping ranges cannot be compressed in the same batch.`,
+              `content: range (${rangeLabel(prev.spec)}) overlaps (${rangeLabel(curr.spec)}). Overlapping ranges cannot be compressed in the same batch.`,
             ],
             warnings: [],
           },
@@ -168,12 +176,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
       for (const spec of input.ranges) {
         let resolved;
         try {
-          resolved = resolveBoundaries({
-            startRef: spec.startRef,
-            endRef: spec.endRef,
-            messages: input.messages,
-            state,
-          });
+          resolved = resolveRangeSpec(spec, input.messages, state);
         } catch {
           continue;
         }
@@ -483,7 +486,7 @@ const emergencyTruncateNode: PipelineNode = {
 };
 
 interface SingleRangeInput {
-  spec: { startRef: string; endRef: string; summary: string; topic?: string; compressCallId?: string; summaryMaxChars?: number };
+  spec: { startRef?: string; endRef?: string; summary: string; topic?: string; compressCallId?: string; summaryMaxChars?: number; blockIds?: string[] };
   messages: CoreMessage[];
   state: CompressionState;
   runId: string;
@@ -500,12 +503,7 @@ interface SingleRangeOutcome {
 
 function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   const warnings: string[] = [];
-  const resolved = resolveBoundaries({
-    startRef: input.spec.startRef,
-    endRef: input.spec.endRef,
-    messages: input.messages,
-    state: input.state,
-  });
+  const resolved = resolveRangeSpec(input.spec, input.messages, input.state);
 
   const rangeMessageIds = applyToolPairAdjustment(
     resolved,
@@ -682,6 +680,107 @@ function applyToolPairAdjustment(
     if (msg) ids.push(msg.id);
   }
   return ids;
+}
+
+function rangeLabel(spec: {
+  startRef?: string;
+  endRef?: string;
+  blockIds?: string[];
+}): string {
+  if (spec.blockIds && spec.blockIds.length > 0) {
+    return `blockIds:[${spec.blockIds.join(",")}]`;
+  }
+  return `${spec.startRef}..${spec.endRef}`;
+}
+
+function resolveRangeSpec(
+  spec: {
+    startRef?: string;
+    endRef?: string;
+    blockIds?: string[];
+  },
+  messages: CoreMessage[],
+  state: CompressionState,
+): ResolvedRange {
+  if (spec.blockIds && spec.blockIds.length > 0) {
+    return resolveBlockListBoundaries(spec.blockIds, messages, state);
+  }
+  return resolveBoundaries({
+    startRef: spec.startRef ?? "",
+    endRef: spec.endRef ?? "",
+    messages,
+    state,
+  });
+}
+
+function resolveBlockListBoundaries(
+  blockIds: string[],
+  messages: CoreMessage[],
+  state: CompressionState,
+): ResolvedRange {
+  const indexByRawId = new Map<string, number>();
+  messages.forEach((message, index) => indexByRawId.set(message.id, index));
+
+  const nestedBlockIds: string[] = [];
+  const seen = new Set<string>();
+  const messageIds = new Set<string>();
+  let minIndex = Infinity;
+  let maxIndex = -1;
+
+  for (const raw of blockIds) {
+    const parsed = parseBoundary(raw);
+    if (!parsed || parsed.kind !== "block") {
+      throw new Error(
+        `blockIds: "${raw}" is not a valid block id (expected bN, e.g. "b3").`,
+      );
+    }
+    const blockId = `b${parsed.numericId}`;
+    const block = blockById(state, blockId);
+    if (!block) {
+      throw new Error(`blockIds: block "${raw}" does not exist.`);
+    }
+    if (!block.active) {
+      throw new Error(
+        `blockIds: block "${raw}" is not active (already consumed by a higher-tier block).`,
+      );
+    }
+    if (!seen.has(blockId)) {
+      seen.add(blockId);
+      nestedBlockIds.push(blockId);
+    }
+    for (const id of block.effectiveMessageIds) {
+      messageIds.add(id);
+      const idx = indexByRawId.get(id);
+      if (idx !== undefined) {
+        if (idx < minIndex) minIndex = idx;
+        if (idx > maxIndex) maxIndex = idx;
+      }
+    }
+  }
+
+  const tiers = new Set(
+    nestedBlockIds.map((id) => blockById(state, id)!.tier),
+  );
+  if (tiers.size > 1) {
+    throw new Error(
+      `blockIds: all blocks must be the same tier (got tiers ${[...tiers]
+        .sort()
+        .join(", ")}). Distill one tier at a time.`,
+    );
+  }
+
+  const startIndex = minIndex === Infinity ? 0 : minIndex;
+  const endIndex =
+    maxIndex === -1 ? Math.max(0, messages.length - 1) : maxIndex;
+
+  return {
+    startIndex,
+    endIndex,
+    messageIds: [...messageIds].filter((id) => indexByRawId.has(id)),
+    nestedBlockIds,
+    boundaryKind: "block",
+    protectedGaps: [],
+  };
 }
 
 function validateCompressionRange(

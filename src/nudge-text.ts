@@ -123,8 +123,10 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
     const isT2 = decision.tier === 2;
     const targets = decision.tierTargetBlocks ?? [];
     const blockList = formatTierTargetBlocks(targets);
-    const startId = targets[0]?.blockId ?? "b1";
-    const endId = targets[targets.length - 1]?.blockId ?? "b5";
+    const blockIdsExample =
+      targets.length > 0
+        ? targets.map((t) => `"${t.blockId}"`).join(", ")
+        : `"b1", "b5"`;
     return {
       voice: "gentle",
       text: [
@@ -134,10 +136,10 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
         "",
         `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`,
         isT2
-          ? `Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. Use block IDs as boundaries.`
-          : `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries.`,
+          ? `Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. List the exact block ids to distill.`
+          : `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. List the exact block ids to distill.`,
         blockList,
-        `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
+        `Example: compress({ content: [{ blockIds: [${blockIdsExample}], summary: "..." }] })`,
         "",
         HOW_TO_COMPRESS_RULES,
         "",

@@ -392,12 +392,14 @@ const recommendNode: PipelineNode = {
       io.messages,
       io.state,
       ctx.config,
+      ctx.countTokens,
     );
     const contextRanges = buildCompressibleRanges(
       io.messages,
       io.state,
       ctx.config,
       protectedRefs,
+      ctx.countTokens,
     );
     const nothingToCompress = contextRanges.compressible.length === 0;
     const recommendation: Recommendation = {

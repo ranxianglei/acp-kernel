@@ -230,3 +230,40 @@ test("integration: tiny ranges are suppressed — fixes the 19-token compression
   assert.equal(result.nudge!.shouldInject, false, "turn 1: growth=0, no nudge");
   assert.ok(result.nudge!.reason.includes("growth"), `reason: ${result.nudge!.reason}`);
 });
+
+// ─── countTokens injection (Phase 1: T1 pending uses injected countTokens) ────
+
+test("buildCompressibleRanges: CJK-aware countTokens inflates Chinese pending vs chars/4", () => {
+  const zh = "这是一个中文测试消息用于验证token校准的效果。".repeat(20); // ~340 chars
+  const messages = [msg("a", zh), toolMsg("b", "bash"), msg("c", "tail", "tool")];
+  const state = assignAll(messages);
+
+  const chars4 = buildCompressibleRanges(messages, state, config());
+  const cjk = buildCompressibleRanges(messages, state, config(), undefined, (t) => t.length);
+
+  const pendingDefault = chars4.compressible.reduce((s, r) => s + r.tokens, 0);
+  const pendingCjk = cjk.compressible.reduce((s, r) => s + r.tokens, 0);
+  assert.ok(pendingCjk > pendingDefault, `cjk ${pendingCjk} should exceed chars/4 ${pendingDefault}`);
+  // ~340 chars: chars/4 ≈ 85, CJK-aware ≈ 340+ → multiple of ~3+
+  assert.ok(pendingCjk >= pendingDefault * 3, `expected >=3x inflation, got ${pendingCjk} vs ${pendingDefault}`);
+});
+
+test("buildCompressibleRanges: default countTokens preserves chars/4 legacy behavior", () => {
+  const messages = [msg("a", "x".repeat(40))];
+  const state = assignAll(messages);
+  const ranges = buildCompressibleRanges(messages, state, config());
+  assert.equal(ranges.compressible[0]!.tokens, 10, "chars/4 of 40 chars = 10");
+});
+
+test("computeProtectedRefs: injected countTokens sizes the recent-token zone", () => {
+  const messages = [msg("a", "前"), msg("b", "x".repeat(400)), msg("c", "后", "assistant")];
+  const state = assignAll(messages);
+  // preserveRecentTokens = 100 with chars/4: last 400 chars msg b = 100 tokens → zone covers b, a unprotected
+  const chars4 = computeProtectedRefs(messages, state, config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }));
+  assert.equal(chars4.has("m00001"), false, "chars/4: a (1 token) stays outside 100-token zone starting at b(100)");
+  assert.equal(chars4.has("m00002"), true, "chars/4: b fills the zone");
+  // same config but CJK-aware: b = 400 tokens → zone far exceeds, a (1 token) still outside, but b dominates
+  const cjk = computeProtectedRefs(messages, state, config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }), (t) => t.length);
+  assert.equal(cjk.has("m00002"), true, "cjk: b is in recent zone");
+  assert.equal(cjk.has("m00003"), true, "cjk: c is in recent zone");
+});

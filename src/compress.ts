@@ -20,6 +20,7 @@ import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import {
   computeProtectedRefs,
   buildCompressibleRanges,
+  mergeRangesToThreshold,
 } from "./recommend.js";
 import {
   runPipeline,
@@ -401,7 +402,10 @@ const recommendNode: PipelineNode = {
     const nothingToCompress = contextRanges.compressible.length === 0;
     const recommendation: Recommendation = {
       contextRanges,
-      recommendedRanges: contextRanges.compressible,
+      recommendedRanges: mergeRangesToThreshold(
+        contextRanges.compressible,
+        ctx.config.compress.minCompressRange,
+      ),
       nothingToCompress,
     };
     return { ...io, effects: { ...io.effects, recommendation } };

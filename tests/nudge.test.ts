@@ -163,6 +163,37 @@ test("nudge: emergency flags emergencyNothingLeft when nothing legally compressi
   );
 });
 
+test("nudge: emergency leaves emergencyNothingLeft=0 when plenty is compressible", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+
+  const turn = core.processTurn({ messages, state, config, tokenCount: 99000 });
+  assert.equal(turn.nudge!.shouldInject, true, "emergency fires");
+  assert.equal(
+    turn.nudge!.breakdown.emergencyNothingLeft,
+    0,
+    "large pending well above the floor → not nothing-left",
+  );
+});
+
+test("nudge: emergencyNothingLeft floor tracks minCompressRange (chars → ≈tokens)", () => {
+  const core = createCore();
+  // Production default minCompressRange: 5000 chars → floor = max(500, 1250) = 1250.
+  // A single ~600-token message is above the bare 500 floor but below 1250, so
+  // under the realistic config it is still flagged nothing-left.
+  const config = buildConfig({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } });
+  const messages = [
+    textMessage("user", "m0", "x".repeat(2400)),
+    textMessage("assistant", "m1", "y".repeat(2400)),
+  ];
+  const state = createInitialState();
+  const turn = core.processTurn({ messages, state, config, tokenCount: 99000 });
+  assert.equal(turn.nudge!.breakdown.emergencyNothingLeft, 1, "~600 tok pending < floor 1250 → nothing-left");
+});
+
 test("nudge: baseline correction when tokens drop significantly", () => {
   const core = createCore();
   const config = buildConfig();

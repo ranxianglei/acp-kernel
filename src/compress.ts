@@ -866,17 +866,12 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const tiers = pendingByTier(state, rec, countTokens);
   const maxPending = Math.max(0, ...Object.values(tiers).map((t) => t.pending));
 
-  // Emergency deadlock guard (omp ISSUE-3): when usage breaches the emergency
-  // threshold BUT every tier's pending is below a small floor, there is no
-  // legal compression left (the protect zone + minCompressRange leave no viable
-  // range, and there are no active lower-tier blocks to distill). Injecting an
-  // emergency nudge every turn only makes the model attempt-and-fail in a loop
-  // while usage never recovers. The emergency-truncate node is the real safety
-  // valve for "context full, nothing to compress"; here we only stop the nudge
-  // thrash. The situation is still surfaced via the reason and the breakdown.
-  // Floor derives from minCompressRange (chars → ≈tokens) so it tracks the same
-  // gate that blocks T1 compression; the 500 absolute lower bound keeps distill
-  // tiers from re-firing on a handful of tiny summaries.
+  // Emergency deadlock guard (omp ISSUE-3): over the emergency line but every
+  // tier's pending below the floor ⇒ no legal range (protect + minCompressRange
+  // block all). Flag it so adapters withhold the nudge instead of attempt-and-
+  // -fail thrashing; emergency truncation (truncate.threshold, fires at 100%) is
+  // the remaining safety valve, not this nudge. Floor tracks minCompressRange
+  // (chars → ≈tokens); the 500 absolute bound avoids re-firing on tiny distills.
   const emergencyFloor = Math.max(
     500,
     Math.ceil(config.compress.minCompressRange / 4),

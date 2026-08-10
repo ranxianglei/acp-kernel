@@ -649,6 +649,8 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     generation: "young",
     active: true,
     compressCallId: input.spec.compressCallId,
+    startRef: input.spec.startRef,
+    endRef: input.spec.endRef,
   };
   input.state.blocks.push(block);
 

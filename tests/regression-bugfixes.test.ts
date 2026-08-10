@@ -343,7 +343,7 @@ test("render-refs is idempotent across repeated renders", () => {
   assert.match(once[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\n\[m00002\] beta$/);
 });
 
-test("batch: overlapping ranges are rejected", () => {
+test("batch: overlapping ranges warn and skip (earliest wins) instead of failing", () => {
   const core = createCore();
   const messages = [
     msg("a", "x".repeat(2000)),
@@ -366,8 +366,12 @@ test("batch: overlapping ranges are rejected", () => {
     config: config(),
   });
 
-  assert.equal(result.result.blocksCreated, 0);
-  assert.match(result.result.errors[0]!, /overlaps/i);
+  assert.equal(result.result.errors.length, 0, "overlap is non-fatal — no errors");
+  assert.equal(result.result.blocksCreated, 1, "the earlier range is still compressed");
+  assert.ok(
+    result.result.warnings.some((w) => /overlaps an earlier range/i.test(w)),
+    "a warning is recorded for the skipped range",
+  );
 });
 
 test("batch: non-overlapping ranges all succeed", () => {
@@ -396,6 +400,81 @@ test("batch: non-overlapping ranges all succeed", () => {
 
   assert.equal(result.result.blocksCreated, 2);
   assert.equal(result.result.errors.length, 0);
+});
+
+test("batch: disjoint range still compresses when two others overlap", () => {
+  const core = createCore();
+  const messages = [
+    msg("a", "x".repeat(2000)),
+    msg("b", "x".repeat(2000)),
+    msg("c", "x".repeat(2000)),
+    msg("d", "x".repeat(2000)),
+    msg("e", "x".repeat(2000)),
+  ];
+  const state = createInitialState();
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const result = core.applyCompression({
+    ranges: [
+      { startRef: "m00001", endRef: "m00002", summary: "ab summary" },
+      { startRef: "m00002", endRef: "m00003", summary: "bc summary (overlaps ab)" },
+      { startRef: "m00004", endRef: "m00005", summary: "de summary (disjoint)" },
+    ],
+    messages,
+    state,
+    config: config(),
+  });
+
+  assert.equal(result.result.errors.length, 0);
+  assert.equal(result.result.blocksCreated, 2);
+  assert.ok(
+    result.result.warnings.some((w) => /overlaps an earlier range/i.test(w)),
+    "an overlap warning is recorded",
+  );
+});
+
+test("batch: overlap resolved deterministically regardless of input order", () => {
+  const core = createCore();
+  const messages = [
+    msg("a", "x".repeat(2000)),
+    msg("b", "x".repeat(2000)),
+    msg("c", "x".repeat(2000)),
+    msg("d", "x".repeat(2000)),
+  ];
+  const state = createInitialState();
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const run = (ranges: Parameters<typeof core.applyCompression>[0]["ranges"]) => {
+    const fresh = createInitialState();
+    fresh.messageRefs = state.messageRefs;
+    return core.applyCompression({ ranges, messages, state: fresh, config: config() });
+  };
+
+  const sorted = run([
+    { startRef: "m00001", endRef: "m00002", summary: "ab summary" },
+    { startRef: "m00002", endRef: "m00003", summary: "bc summary (overlaps ab)" },
+    { startRef: "m00003", endRef: "m00004", summary: "cd summary (disjoint from ab)" },
+  ]);
+  const shuffled = run([
+    { startRef: "m00003", endRef: "m00004", summary: "cd summary (disjoint from ab)" },
+    { startRef: "m00002", endRef: "m00003", summary: "bc summary (overlaps ab)" },
+    { startRef: "m00001", endRef: "m00002", summary: "ab summary" },
+  ]);
+
+  for (const [label, result] of [["sorted", sorted], ["shuffled", shuffled]] as const) {
+    assert.equal(result.result.errors.length, 0, `${label}: no errors`);
+    assert.equal(result.result.blocksCreated, 2, `${label}: earliest range + disjoint range compressed`);
+    assert.ok(
+      result.result.warnings.some((w) => /overlaps an earlier range/i.test(w)),
+      `${label}: overlap warning present`,
+    );
+  }
 });
 
 test("block-boundary distillation counts consumed block tokens", () => {

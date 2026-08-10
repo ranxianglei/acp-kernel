@@ -85,6 +85,30 @@ test("tier-3 condensation: guidance warns raw messages in span are absorbed", ()
   assert.ok(result.text.includes("HOW TO COMPRESS"), "should direct raw messages to HOW TO COMPRESS rules");
 });
 
+test("emergency + tier 2: emergency voice with distillation guidance", () => {
+  const result = renderNudgeText(
+    makeDecision({ tier: 2, breakdown: { emergencyOverride: 1 } }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(
+    result.text.toLowerCase().includes("distill"),
+    "should still carry distillation guidance",
+  );
+  assert.ok(result.text.includes("TIER 2"), "should still name the tier");
+});
+
+test("emergency + tier 3: emergency voice with condensation guidance", () => {
+  const result = renderNudgeText(
+    makeDecision({ tier: 3, breakdown: { emergencyOverride: 1 } }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(
+    result.text.toLowerCase().includes("condense"),
+    "should still carry condensation guidance",
+  );
+  assert.ok(result.text.includes("TIER 3"), "should still name the tier");
+});
+
 test("both modes include compressible ranges", () => {
   const gentle = renderNudgeText(makeDecision({ contextUsage: 0.5 }));
   const emergency = renderNudgeText(

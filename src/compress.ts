@@ -814,20 +814,23 @@ function resolveAdaptiveGrowth(
   );
 }
 
-/** Compressible amount for each tier — all tiers use the SAME definition
- *  ("how much can be compressed at this tier"), so they are handled by one
- *  unified loop. T1 = compressible raw-message tokens (excludes protected /
- *  already-covered); T2 = total summary tokens of all active tier-1 blocks;
- *  T3 = total summary tokens of all active tier-2 blocks. The "zero filter"
- *  for block tiers is simply that all blocks are compressible by default. */
+/** Compressible amount for each tier. T1 = EFFECTIVE merged-range tokens —
+ *  only ranges whose `tokens*4 >= minCompressRange` count (avoids inflation
+ *  from fragmentation); T2 = total summary tokens of all active tier-1 blocks;
+ *  T3 = total summary tokens of all active tier-2 blocks. */
 function pendingByTier(
   state: CompressionState,
   recommendation: Recommendation | undefined,
   countTokens: (t: string) => number,
+  minCompressRange: number,
 ): Record<number, { pending: number; targetBlocks: CompressionBlock[] }> {
   const out: Record<number, { pending: number; targetBlocks: CompressionBlock[] }> = {};
-  const compressible = recommendation?.contextRanges.compressible ?? [];
-  out[1] = { pending: compressible.reduce((s, r) => s + r.tokens, 0), targetBlocks: [] };
+  const merged = recommendation?.recommendedRanges ?? [];
+  const effective =
+    minCompressRange > 0
+      ? merged.filter((r) => r.tokens * 4 >= minCompressRange)
+      : merged;
+  out[1] = { pending: effective.reduce((s, r) => s + r.tokens, 0), targetBlocks: [] };
   const active = activeBlocks(state);
   const t1 = active.filter((b) => b.tier === 1);
   const t2 = active.filter((b) => b.tier === 2);
@@ -868,35 +871,64 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const growthSinceReference = tokenCount - growthReference;
 
   const rec = recommendation;
-  const tiers = pendingByTier(state, rec, countTokens);
+  const tiers = pendingByTier(
+    state,
+    rec,
+    countTokens,
+    config.compress.minCompressRange,
+  );
 
-  // Unified injection arbitration, priority T1 > T2 > T3 (ascending). Each
-  // tier has its OWN cadence (lastShownByTier) so firing one doesn't block
-  // another across turns; within a turn we inject at most the FIRST eligible
-  // tier and stop, which raises the shared baseline (lastNudgeShownTokens) so
-  // lower-priority tiers see a higher reference and naturally defer.
+  // Tier arbitration. Emergency (usage >= emergencyThresholdPct) ignores tier
+  // priority and picks the tier with the MAX pending. Non-emergency defaults to
+  // T1; T2 overrides only when it crossed its 1.5x threshold AND exceeds the
+  // effective T1 pending. T3 stays on its existing distillation paths.
+  const tier2Threshold = Math.round(
+    nudgeGrowthTokens * (config.nudge.tier2GrowthMultiplier ?? 1.5),
+  );
   let injectedTier: CompressionTier | null = null;
   let injectedReason = "";
-  // growth acts as the "has accumulated since baseline" signal; pending is the
-  // "there is enough compressible content" signal. Both must hold for a
-  // non-emergency injection. This keeps the first turn (growth 0) from firing
-  // immediately even if a lot is compressible — it just establishes baseline.
   const growthReady = growthSinceReference >= growthFloor;
-  if (!emergencyOverride && growthReady) {
-    for (const tier of [1, 2, 3] as const) {
-      if (!config.tiers.enabled && tier > 1) break;
-      const info = tiers[tier];
-      if (!info || info.pending < nudgeGrowthTokens) continue;
-      const lastShown = state.nudge.lastShownByTier[tier] ?? 0;
-      // Per-tier cadence: even with growth, a tier that fired recently waits
-      // for its own cadence window. First time (lastShown===0) is always met.
-      const cadenceMet = lastShown === 0 || tokenCount - lastShown >= growthFloor;
-      if (!cadenceMet) continue;
-      injectedTier = tier;
-      injectedReason = tier === 1
-        ? `T1 compressible ${info.pending} >= ${nudgeGrowthTokens}, growth ${growthSinceReference}, usage ${Math.round(usage * 100)}%`
-        : `T${tier} distill ready: ${info.targetBlocks.length} tier-${tier - 1} blocks (${info.pending} tokens) >= ${nudgeGrowthTokens}, usage ${Math.round(usage * 100)}%`;
-      break;
+  const t1Eff = tiers[1]?.pending ?? 0;
+  const t2Pen = tiers[2]?.pending ?? 0;
+  const t3Pen = tiers[3]?.pending ?? 0;
+
+  if (emergencyOverride) {
+    const candidates: CompressionTier[] = [1];
+    if (config.tiers.enabled) {
+      candidates.push(2, 3);
+    }
+    let best: CompressionTier | null = null;
+    let bestPending = 0;
+    for (const t of candidates) {
+      const p = tiers[t]?.pending ?? 0;
+      if (p > bestPending) {
+        bestPending = p;
+        best = t;
+      }
+    }
+    if (best !== null) {
+      injectedTier = best;
+      injectedReason =
+        best === 1
+          ? `EMERGENCY T1: max effective pending ${bestPending}, usage ${Math.round(usage * 100)}%`
+          : `EMERGENCY T${best} distill: max pending ${bestPending} (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}), usage ${Math.round(usage * 100)}%`;
+    }
+  } else if (growthReady) {
+    if (t1Eff >= nudgeGrowthTokens) {
+      injectedTier = 1;
+      injectedReason = `T1 effective ${t1Eff} >= ${nudgeGrowthTokens}, growth ${growthSinceReference}, usage ${Math.round(usage * 100)}%`;
+    } else if (
+      config.tiers.enabled &&
+      t2Pen >= tier2Threshold &&
+      t2Pen > t1Eff
+    ) {
+      const lastShown = state.nudge.lastShownByTier[2] ?? 0;
+      const cadenceMet =
+        lastShown === 0 || tokenCount - lastShown >= growthFloor;
+      if (cadenceMet) {
+        injectedTier = 2;
+        injectedReason = `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+      }
     }
   }
 

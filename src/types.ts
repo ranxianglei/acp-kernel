@@ -92,6 +92,10 @@ export interface NudgeConfig {
   minGrowthRatio: number;
   /** Emergency override: always nudge when usage ≥ this fraction. Default 0.98 (98%). */
   emergencyThresholdPct: number;
+  /** Growth multiplier for the tier-2 trigger: T2 distillation fires when T2
+   *  pending ≥ nudgeGrowthTokens × this multiplier AND T2 > T1 effective.
+   *  Default 1.5. */
+  tier2GrowthMultiplier: number;
 }
 
 export interface TruncateConfig {

@@ -297,3 +297,109 @@ test("nudge: compressible ranges exclude messages covered by active blocks", () 
     );
   }
 });
+
+function t1Blocks(anchorIds: string[][], summaryChars: number) {
+  return anchorIds.map((effIds, i) => ({
+    blockId: `b${i + 1}`,
+    runId: "r1",
+    tier: 1 as const,
+    summary: "x".repeat(summaryChars),
+    directMessageIds: effIds,
+    effectiveMessageIds: effIds,
+    directBlockIds: [],
+    compressedTokens: summaryChars,
+    createdAt: Date.now(),
+    survivedCount: 0,
+    generation: "young" as const,
+    active: true,
+  }));
+}
+
+test("arbitration: non-emergency T1 effective >= threshold → tier 1", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  const turn = core.processTurn({ messages, state, config, tokenCount: 55000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(turn.nudge.tier, 1, "T1 effective (~50K) >= 6000 → tier 1, no T2 blocks present");
+});
+
+test("arbitration: non-emergency T2 >= 1.5x threshold AND > T1 effective → tier 2", () => {
+  const core = createCore();
+  // Preserve all but the first message → T1 effective small (~5K < 6K threshold).
+  const config = buildConfig({ preserveRecentMessages: 9 });
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 50000 }).state;
+  // Two T1 blocks anchored to real messages (m1, m2) with ~6K-token summaries
+  // each → T2 ~12K >= 9000 (1.5x) and > ~5K T1 effective.
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"]], 24000) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(
+    turn.nudge.tier,
+    2,
+    "T2 ~12K >= 9000 (1.5x) and > T1 effective ~5K → tier 2",
+  );
+});
+
+test("arbitration: non-emergency T2 large but T1 effective >= threshold → tier 1 wins", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  // Large T2 pending (blocks anchored to m0, m1), but T1 effective (~40K from
+  // m2..m9) still dominates the threshold.
+  state = { ...state, blocks: t1Blocks([["m0"], ["m1"]], 40000) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 55000 });
+  assert.equal(turn.nudge.tier, 1, "T1 effective >= threshold wins even when T2 is large");
+});
+
+test("arbitration: emergency T2 > T1 effective → tier 2 with emergencyOverride", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  // One T1 block covering ALL messages → compressible empty (T1 effective 0),
+  // with a large summary → T2 pending ~10K dominates.
+  state = {
+    ...state,
+    blocks: [
+      {
+        blockId: "b1",
+        runId: "r1",
+        tier: 1 as const,
+        summary: "x".repeat(40000),
+        directMessageIds: messages.map((m) => m.id),
+        effectiveMessageIds: messages.map((m) => m.id),
+        directBlockIds: [],
+        compressedTokens: 50000,
+        createdAt: Date.now(),
+        survivedCount: 0,
+        generation: "young" as const,
+        active: true,
+      },
+    ],
+  };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 99000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(turn.nudge.tier, 2, "emergency picks T2 (max pending) when T2 > T1 effective");
+  assert.equal(turn.nudge.breakdown.emergencyOverride, 1);
+});
+
+test("arbitration: emergency T1 effective largest → tier 1", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  // No blocks → T2/T3 = 0; T1 effective ~50K is the max.
+  const turn = core.processTurn({ messages, state, config, tokenCount: 99000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(turn.nudge.tier, 1, "emergency picks T1 when its effective pending is max");
+  assert.equal(turn.nudge.breakdown.emergencyOverride, 1);
+});

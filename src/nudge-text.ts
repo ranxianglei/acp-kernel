@@ -118,6 +118,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
 export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
   const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
+  const isEmergency = !!decision.breakdown?.emergencyOverride;
 
   if (decision.tier !== null && decision.tier >= 2) {
     const isT2 = decision.tier === 2;
@@ -125,14 +126,19 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
     const blockList = formatTierTargetBlocks(targets);
     const startId = targets[0]?.blockId ?? "b1";
     const endId = targets[targets.length - 1]?.blockId ?? "b5";
+    const header = isEmergency ? EMERGENCY_HEADER : EFFICIENCY_NOTE;
+    const voice: NudgeVoice = isEmergency ? "emergency" : "gentle";
+    const triggerLine = isEmergency
+      ? `[EMERGENCY — TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"}] Context limit reached — distill NOW into a denser summary to reclaim tokens.`
+      : `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`;
     return {
-      voice: "gentle",
+      voice,
       text: [
-        EFFICIENCY_NOTE,
+        header,
         "",
         breakdownStr,
         "",
-        `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`,
+        triggerLine,
         isT2
           ? `Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-2 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 2 distillation rules to the existing summaries, so the whole span is covered and nothing is lost.`
           : `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-3 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 3 condensation rules to the existing summaries, so the whole span is covered and nothing is lost.`,
@@ -145,8 +151,6 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
       ].join("\n"),
     };
   }
-
-  const isEmergency = !!decision.breakdown?.emergencyOverride;
 
   if (isEmergency) {
     return {

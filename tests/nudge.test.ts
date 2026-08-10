@@ -140,6 +140,29 @@ test("nudge: emergency override fires at 98% regardless of growth", () => {
   );
 });
 
+test("nudge: emergency flags emergencyNothingLeft when nothing legally compressible", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = [
+    textMessage("user", "m0", "x"),
+    textMessage("assistant", "m1", "y"),
+  ];
+  const state = createInitialState();
+
+  // 99000/100000 = 99% >= 98% emergency, but total compressible content is ~2
+  // tokens, far below the emergency floor (max(500, minCompressRange/4) = 500).
+  // The emergency contract still injects (shouldInject stays true), but the
+  // decision carries emergencyNothingLeft=1 + a distinct reason so adapters can
+  // withhold the compress nudge and avoid attempt-and-fail thrash.
+  const turn = core.processTurn({ messages, state, config, tokenCount: 99000 });
+  assert.equal(turn.nudge!.shouldInject, true, "emergency contract: still injects");
+  assert.equal(turn.nudge!.breakdown.emergencyNothingLeft, 1, "nothing-left signal set");
+  assert.ok(
+    turn.nudge!.reason.includes("nothing left to compress"),
+    `reason should flag nothing-left, got: ${turn.nudge!.reason}`,
+  );
+});
+
 test("nudge: baseline correction when tokens drop significantly", () => {
   const core = createCore();
   const config = buildConfig();

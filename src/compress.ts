@@ -864,6 +864,24 @@ function decideNudge(input: NudgeInput): NudgeDecision {
 
   const rec = recommendation;
   const tiers = pendingByTier(state, rec, countTokens);
+  const maxPending = Math.max(0, ...Object.values(tiers).map((t) => t.pending));
+
+  // Emergency deadlock guard (omp ISSUE-3): when usage breaches the emergency
+  // threshold BUT every tier's pending is below a small floor, there is no
+  // legal compression left (the protect zone + minCompressRange leave no viable
+  // range, and there are no active lower-tier blocks to distill). Injecting an
+  // emergency nudge every turn only makes the model attempt-and-fail in a loop
+  // while usage never recovers. The emergency-truncate node is the real safety
+  // valve for "context full, nothing to compress"; here we only stop the nudge
+  // thrash. The situation is still surfaced via the reason and the breakdown.
+  // Floor derives from minCompressRange (chars → ≈tokens) so it tracks the same
+  // gate that blocks T1 compression; the 500 absolute lower bound keeps distill
+  // tiers from re-firing on a handful of tiny summaries.
+  const emergencyFloor = Math.max(
+    500,
+    Math.ceil(config.compress.minCompressRange / 4),
+  );
+  const emergencyNothingLeft = emergencyOverride && maxPending < emergencyFloor;
 
   // Unified injection arbitration, priority T1 > T2 > T3 (ascending). Each
   // tier has its OWN cadence (lastShownByTier) so firing one doesn't block
@@ -898,7 +916,9 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const shouldInject = emergencyOverride || injectedTier !== null;
 
   let reason: string;
-  if (emergencyOverride) {
+  if (emergencyNothingLeft) {
+    reason = `EMERGENCY: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.emergencyThresholdPct * 100)}% but nothing left to compress (max ${maxPending} < floor ${emergencyFloor}); recent/protected zone dominates — emergency truncation acts at ${Math.round(config.truncate.threshold * 100)}%`;
+  } else if (emergencyOverride) {
     reason = `EMERGENCY: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.emergencyThresholdPct * 100)}%`;
   } else if (injectedTier !== null) {
     reason = injectedReason;
@@ -913,7 +933,6 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       .filter((t) => (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens && (state.nudge.lastShownByTier[t] ?? 0) > 0 && tokenCount - (state.nudge.lastShownByTier[t] ?? 0) < growthFloor)
       .map((t) => `T${t} (cadence)`);
     const blockedHint = blocked.length > 0 ? `, blocked: ${blocked.join(", ")}` : "";
-    const maxPending = Math.max(0, ...Object.values(tiers).map((t) => t.pending));
     // Report the ACTUAL blocking condition, not a fixed template. A session
     // can have plenty to compress (pending >= threshold) but still not
     // inject because growth/floor/cadence isn't met — the old fixed
@@ -946,6 +965,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       growthFloor,
       hasPendingNudge: hasPendingNudge ? 1 : 0,
       emergencyOverride: emergencyOverride ? 1 : 0,
+      emergencyNothingLeft: emergencyNothingLeft ? 1 : 0,
       pendingT1: tiers[1]!.pending,
       pendingT2: tiers[2]!.pending,
       pendingT3: tiers[3]!.pending,

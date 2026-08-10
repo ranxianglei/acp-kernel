@@ -74,3 +74,106 @@ test("rebuildCompressionState returns zero blocks when no compress calls exist",
     const result = rebuildCompressionState(createInitialState(), messages, defaultConfig(200000, { preserveRecentMessages: 0, preserveRecentTokens: 0 }));
     assert.equal(result.blocksRebuilt, 0);
 });
+
+function compressInput(entries: Array<{ startId: string; endId: string; summary: string }>): string {
+    return JSON.stringify({ content: entries });
+}
+
+function parseContent(text: string | undefined): Array<{ startId?: string; endId?: string; summary?: string }> {
+    return (JSON.parse(text ?? "{}") as { content?: Array<{ startId?: string; endId?: string; summary?: string }> }).content ?? [];
+}
+
+test("batched compress: rewrites kept call to drop consumed sibling entries (issue #288)", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b5", compressCallId: "call-batch", active: true, startRef: "m5", endRef: "m6" }),
+            block({ blockId: "b8", compressCallId: "call-batch", active: false, startRef: "m8", endRef: "m9" }),
+        ],
+    };
+    const messages: CoreMessage[] = [
+        {
+            id: "mc", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-batch",
+            text: compressInput([
+                { startId: "m5", endId: "m6", summary: "live entry summary" },
+                { startId: "m8", endId: "m9", summary: "consumed entry summary" },
+            ]),
+        },
+    ];
+    const result = hideConsumedCompressCalls(state, messages);
+    assert.equal(result.hidden, 0, "kept batch is not removed");
+    const kept = result.messages.find((m) => m.toolCallId === "call-batch");
+    assert.ok(kept, "batch call survives (one live sibling)");
+    const content = parseContent(kept!.text);
+    assert.equal(content.length, 1, "consumed entry dropped, live entry retained");
+    assert.equal(content[0]!.startId, "m5");
+    assert.equal(content[0]!.summary, "live entry summary");
+});
+
+test("batched compress: no rewrite when all sibling blocks are live", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b5", compressCallId: "call-batch", active: true, startRef: "m5", endRef: "m6" }),
+            block({ blockId: "b8", compressCallId: "call-batch", active: true, startRef: "m8", endRef: "m9" }),
+        ],
+    };
+    const messages: CoreMessage[] = [
+        {
+            id: "mc", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-batch",
+            text: compressInput([
+                { startId: "m5", endId: "m6", summary: "S1" },
+                { startId: "m8", endId: "m9", summary: "S2" },
+            ]),
+        },
+    ];
+    const result = hideConsumedCompressCalls(state, messages);
+    assert.equal(result.hidden, 0);
+    const kept = result.messages.find((m) => m.toolCallId === "call-batch")!;
+    assert.equal(parseContent(kept.text).length, 2, "both live entries retained, no rewrite");
+});
+
+test("batched compress: fully removed when all sibling blocks consumed", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b5", compressCallId: "call-batch", active: false, startRef: "m5", endRef: "m6" }),
+            block({ blockId: "b8", compressCallId: "call-batch", active: false, startRef: "m8", endRef: "m9" }),
+        ],
+    };
+    const messages: CoreMessage[] = [
+        {
+            id: "mc", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-batch",
+            text: compressInput([
+                { startId: "m5", endId: "m6", summary: "S1" },
+                { startId: "m8", endId: "m9", summary: "S2" },
+            ]),
+        },
+    ];
+    const result = hideConsumedCompressCalls(state, messages);
+    assert.equal(result.hidden, 1, "fully-consumed batch removed");
+    assert.equal(result.messages.find((m) => m.toolCallId === "call-batch"), undefined);
+});
+
+test("batched compress: legacy live block (no startRef/endRef) keeps whole part intact", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b5", compressCallId: "call-batch", active: true, startRef: "m5", endRef: "m6" }),
+            block({ blockId: "b8", compressCallId: "call-batch", active: true }),
+        ],
+    };
+    const messages: CoreMessage[] = [
+        {
+            id: "mc", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-batch",
+            text: compressInput([
+                { startId: "m5", endId: "m6", summary: "S1" },
+                { startId: "m8", endId: "m9", summary: "S2" },
+            ]),
+        },
+    ];
+    const result = hideConsumedCompressCalls(state, messages);
+    assert.equal(result.hidden, 0);
+    const kept = result.messages.find((m) => m.toolCallId === "call-batch")!;
+    assert.equal(parseContent(kept.text).length, 2, "legacy live block → no rewrite, all entries kept");
+});

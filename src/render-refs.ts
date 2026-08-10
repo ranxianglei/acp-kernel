@@ -109,7 +109,7 @@ export function renderWithSnapshot(
   messages: CoreMessage[],
   state: CompressionState,
   countTokens: (text: string) => number = (text) => Math.ceil(text.length / 4),
-  strategy: RenderStrategy,
+  strategy: RenderStrategy = "all",
 ): RenderWithSnapshotResult {
   const map = state.messageRefs;
   const snapshot = { ...(state.tokenSnapshot ?? {}) };

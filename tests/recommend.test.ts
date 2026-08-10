@@ -256,14 +256,17 @@ test("buildCompressibleRanges: default countTokens preserves chars/4 legacy beha
 });
 
 test("computeProtectedRefs: injected countTokens sizes the recent-token zone", () => {
-  const messages = [msg("a", "前"), msg("b", "x".repeat(400)), msg("c", "后", "assistant")];
+  // Sizes chosen so the zone DIFFERS under chars/4 vs CJK-aware: chars/4 → all
+  // three fit in 100 tokens (zone {a,b,c}); CJK-aware (1 tok/char) → b alone
+  // blows past 100 (zone {b,c}). If countTokens were ignored, both calls would
+  // protect a and the cjk assertion below would fail.
+  const messages = [msg("a", "x".repeat(200)), msg("b", "x".repeat(200)), msg("c", "y")];
   const state = assignAll(messages);
-  // preserveRecentTokens = 100 with chars/4: last 400 chars msg b = 100 tokens → zone covers b, a unprotected
   const chars4 = computeProtectedRefs(messages, state, config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }));
-  assert.equal(chars4.has("m00001"), false, "chars/4: a (1 token) stays outside 100-token zone starting at b(100)");
-  assert.equal(chars4.has("m00002"), true, "chars/4: b fills the zone");
-  // same config but CJK-aware: b = 400 tokens → zone far exceeds, a (1 token) still outside, but b dominates
+  assert.equal(chars4.has("m00001"), true, "chars/4: a (50 tok) fits within 100-token zone");
+  assert.equal(chars4.has("m00003"), true, "chars/4: c is most recent, in zone");
   const cjk = computeProtectedRefs(messages, state, config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }), (t) => t.length);
-  assert.equal(cjk.has("m00002"), true, "cjk: b is in recent zone");
-  assert.equal(cjk.has("m00003"), true, "cjk: c is in recent zone");
+  assert.equal(cjk.has("m00001"), false, "cjk: a excluded (b alone exceeds 100-token budget)");
+  assert.equal(cjk.has("m00002"), true, "cjk: b in zone");
+  assert.equal(cjk.has("m00003"), true, "cjk: c most recent, in zone");
 });

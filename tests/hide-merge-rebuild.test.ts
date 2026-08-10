@@ -118,19 +118,21 @@ test("batched compress: no rewrite when all sibling blocks are live", () => {
             block({ blockId: "b8", compressCallId: "call-batch", active: true, startRef: "m8", endRef: "m9" }),
         ],
     };
+    const originalText = compressInput([
+        { startId: "m5", endId: "m6", summary: "S1" },
+        { startId: "m8", endId: "m9", summary: "S2" },
+    ]);
     const messages: CoreMessage[] = [
         {
             id: "mc", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-batch",
-            text: compressInput([
-                { startId: "m5", endId: "m6", summary: "S1" },
-                { startId: "m8", endId: "m9", summary: "S2" },
-            ]),
+            text: originalText,
         },
     ];
     const result = hideConsumedCompressCalls(state, messages);
     assert.equal(result.hidden, 0);
     const kept = result.messages.find((m) => m.toolCallId === "call-batch")!;
-    assert.equal(parseContent(kept.text).length, 2, "both live entries retained, no rewrite");
+    assert.equal(kept.text, originalText, "byte-identical: rewrite path did not fire/re-serialize");
+    assert.equal(parseContent(kept.text).length, 2, "both live entries retained");
 });
 
 test("batched compress: fully removed when all sibling blocks consumed", () => {
@@ -176,4 +178,84 @@ test("batched compress: legacy live block (no startRef/endRef) keeps whole part 
     assert.equal(result.hidden, 0);
     const kept = result.messages.find((m) => m.toolCallId === "call-batch")!;
     assert.equal(parseContent(kept.text).length, 2, "legacy live block → no rewrite, all entries kept");
+});
+
+test("batched compress: message-mode entry matched via messageId fallback", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b1", compressCallId: "call-batch", active: true, startRef: "msg-3", endRef: "msg-3" }),
+            block({ blockId: "b2", compressCallId: "call-batch", active: false, startRef: "msg-7", endRef: "msg-7" }),
+        ],
+    };
+    const messages: CoreMessage[] = [
+        {
+            id: "mc", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-batch",
+            text: JSON.stringify({
+                content: [
+                    { messageId: "msg-3", summary: "live message-mode summary" },
+                    { messageId: "msg-7", summary: "consumed message-mode summary" },
+                ],
+            }),
+        },
+    ];
+    const result = hideConsumedCompressCalls(state, messages);
+    assert.equal(result.hidden, 0);
+    const kept = result.messages.find((m) => m.toolCallId === "call-batch")!;
+    const content = parseContent(kept.text) as Array<{ messageId?: string; summary?: string }>;
+    assert.equal(content.length, 1, "consumed message-mode entry dropped");
+    assert.equal(content[0]!.messageId, "msg-3");
+    assert.equal(content[0]!.summary, "live message-mode summary");
+});
+
+test("batched compress: matching-miss keeps original message intact (no data loss)", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b1", compressCallId: "call-batch", active: true, startRef: "m5", endRef: "m6" }),
+        ],
+    };
+    const originalText = compressInput([
+        { startId: "mx", endId: "my", summary: "unmatched entry" },
+        { startId: "mz", endId: "mw", summary: "another unmatched" },
+    ]);
+    const messages: CoreMessage[] = [
+        {
+            id: "mc", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-batch",
+            text: originalText,
+        },
+    ];
+    const result = hideConsumedCompressCalls(state, messages);
+    assert.equal(result.hidden, 0);
+    const kept = result.messages.find((m) => m.toolCallId === "call-batch")!;
+    assert.equal(kept.text, originalText, "no entries matched live keys → message preserved verbatim");
+});
+
+test("batched compress: rewritten batch keeps its tool-result message", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b5", compressCallId: "call-batch", active: true, startRef: "m5", endRef: "m6" }),
+            block({ blockId: "b8", compressCallId: "call-batch", active: false, startRef: "m8", endRef: "m9" }),
+        ],
+    };
+    const messages: CoreMessage[] = [
+        {
+            id: "mc", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-batch",
+            text: compressInput([
+                { startId: "m5", endId: "m6", summary: "S1" },
+                { startId: "m8", endId: "m9", summary: "S2" },
+            ]),
+        },
+        {
+            id: "mc-result", role: "tool", contentType: "tool-result", toolCallId: "call-batch",
+            text: '{"ok":true}',
+        },
+    ];
+    const result = hideConsumedCompressCalls(state, messages);
+    assert.equal(result.hidden, 0, "neither tool-call nor tool-result removed on a kept/rewritten batch");
+    assert.ok(result.messages.find((m) => m.id === "mc"), "rewritten tool-call survives");
+    assert.ok(result.messages.find((m) => m.id === "mc-result"), "tool-result for kept callId survives");
+    const kept = result.messages.find((m) => m.id === "mc")!;
+    assert.equal(parseContent(kept.text).length, 1, "tool-call text rewritten to drop consumed entry");
 });

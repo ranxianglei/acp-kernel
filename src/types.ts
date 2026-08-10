@@ -33,6 +33,8 @@ export interface CompressionBlock {
   active: boolean;
   durationMs?: number;
   compressCallId?: string;
+  startRef?: string;
+  endRef?: string;
 }
 
 export interface MessageRefMap {

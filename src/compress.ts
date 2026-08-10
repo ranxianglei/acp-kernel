@@ -142,30 +142,28 @@ export function createCore(ports: Ports = {}): CompressionCore {
       const bMin = b.indices.length > 0 ? Math.min(...b.indices) : Infinity;
       return aMin - bMin;
     });
-    for (let i = 1; i < sortedRanges.length; i++) {
-      const prev = sortedRanges[i - 1]!;
-      const curr = sortedRanges[i]!;
-      const prevMax = prev.indices.length > 0 ? Math.max(...prev.indices) : -1;
-      const currMin = curr.indices.length > 0 ? Math.min(...curr.indices) : -1;
-      if (prevMax >= currMin && prevMax >= 0) {
-        return {
-          state: input.state,
-          result: {
-            blocksCreated: 0,
-            tokensCompressed: 0,
-            errors: [
-              `content: range (${prev.spec.startRef}..${prev.spec.endRef}) overlaps (${curr.spec.startRef}..${curr.spec.endRef}). Overlapping ranges cannot be compressed in the same batch.`,
-            ],
-            warnings: [],
-          },
-        };
+    // Overlapping ranges warn+skip (earliest wins) rather than aborting the
+    // whole batch — see ISSUE-42 / dog/billion-context-pi#21.
+    const skipSpecs = new Set<typeof input.ranges[number]>();
+    let acceptedMaxIndex = -1;
+    for (const entry of sortedRanges) {
+      const entryMax = entry.indices.length > 0 ? Math.max(...entry.indices) : -1;
+      const entryMin = entry.indices.length > 0 ? Math.min(...entry.indices) : -1;
+      if (entryMin >= 0 && entryMin <= acceptedMaxIndex) {
+        skipSpecs.add(entry.spec);
+        warnings.push(
+          `Skipped range (${entry.spec.startRef}..${entry.spec.endRef}) — overlaps an earlier range in the batch; the earlier range takes precedence. Keep ranges disjoint.`,
+        );
+        continue;
       }
+      if (entryMax > acceptedMaxIndex) acceptedMaxIndex = entryMax;
     }
 
     if (input.config.compress.minCompressRange > 0 && input.ranges.length > 0) {
       let totalRangeChars = 0;
       let hasBlockBoundaryRange = false;
       for (const spec of input.ranges) {
+        if (skipSpecs.has(spec)) continue;
         let resolved;
         try {
           resolved = resolveBoundaries({
@@ -202,6 +200,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
     }
 
     for (const spec of input.ranges) {
+      if (skipSpecs.has(spec)) continue;
       try {
         const outcome = applySingleRange({
           spec,

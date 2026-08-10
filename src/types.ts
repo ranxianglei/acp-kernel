@@ -61,6 +61,12 @@ export interface CompressionStats {
 export interface CompressionState {
   blocks: CompressionBlock[];
   messageRefs: MessageRefMap;
+  /** First-render token count per message ref (mNNNNN). Written once when a
+   *  message is first rendered, then read forever — stable across density
+   *  recalibration so rendered <acp tokens> tags do not churn and bust the
+   *  provider prefix cache. Keyed by ref (not raw id): refs survive restarts
+   *  and omp live-N raw-id replacement. */
+  tokenSnapshot: Record<string, number>;
   nudge: NudgeState;
   stats: CompressionStats;
   nextBlockId: number;

@@ -50,6 +50,7 @@ function renderMessage(
   map: MessageRefMap,
   countTokens: (text: string) => number,
   strategy: RenderStrategy,
+  snapshot: Record<string, number> | null = null,
 ): CoreMessage {
   const ref = refForRaw(map, message.id);
   if (!ref || ref === BLOCKED_REF) return message;
@@ -69,7 +70,11 @@ function renderMessage(
   );
   const cleanText = (message.text || "").replace(ownTagRe, "");
 
-  const tokens = countTokens(cleanText);
+  // Snapshot mode: token count is fixed at first render (stable prefix cache).
+  // Live mode (snapshot = null): recompute every render — legacy behavior.
+  const tokens = snapshot
+    ? (snapshot[ref] ?? (snapshot[ref] = countTokens(cleanText)))
+    : countTokens(cleanText);
   const type = classifyType(message);
   const prefix = acpTag(ref, tokens, type) + "\n";
 
@@ -84,10 +89,34 @@ export function renderVisibleRefs(
     Math.ceil(text.length / 4),
   strategy: RenderStrategy = "all",
 ): CoreMessage[] {
+  // Legacy behavior: recompute tokens every render (snapshot = null).
   const map = state.messageRefs;
   return messages.map((message) =>
     renderMessage(message, map, countTokens, strategy),
   );
+}
+
+export interface RenderWithSnapshotResult {
+  messages: CoreMessage[];
+  tokenSnapshot: Record<string, number>;
+}
+
+/** Render with a stable token snapshot: token counts are written on first
+ *  render and reused forever (keyed by ref). The snapshot starts as a shallow
+ *  copy of the persisted state so old entries survive; new entries are added
+ *  during this render. */
+export function renderWithSnapshot(
+  messages: CoreMessage[],
+  state: CompressionState,
+  countTokens: (text: string) => number = (text) => Math.ceil(text.length / 4),
+  strategy: RenderStrategy,
+): RenderWithSnapshotResult {
+  const map = state.messageRefs;
+  const snapshot = { ...(state.tokenSnapshot ?? {}) };
+  const rendered = messages.map((message) =>
+    renderMessage(message, map, countTokens, strategy, snapshot),
+  );
+  return { messages: rendered, tokenSnapshot: snapshot };
 }
 
 /** Factory: build a render-refs node bound to a specific render strategy. */
@@ -95,10 +124,20 @@ export function createRenderRefsNode(strategy: RenderStrategy): PipelineNode {
   return {
     name: "render-refs",
     run(io: NodeIO, ctx: PipelineContext): NodeIO {
-      return {
-        ...io,
-        messages: renderVisibleRefs(io.messages, io.state, ctx.countTokens, strategy),
-      };
+      const { messages, tokenSnapshot } = renderWithSnapshot(
+        io.messages,
+        io.state,
+        ctx.countTokens,
+        strategy,
+      );
+      // Write the snapshot back only when it grew: steady-state (all hits)
+      // must not churn the state object and force an adapter save every turn.
+      const prev = io.state.tokenSnapshot;
+      const changed =
+        !prev || Object.keys(tokenSnapshot).length !== Object.keys(prev).length;
+      return changed
+        ? { ...io, messages, state: { ...io.state, tokenSnapshot } }
+        : { ...io, messages };
     },
   };
 }

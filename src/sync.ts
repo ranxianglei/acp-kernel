@@ -26,6 +26,8 @@ export function syncBlocks(
       byRaw: { ...state.messageRefs.byRaw },
       byRef: { ...state.messageRefs.byRef },
     },
+    // Snapshot is keyed by ref with primitive values — shallow copy suffices.
+    tokenSnapshot: { ...(state.tokenSnapshot ?? {}) },
     nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
     stats: { ...state.stats },
     nextBlockId: state.nextBlockId,

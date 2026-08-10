@@ -8,6 +8,7 @@ import { createCore } from "../src/compress.js";
 import { createInitialState } from "../src/state.js";
 import { assignRefs } from "../src/refs.js";
 import type { Config, CoreMessage } from "../src/types.js";
+import { defaultCountTokens } from "../src/tokenize.js";
 
 function config(overrides: Partial<Config> = {}): Config {
   return {
@@ -89,6 +90,26 @@ test("computeProtectedRefs: preserves last N tokens expanding backward", () => {
   assert.ok(refs.has("m00003"));
   assert.ok(refs.has("m00002"));
   assert.ok(!refs.has("m00001"), "a is outside the 500-token window");
+});
+
+test("computeProtectedRefs: respects injected countTokens for the preserveRecentTokens zone (CJK-aware)", () => {
+  // Regression guard: threshold 150 → chars/4 (25/msg) protects {a,b,c},
+  // CJK-aware (100/msg) protects {b,c}. The zone must follow the injected tokenizer.
+  const messages = [
+    msg("a", "文".repeat(100)),
+    msg("b", "文".repeat(100)),
+    msg("c", "文".repeat(100)),
+  ];
+  const state = assignAll(messages);
+  const refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentTokens: 150 }),
+    defaultCountTokens,
+  );
+  assert.ok(refs.has("m00003"), "c is always within the recent-token zone");
+  assert.ok(refs.has("m00002"), "b is within the CJK-aware token budget");
+  assert.ok(!refs.has("m00001"), "a falls outside the CJK-aware token budget");
 });
 
 test("computeProtectedRefs: combines count + token rules (union)", () => {

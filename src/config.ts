@@ -13,7 +13,7 @@ export function defaultConfig(
       iterationThreshold: 15,
       force: "soft",
       growthRatio: 0.05,
-      growthFloor: Math.max(20000, Math.round(modelContextLimit * 0.05)),
+      growthFloor: 50000,
       growthCap: 50000,
       minGrowthFloor: 20000,
       minGrowthRatio: 0.45,

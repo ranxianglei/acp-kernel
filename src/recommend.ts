@@ -33,8 +33,8 @@ function refNum(ref: string): number {
   return Number.isNaN(n) ? -1 : n;
 }
 
-function estimateMessageTokens(message: CoreMessage): number {
-  return Math.ceil((message.text ?? "").length / 4);
+function estimateTextTokens(text: string): number {
+  return Math.ceil(text.length / 4);
 }
 
 function isToolMessage(message: CoreMessage): boolean {
@@ -69,6 +69,7 @@ export function computeProtectedRefs(
   messages: CoreMessage[],
   state: CompressionState,
   config: Config,
+  countTokens: (text: string) => number = estimateTextTokens,
 ): Set<string> {
   const preserveN = config.preserveRecentMessages;
   const preserveTokens = config.preserveRecentTokens;
@@ -86,7 +87,7 @@ export function computeProtectedRefs(
     if (isNeverPreserveRecent(msg)) continue;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
-    visible.push({ ref, tokens: estimateMessageTokens(msg) });
+    visible.push({ ref, tokens: countTokens(msg.text ?? "") });
   }
 
   // Rule 1: last N messages
@@ -146,6 +147,7 @@ export function buildCompressibleRanges(
   state: CompressionState,
   config: Config,
   protectedZoneRefs?: Set<string>,
+  countTokens: (text: string) => number = estimateTextTokens,
 ): ContextRanges {
   const compressibleMsgs: {
     ref: string;
@@ -176,7 +178,7 @@ export function buildCompressibleRanges(
       protectedMsgs.push({
         ref,
         refNum: rn,
-        tokens: estimateMessageTokens(msg),
+        tokens: countTokens(msg.text ?? ""),
         tools: msg.toolName ? [msg.toolName] : [],
       });
       continue;
@@ -189,7 +191,7 @@ export function buildCompressibleRanges(
     compressibleMsgs.push({
       ref,
       refNum: rn,
-      tokens: estimateMessageTokens(msg),
+      tokens: countTokens(msg.text ?? ""),
       isTool: isToolMessage(msg),
       isUser: msg.role === "user",
     });

@@ -116,7 +116,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
     // default; applySingleRange enforces it as a hard backstop.
     const protectedMessageIds =
       input.protectedMessageIds ??
-      computeProtectedRefs(input.messages, input.state, input.config);
+      computeProtectedRefs(input.messages, input.state, input.config, countTokens);
 
     const preExistingCoverage = collectCoverage(state);
 
@@ -392,12 +392,14 @@ const recommendNode: PipelineNode = {
       io.messages,
       io.state,
       ctx.config,
+      ctx.countTokens,
     );
     const contextRanges = buildCompressibleRanges(
       io.messages,
       io.state,
       ctx.config,
       protectedRefs,
+      ctx.countTokens,
     );
     const nothingToCompress = contextRanges.compressible.length === 0;
     const recommendation: Recommendation = {

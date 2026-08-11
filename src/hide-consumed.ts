@@ -1,9 +1,5 @@
 import type { CompressionState, CoreMessage } from "./types.js";
 
-// Orphaned compress calls (no matching active block, e.g. failed attempts or
-// historical calls whose blocks predate compressCallId recording) are fully
-// hidden — they carry no recoverable information and only pollute context.
-// Active-block compress calls are kept (matched via compressCallId).
 const KEEP_LAST_ORPHANED = 0;
 
 export interface HideConsumedResult {
@@ -11,18 +7,57 @@ export interface HideConsumedResult {
     hidden: number;
 }
 
-// Keep active-block compress calls + the most recent orphaned calls; hide the rest.
+function rangeKey(startRef: string, endRef: string): string {
+    return `${startRef}::${endRef}`;
+}
+
+function rewriteCompressText(text: string | undefined, liveKeys: Set<string>): string | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text ?? "");
+    } catch {
+        return null;
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    const obj = parsed as { content?: unknown };
+    const content = obj.content;
+    if (!Array.isArray(content) || content.length === 0) return null;
+
+    const kept = content.filter((entry): entry is Record<string, unknown> => {
+        if (!entry || typeof entry !== "object") return false;
+        const s = typeof entry.startId === "string" ? entry.startId : typeof entry.messageId === "string" ? entry.messageId : "";
+        const e = typeof entry.endId === "string" ? entry.endId : typeof entry.messageId === "string" ? entry.messageId : "";
+        return liveKeys.has(rangeKey(s, e));
+    });
+
+    if (kept.length === content.length || kept.length === 0) return null;
+
+    return JSON.stringify({ ...obj, content: kept });
+}
+
 export function hideConsumedCompressCalls(
     state: CompressionState,
     messages: CoreMessage[],
 ): HideConsumedResult {
-    const activeCallIds = new Set<string>();
     const allBlockCallIds = new Set<string>();
+    const activeCallIds = new Set<string>();
+    const liveRangeKeysByCallId = new Map<string, Set<string>>();
+    const legacyLiveByCallId = new Set<string>();
     for (const block of state.blocks) {
-        if (block.compressCallId) {
-            allBlockCallIds.add(block.compressCallId);
-            if (block.active) activeCallIds.add(block.compressCallId);
+        if (!block.compressCallId) continue;
+        allBlockCallIds.add(block.compressCallId);
+        if (!block.active) continue;
+        activeCallIds.add(block.compressCallId);
+        if (block.startRef === undefined || block.endRef === undefined) {
+            legacyLiveByCallId.add(block.compressCallId);
+            continue;
         }
+        let keys = liveRangeKeysByCallId.get(block.compressCallId);
+        if (!keys) {
+            keys = new Set<string>();
+            liveRangeKeysByCallId.set(block.compressCallId, keys);
+        }
+        keys.add(rangeKey(block.startRef, block.endRef));
     }
 
     const lastOrphanedCallIds: string[] = [];
@@ -66,6 +101,21 @@ export function hideConsumedCompressCalls(
         ) {
             hidden++;
             continue;
+        }
+        if (
+            message.toolName === "compress" &&
+            message.contentType === "tool-call" &&
+            message.toolCallId &&
+            keepCallIds.has(message.toolCallId)
+        ) {
+            const liveKeys = liveRangeKeysByCallId.get(message.toolCallId);
+            if (liveKeys && liveKeys.size > 0 && !legacyLiveByCallId.has(message.toolCallId)) {
+                const rewritten = rewriteCompressText(message.text, liveKeys);
+                if (rewritten !== null) {
+                    result.push({ ...message, text: rewritten });
+                    continue;
+                }
+            }
         }
         result.push(message);
     }

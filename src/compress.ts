@@ -880,8 +880,9 @@ function decideNudge(input: NudgeInput): NudgeDecision {
 
   // Tier arbitration. Emergency (usage >= emergencyThresholdPct) ignores tier
   // priority and picks the tier with the MAX pending. Non-emergency defaults to
-  // T1; T2 overrides only when it crossed its 1.5x threshold AND exceeds the
-  // effective T1 pending. T3 stays on its existing distillation paths.
+  // T1; T2 and T3 override when each crossed the shared 1.5x threshold AND
+  // exceeds the effective pending of every lower tier (T2 > T1 effective;
+  // T3 > T2 and > T1 effective).
   const tier2Threshold = Math.round(
     nudgeGrowthTokens * (config.nudge.tier2GrowthMultiplier ?? 1.5),
   );
@@ -928,6 +929,19 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       if (cadenceMet) {
         injectedTier = 2;
         injectedReason = `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+      }
+    } else if (
+      config.tiers.enabled &&
+      t3Pen >= tier2Threshold &&
+      t3Pen > t2Pen &&
+      t3Pen > t1Eff
+    ) {
+      const lastShown = state.nudge.lastShownByTier[3] ?? 0;
+      const cadenceMet =
+        lastShown === 0 || tokenCount - lastShown >= growthFloor;
+      if (cadenceMet) {
+        injectedTier = 3;
+        injectedReason = `T3 condense ready: ${tiers[3]!.targetBlocks.length} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
       }
     }
   }

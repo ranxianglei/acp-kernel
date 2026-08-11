@@ -196,3 +196,21 @@ test("merges across ref gaps (non-adjacent refs)", () => {
   assert.equal(out[0]!.startRef, "m00001");
   assert.equal(out[0]!.endRef, "m00060");
 });
+
+test("all-tiny tail: three ranges each < threshold → ONE merged range via trailing flush", () => {
+  // Each range tokens=100 → 100*4=400 chars, never reaches 5000 mid-loop, so
+  // the batch accumulates all three and is emitted as one range by the
+  // trailing flush. The merged range spans r1.startRef..r3.endRef with
+  // count/tokens summed.
+  const ranges = [
+    makeRange({ tokens: 100, count: 1, startRef: "m00001", endRef: "m00002" }),
+    makeRange({ tokens: 100, count: 1, startRef: "m00003", endRef: "m00004" }),
+    makeRange({ tokens: 100, count: 1, startRef: "m00005", endRef: "m00006" }),
+  ];
+  const out = mergeRangesToThreshold(ranges, 5000);
+  assert.equal(out.length, 1, "trailing flush emits a single merged range");
+  assert.equal(out[0]!.tokens, 300, "tokens summed");
+  assert.equal(out[0]!.count, 3, "count summed");
+  assert.equal(out[0]!.startRef, "m00001", "spans first child startRef");
+  assert.equal(out[0]!.endRef, "m00006", "spans last child endRef");
+});

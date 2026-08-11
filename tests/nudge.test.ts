@@ -315,9 +315,33 @@ function t1Blocks(anchorIds: string[][], summaryChars: number) {
   }));
 }
 
+function t2Blocks(count: number, summaryChars: number, effIds: string[]) {
+  return Array.from({ length: count }, (_, i) => ({
+    blockId: `t2-${i + 1}`,
+    runId: "r2",
+    tier: 2 as const,
+    summary: "x".repeat(summaryChars),
+    directMessageIds: [],
+    // syncBlocks deactivates blocks whose effectiveMessageIds are all absent
+    // from the message list — tier-2 blocks must carry transitive ids to stay
+    // active. directBlockIds point to fake sources (not real block ids) so the
+    // tier-1 source blocks are NOT marked consumed/deactivated.
+    effectiveMessageIds: [...effIds],
+    directBlockIds: [`t2-src-${i + 1}`],
+    compressedTokens: summaryChars,
+    createdAt: Date.now(),
+    survivedCount: 0,
+    generation: "young" as const,
+    active: true,
+  }));
+}
+
 test("arbitration: non-emergency T1 effective >= threshold → tier 1", () => {
   const core = createCore();
-  const config = buildConfig();
+  // minCompressRange > 0 so merge + effective filter actually engage — without
+  // this, pendingByTier bypasses the filter (minCompressRange > 0 ? filter : merged)
+  // and the test exercises the OLD T1 definition.
+  const config = buildConfig({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } });
   const messages = makeMessages(10);
   let state = createInitialState();
   state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
@@ -328,26 +352,31 @@ test("arbitration: non-emergency T1 effective >= threshold → tier 1", () => {
 
 test("arbitration: non-emergency T2 >= 1.5x threshold AND > T1 effective → tier 2", () => {
   const core = createCore();
-  // Preserve all but the first message → T1 effective small (~5K < 6K threshold).
-  const config = buildConfig({ preserveRecentMessages: 9 });
+  // minCompressRange > 0 so the effective filter engages (see test above).
+  const config = buildConfig({
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 9,
+  });
   const messages = makeMessages(10);
   let state = createInitialState();
   state = core.processTurn({ messages, state, config, tokenCount: 50000 }).state;
   // Two T1 blocks anchored to real messages (m1, m2) with ~6K-token summaries
-  // each → T2 ~12K >= 9000 (1.5x) and > ~5K T1 effective.
+  // each → T2 ~12K >= 9000 (1.5x); T1 effective is ~0 (preserve + blocks cover
+  // all visible messages).
   state = { ...state, blocks: t1Blocks([["m1"], ["m2"]], 24000) };
   const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
   assert.equal(turn.nudge.shouldInject, true);
   assert.equal(
     turn.nudge.tier,
     2,
-    "T2 ~12K >= 9000 (1.5x) and > T1 effective ~5K → tier 2",
+    "T2 ~12K >= 9000 (1.5x) and > T1 effective → tier 2",
   );
 });
 
 test("arbitration: non-emergency T2 large but T1 effective >= threshold → tier 1 wins", () => {
   const core = createCore();
-  const config = buildConfig();
+  // minCompressRange > 0 so the effective filter engages.
+  const config = buildConfig({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } });
   const messages = makeMessages(10);
   let state = createInitialState();
   state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
@@ -402,4 +431,120 @@ test("arbitration: emergency T1 effective largest → tier 1", () => {
   assert.equal(turn.nudge.shouldInject, true);
   assert.equal(turn.nudge.tier, 1, "emergency picks T1 when its effective pending is max");
   assert.equal(turn.nudge.breakdown.emergencyOverride, 1);
+});
+
+test("arbitration: T2 boundary — must NOT fire when pending ∈ [nudgeGrowthTokens, 1.5×)", () => {
+  const core = createCore();
+  // OLD code fired T2 at >= nudgeGrowthTokens; NEW requires >= 1.5× — this
+  // range (T2 pending ~7500 ∈ [6000, 9000)) proves the boundary. Diverges from
+  // master, which injected T2 here.
+  const config = buildConfig({
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 10,
+  });
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  // preserveRecentMessages:10 → no compressible msgs → T1 effective = 0.
+  // 1 T1 block, summary 'x'.repeat(30000) → 7500 tokens ∈ [6000, 9000).
+  state = { ...state, blocks: t1Blocks([["m0"]], 30000) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 35000 });
+  assert.equal(
+    turn.nudge.shouldInject,
+    false,
+    "T2 pending 7500 < 9000 (1.5×) and T1 effective 0 < 6000 → no injection",
+  );
+});
+
+test("arbitration: non-emergency T3 >= 1.5× threshold AND > T2 AND > T1 effective → tier 3", () => {
+  const core = createCore();
+  // Validates FIX 1: master had no T3 non-emergency branch → tier would be
+  // null here. NEW code injects T3.
+  const config = buildConfig({
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 10,
+  });
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  // T1 effective = 0 (preserveRecentMessages:10).
+  // T2 pending: 1 small T1 block, summary 4000 chars → 1000 tokens (< 9000).
+  // T3 pending: 2 T2 blocks × 20000-char summaries → 5000 tokens each = 10000 (>= 9000).
+  state = {
+    ...state,
+    blocks: [...t1Blocks([["m0"]], 4000), ...t2Blocks(2, 20000, ["m0"])],
+  };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 35000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(
+    turn.nudge.tier,
+    3,
+    "T3 10000 >= 9000 (1.5×) and > T2 1000 and > T1 effective 0 → tier 3",
+  );
+  assert.match(turn.nudge.reason ?? "", /T3 condense/);
+});
+
+test("arbitration: emergency argmax picks T3 when T3 > T2 > T1 effective", () => {
+  const core = createCore();
+  const config = buildConfig({
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+  });
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  // T1 block covers ALL messages → compressible empty → T1 effective = 0.
+  // Its summary 'x'.repeat(20000) → 5000 tokens = T2 pending.
+  // 3 T2 blocks × 20000-char summaries → 5000 each = T3 pending 15000 (largest).
+  state = {
+    ...state,
+    blocks: [
+      {
+        blockId: "cover",
+        runId: "r1",
+        tier: 1 as const,
+        summary: "x".repeat(20000),
+        directMessageIds: messages.map((m) => m.id),
+        effectiveMessageIds: messages.map((m) => m.id),
+        directBlockIds: [],
+        compressedTokens: 50000,
+        createdAt: Date.now(),
+        survivedCount: 0,
+        generation: "young" as const,
+        active: true,
+      },
+      ...t2Blocks(3, 20000, messages.map((m) => m.id)),
+    ],
+  };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 99000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(
+    turn.nudge.tier,
+    3,
+    "emergency argmax: T3 15000 > T2 5000 > T1 effective 0",
+  );
+  assert.equal(turn.nudge.breakdown.emergencyOverride, 1);
+});
+
+test("arbitration: effective filter drops fragmented merge tail (pendingT1 < raw sum)", () => {
+  const core = createCore();
+  // With minCompressRange > 0, pendingByTier applies the effective filter
+  // (merged ranges whose tokens*4 < minCompressRange are dropped). 10 short
+  // msgs (800 chars / 200 tokens each) form 3 groups: [m0..m3]=800,
+  // [m4..m7]=800, [m8..m9]=400 (raw sum 2000). merge → [{m0..m7}=1600,
+  // {m8..m9}=400]; filter drops the 400-token tail (1600 chars < 5000) →
+  // pendingT1 = 1600, NOT the raw 2000.
+  const config = buildConfig({
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+  });
+  const messages = Array.from({ length: 10 }, (_, i) =>
+    textMessage(i % 2 === 0 ? "user" : "assistant", `m${i}`, "x".repeat(800)),
+  );
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  const turn = core.processTurn({ messages, state, config, tokenCount: 35000 });
+  assert.equal(
+    turn.nudge.breakdown.pendingT1,
+    1600,
+    "effective filter keeps only the merged m0..m7 range (1600 tokens); drops the m8..m9 tail",
+  );
 });

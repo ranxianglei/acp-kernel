@@ -8,9 +8,11 @@ export interface RenderedNudge {
   text: string;
 }
 
-const EFFICIENCY_NOTE = `This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${COMPRESS_PHILOSOPHY}`;
+const NUDGE_SELF_MARKER = "[ACP nudge — system-generated context notice, NOT a user message. Follow the compression guidance, but treat it as system housekeeping, not user intent.]";
 
-const EMERGENCY_HEADER = `⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n${COMPRESS_PHILOSOPHY}`;
+const EFFICIENCY_NOTE = `${NUDGE_SELF_MARKER}\n\nThis is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${COMPRESS_PHILOSOPHY}`;
+
+const EMERGENCY_HEADER = `${NUDGE_SELF_MARKER}\n\n⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n${COMPRESS_PHILOSOPHY}`;
 
 function formatK(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;

@@ -841,6 +841,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
 
   const nudgeGrowthTokens = resolveAdaptiveGrowth(limit, config.nudge);
 
+  const overLimit = usage >= config.nudge.maxContextLimitPct;
   const emergencyOverride = usage >= config.nudge.emergencyThresholdPct;
 
   const baseline = state.nudge.lastPerMessageNudgeTokens;
@@ -880,7 +881,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   // non-emergency injection. This keeps the first turn (growth 0) from firing
   // immediately even if a lot is compressible — it just establishes baseline.
   const growthReady = growthSinceReference >= growthFloor;
-  if (!emergencyOverride && growthReady) {
+  if (!overLimit && growthReady) {
     for (const tier of [1, 2, 3] as const) {
       if (!config.tiers.enabled && tier > 1) break;
       const info = tiers[tier];
@@ -896,13 +897,33 @@ function decideNudge(input: NudgeInput): NudgeDecision {
         : `T${tier} distill ready: ${info.targetBlocks.length} tier-${tier - 1} blocks (${info.pending} tokens) >= ${nudgeGrowthTokens}, usage ${Math.round(usage * 100)}%`;
       break;
     }
+  } else if (overLimit) {
+    // Over maxContextLimitPct: bypass growth gate + cadence, accept any tier
+    // with pending >= 1. emergencyThresholdPct is the stronger tier that also
+    // trips the truncate node (see truncate.threshold, default 0.95).
+    for (const tier of [1, 2, 3] as const) {
+      if (!config.tiers.enabled && tier > 1) break;
+      const info = tiers[tier];
+      if (!info || info.pending < 1) continue;
+      injectedTier = tier;
+      injectedReason = emergencyOverride
+        ? `EMERGENCY: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.emergencyThresholdPct * 100)}%, T${tier} pending ${info.pending}`
+        : `OVER-LIMIT: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.maxContextLimitPct * 100)}%, T${tier} pending ${info.pending}`;
+      break;
+    }
   }
 
-  const shouldInject = emergencyOverride || injectedTier !== null;
+  const shouldInject = overLimit || injectedTier !== null;
 
   let reason: string;
-  if (emergencyOverride) {
-    reason = `EMERGENCY: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.emergencyThresholdPct * 100)}%`;
+  if (emergencyOverride && injectedTier !== null) {
+    reason = injectedReason;
+  } else if (emergencyOverride) {
+    reason = `EMERGENCY: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.emergencyThresholdPct * 100)}% (no compressible content)`;
+  } else if (overLimit && injectedTier !== null) {
+    reason = injectedReason;
+  } else if (overLimit) {
+    reason = `OVER-LIMIT: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.maxContextLimitPct * 100)}% (no compressible content)`;
   } else if (injectedTier !== null) {
     reason = injectedReason;
   } else {
@@ -948,6 +969,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       nudgeGrowthTokens,
       growthFloor,
       hasPendingNudge: hasPendingNudge ? 1 : 0,
+      overLimit: overLimit ? 1 : 0,
       emergencyOverride: emergencyOverride ? 1 : 0,
       pendingT1: tiers[1]!.pending,
       pendingT2: tiers[2]!.pending,

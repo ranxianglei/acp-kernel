@@ -6,6 +6,8 @@ import {
     clearMessageFilters,
     registerMessageFilter,
 } from "../src/filter/index.js";
+import { createCore } from "../src/compress.js";
+import { createInitialState } from "../src/state.js";
 import { defaultConfig } from "../src/config.js";
 import type { CoreMessage } from "../src/types.js";
 
@@ -97,4 +99,63 @@ test("applyMessageFilters keepLastOnly keeps only the last match", () => {
     assert.equal(result.messages[1]!.text, "normal");
     assert.equal(result.messages[2]!.text, "REPEAT:directive-updated");
     clearMessageFilters();
+});
+
+test("emergency-truncate node fires at default 0.95 threshold via processTurn", () => {
+    const core = createCore();
+    const cfg = defaultConfig(100000);
+    const big = "L".repeat(40000);
+    const messages: CoreMessage[] = [
+        msg("a", big, "tool-result"),
+        msg("b", big, "tool-result"),
+        msg("c", big, "tool-result"),
+        msg("d", "recent", "tool-result"),
+        msg("e", "recent", "tool-result"),
+        msg("f", "recent", "tool-result"),
+        msg("g", "recent", "tool-result"),
+        msg("h", "recent", "tool-result"),
+    ];
+    const result = core.processTurn({
+        messages,
+        state: createInitialState(),
+        config: cfg,
+        tokenCount: 96000,
+    });
+    const truncated = result.messages.filter((m) =>
+        m.text?.includes("[truncated for context space"),
+    );
+    assert.ok(
+        truncated.length >= 1,
+        `expected >= 1 truncated msg at 96% usage (default truncate.threshold 0.95), got ${truncated.length}`,
+    );
+});
+
+test("emergency-truncate node is a no-op below default 0.95 threshold", () => {
+    const core = createCore();
+    const cfg = defaultConfig(100000);
+    const big = "L".repeat(40000);
+    const messages: CoreMessage[] = [
+        msg("a", big, "tool-result"),
+        msg("b", big, "tool-result"),
+        msg("c", big, "tool-result"),
+        msg("d", "recent", "tool-result"),
+        msg("e", "recent", "tool-result"),
+        msg("f", "recent", "tool-result"),
+        msg("g", "recent", "tool-result"),
+        msg("h", "recent", "tool-result"),
+    ];
+    const result = core.processTurn({
+        messages,
+        state: createInitialState(),
+        config: cfg,
+        tokenCount: 80000,
+    });
+    const truncated = result.messages.filter((m) =>
+        m.text?.includes("[truncated for context space"),
+    );
+    assert.equal(
+        truncated.length,
+        0,
+        `expected 0 truncated msgs at 80% usage (below default 0.95), got ${truncated.length}`,
+    );
 });

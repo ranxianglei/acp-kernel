@@ -7,7 +7,7 @@ export function defaultConfig(
   const base: Config = {
     tiers: { enabled: true, tier2Trigger: 5, tier3Trigger: 10 },
     nudge: {
-      maxContextLimitPct: 0.55,
+      maxContextLimitPct: 0.75,
       minContextLimitPct: 0.45,
       frequency: 5,
       iterationThreshold: 15,
@@ -17,10 +17,10 @@ export function defaultConfig(
       growthCap: 50000,
       minGrowthFloor: 20000,
       minGrowthRatio: 0.45,
-      emergencyThresholdPct: 0.80,
+      emergencyThresholdPct: 0.95,
     },
     promotionThreshold: 5,
-    truncate: { threshold: 1 },
+    truncate: { threshold: 0.95 },
     compress: {
       minCompressRange: 5000,
       maxSummaryLength: 20000,
@@ -52,6 +52,11 @@ export function validateConfig(config: Config): string[] {
   if (config.nudge.minContextLimitPct > config.nudge.maxContextLimitPct) {
     errors.push(
       "nudge.minContextLimitPct must not exceed nudge.maxContextLimitPct",
+    );
+  }
+  if (config.nudge.maxContextLimitPct > config.nudge.emergencyThresholdPct) {
+    errors.push(
+      "nudge.maxContextLimitPct must not exceed nudge.emergencyThresholdPct",
     );
   }
   if (config.promotionThreshold < 1) {

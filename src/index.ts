@@ -35,6 +35,8 @@ export type { TokenCountFn } from "./tokenize.js";
 export { renderNudgeText, formatRanges } from "./nudge-text.js";
 export type { NudgeVoice, RenderedNudge } from "./nudge-text.js";
 export { COMPRESS_PHILOSOPHY, HOW_TO_COMPRESS_RULES, TIER2_DISTILL_RULES, TIER3_CONDENSE_RULES } from "./compression-rules.js";
+export { defaultPrompts, resolvePrompts } from "./prompts.js";
+export type { Prompts, ResolvePromptsOptions } from "./prompts.js";
 export { truncateLargeToolOutputs } from "./truncate-tools.js";
 export type { TruncateOptions, TruncateResult } from "./truncate-tools.js";
 export {

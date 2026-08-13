@@ -899,12 +899,13 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     }
   } else if (overLimit) {
     // Over maxContextLimitPct: bypass growth gate + cadence, accept any tier
-    // with pending >= 1. emergencyThresholdPct is the stronger tier that also
-    // trips the truncate node (see truncate.threshold, default 0.95).
+    // with pending >= minCompressRange. emergencyThresholdPct and
+    // truncate.threshold are independent knobs — the truncate node fires on
+    // truncate.threshold regardless of emergencyThresholdPct.
     for (const tier of [1, 2, 3] as const) {
       if (!config.tiers.enabled && tier > 1) break;
       const info = tiers[tier];
-      if (!info || info.pending < 1) continue;
+      if (!info || info.pending < config.compress.minCompressRange) continue;
       injectedTier = tier;
       injectedReason = emergencyOverride
         ? `EMERGENCY: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.emergencyThresholdPct * 100)}%, T${tier} pending ${info.pending}`
@@ -913,7 +914,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     }
   }
 
-  const shouldInject = overLimit || injectedTier !== null;
+  const shouldInject = injectedTier !== null || (overLimit && (rec?.recommendedRanges?.length ?? 0) > 0);
 
   let reason: string;
   if (emergencyOverride && injectedTier !== null) {

@@ -22,6 +22,7 @@ import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
+import { adjustBoundariesForReasoningPairs } from "./reasoning-pairs.js";
 import {
   computeProtectedRefs,
   buildCompressibleRanges,
@@ -569,7 +570,7 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     state: input.state,
   });
 
-  const rangeMessageIds = applyToolPairAdjustment(
+  const rangeMessageIds = applyPairBoundaryAdjustments(
     resolved,
     input.messages,
   );
@@ -722,26 +723,45 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   return { tokens: compressedTokens, warnings };
 }
 
-function applyToolPairAdjustment(
+function applyPairBoundaryAdjustments(
   resolved: { startIndex: number; endIndex: number; messageIds: string[]; boundaryKind: string },
   messages: CoreMessage[],
 ): string[] {
   if (resolved.boundaryKind === "block") {
     return resolved.messageIds;
   }
-  const adjusted = adjustBoundariesForToolPairs(
-    resolved.startIndex,
-    resolved.endIndex,
-    messages,
-  );
+  // Compose tool-pair and reasoning-pair boundary adjustments to a fixpoint
+  // (≤2 passes). Reasoning may pull in a tool-call whose result tool-pairs
+  // then extends for; tool-pairs may pull in a tool-call whose preceding
+  // reasoning is then drawn in. Both only ever WIDEN the range.
+  let startIndex = resolved.startIndex;
+  let endIndex = resolved.endIndex;
+  for (let pass = 0; pass < 2; pass++) {
+    const reasoningAdjusted = adjustBoundariesForReasoningPairs(
+      startIndex,
+      endIndex,
+      messages,
+    );
+    const toolAdjusted = adjustBoundariesForToolPairs(
+      reasoningAdjusted.startIndex,
+      reasoningAdjusted.endIndex,
+      messages,
+    );
+    const changed =
+      toolAdjusted.startIndex !== startIndex ||
+      toolAdjusted.endIndex !== endIndex;
+    startIndex = toolAdjusted.startIndex;
+    endIndex = toolAdjusted.endIndex;
+    if (!changed) break;
+  }
   if (
-    adjusted.startIndex === resolved.startIndex &&
-    adjusted.endIndex === resolved.endIndex
+    startIndex === resolved.startIndex &&
+    endIndex === resolved.endIndex
   ) {
     return resolved.messageIds;
   }
   const ids: string[] = [];
-  for (let i = adjusted.startIndex; i <= adjusted.endIndex; i++) {
+  for (let i = startIndex; i <= endIndex; i++) {
     const msg = messages[i];
     if (msg) ids.push(msg.id);
   }

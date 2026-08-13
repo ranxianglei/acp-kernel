@@ -113,3 +113,71 @@ test("renderNudgeText reflects custom tier rules in tier-2 mode", () => {
   const result = renderNudgeText(makeDecision({ tier: 2 }), prompts);
   assert.ok(result.text.includes("UNIQUE-MARKER-T2"));
 });
+
+test("renderNudgeText reflects custom tier rules in tier-3 mode", () => {
+  const prompts = resolvePrompts(
+    { tier3CondenseRules: "UNIQUE-MARKER-T3" },
+    { acknowledgeRisk: true },
+  );
+  const result = renderNudgeText(makeDecision({ tier: 3 }), prompts);
+  assert.ok(result.text.includes("UNIQUE-MARKER-T3"));
+});
+
+test("resolvePrompts drops undefined/null/non-string overrides (never clobbers defaults)", () => {
+  const p = resolvePrompts(
+    {
+      compressPhilosophy: undefined,
+      howToCompressRules: null as unknown as string,
+      tier2DistillRules: 123 as unknown as string,
+    },
+    { acknowledgeRisk: true },
+  );
+  assert.equal(p.compressPhilosophy, COMPRESS_PHILOSOPHY);
+  assert.equal(p.howToCompressRules, HOW_TO_COMPRESS_RULES);
+  assert.equal(p.tier2DistillRules, TIER2_DISTILL_RULES);
+});
+
+test("resolvePrompts does not throw when only non-string overrides are present", () => {
+  const p = resolvePrompts({ compressPhilosophy: undefined, howToCompressRules: null as unknown as string });
+  assert.equal(p.compressPhilosophy, COMPRESS_PHILOSOPHY);
+  assert.equal(p.howToCompressRules, HOW_TO_COMPRESS_RULES);
+});
+
+test("resolvePrompts never aliases or mutates defaultPrompts", () => {
+  const p = resolvePrompts({ compressPhilosophy: "CUSTOM" }, { acknowledgeRisk: true });
+  p.compressPhilosophy = "MUTATED-BY-CALLER";
+  assert.equal(defaultPrompts.compressPhilosophy, COMPRESS_PHILOSOPHY);
+});
+
+test("defaultPrompts is frozen (immutable singleton)", () => {
+  assert.equal(Object.isFrozen(defaultPrompts), true);
+  assert.throws(() => {
+    (defaultPrompts as { compressPhilosophy: string }).compressPhilosophy = "x";
+  }, TypeError);
+});
+
+test("renderNudgeText two-arg default equals one-arg call for every mode (back-compat)", () => {
+  const modes = [
+    makeDecision({ contextUsage: 0.5 }),
+    makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }),
+    makeDecision({ tier: 2 }),
+    makeDecision({ tier: 3 }),
+  ];
+  for (const d of modes) {
+    const oneArg = renderNudgeText(d);
+    const twoArg = renderNudgeText(d, defaultPrompts);
+    assert.equal(oneArg.text, twoArg.text);
+    assert.equal(oneArg.voice, twoArg.voice);
+  }
+});
+
+test("renderNudgeText default output embeds the full rule text verbatim (byte-stability)", () => {
+  const gentle = renderNudgeText(makeDecision({ contextUsage: 0.5 }));
+  assert.ok(gentle.text.includes(COMPRESS_PHILOSOPHY));
+  assert.ok(gentle.text.includes(HOW_TO_COMPRESS_RULES));
+  const emergency = renderNudgeText(
+    makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }),
+  );
+  assert.ok(emergency.text.includes(COMPRESS_PHILOSOPHY));
+  assert.ok(emergency.text.includes(HOW_TO_COMPRESS_RULES));
+});

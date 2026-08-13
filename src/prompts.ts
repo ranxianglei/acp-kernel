@@ -28,13 +28,17 @@ export interface Prompts {
   tier3CondenseRules: string;
 }
 
-/** The kernel's canonical prompt values (verbatim from compression-rules.ts). */
-export const defaultPrompts: Prompts = {
+/**
+ * The kernel's canonical prompt values (verbatim from compression-rules.ts).
+ * Frozen so a buggy caller cannot mutate the shared singleton and corrupt
+ * every other consumer of {@link defaultPrompts}.
+ */
+export const defaultPrompts: Prompts = Object.freeze({
   compressPhilosophy: COMPRESS_PHILOSOPHY,
   howToCompressRules: HOW_TO_COMPRESS_RULES,
   tier2DistillRules: TIER2_DISTILL_RULES,
   tier3CondenseRules: TIER3_CONDENSE_RULES,
-};
+}) as Prompts;
 
 export interface ResolvePromptsOptions {
   /**
@@ -49,23 +53,31 @@ export interface ResolvePromptsOptions {
  * Merge prompt overrides onto the kernel defaults. All fields are load-bearing,
  * so ANY override requires `{ acknowledgeRisk: true }`.
  *
- * Resolve once at host startup, then pass the resulting {@link Prompts} to
- * {@link renderNudgeText} and to the adapter's system-prompt composition so
- * both layers stay consistent.
+ * Only `string`-valued overrides take effect: an explicit `undefined`/`null` or
+ * a wrong type is silently dropped (never clobbers a good default), so a
+ * malformed partial never degrades the canonical rules. Resolve once at host
+ * startup, then pass the resulting {@link Prompts} to {@link renderNudgeText}
+ * and to the adapter's system-prompt composition so both layers stay consistent.
  */
 export function resolvePrompts(
   overrides?: Partial<Prompts>,
   options: ResolvePromptsOptions = {},
 ): Prompts {
+  const clean: Partial<Prompts> = {};
   if (overrides) {
-    const keys = Object.keys(overrides) as (keyof Prompts)[];
-    if (keys.length > 0 && !options.acknowledgeRisk) {
-      throw new Error(
-        `resolvePrompts: overriding compression rules requires { acknowledgeRisk: true }. ` +
-          `Overridden keys: ${keys.join(", ")}. These rules are quality-critical (tuned over months of production use); ` +
-          `changing them can degrade summary quality and break retrieval (summaries may lose paths, signatures, decisions).`,
-      );
+    for (const [key, value] of Object.entries(overrides)) {
+      if (typeof value === "string") {
+        (clean as Record<string, unknown>)[key] = value;
+      }
     }
   }
-  return { ...defaultPrompts, ...overrides };
+  const keys = Object.keys(clean) as (keyof Prompts)[];
+  if (keys.length > 0 && !options.acknowledgeRisk) {
+    throw new Error(
+      `resolvePrompts: overriding compression rules requires { acknowledgeRisk: true }. ` +
+        `Overridden keys: ${keys.join(", ")}. These rules are quality-critical (tuned over months of production use); ` +
+        `changing them can degrade summary quality and break retrieval (summaries may lose paths, signatures, decisions).`,
+    );
+  }
+  return { ...defaultPrompts, ...clean };
 }

@@ -151,7 +151,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
     };
   }
 
-  const isEmergency = !!decision.breakdown?.emergencyOverride;
+  const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
 
   if (isEmergency) {
     return {

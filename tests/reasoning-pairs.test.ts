@@ -373,3 +373,117 @@ describe("prune stripOrphanedReasoning (defense-in-depth)", () => {
     assert.ok(ids.includes("a1"), "companion text kept");
   });
 });
+
+describe("regression: DeepSeek split-compress does not orphan a reasoning pair (#133)", () => {
+  // Reproduces ranxianglei/billion-context#133. An assistant turn is emitted as
+  // two core messages — reasoning then text. A compress range that covers only
+  // ONE half must not leave the other half orphaned in the rebuilt stream.
+  // DeepSeek-thinking returns HTTP 400 ("reasoning_content must be passed back
+  // to the API") when an assistant turn loses its reasoning_content, so the
+  // pair must compress atomically. These tests would FAIL on master (pre-fix):
+  // without adjustBoundariesForReasoningPairs the companion survives as an
+  // orphaned assistant message with no reasoning_content.
+
+  const cfg = {
+    ...defaultConfig(100000),
+    compress: { ...defaultConfig(100000).compress, minCompressRange: 0 },
+    preserveRecentMessages: 0,
+    preserveRecentTokens: 0,
+  };
+
+  it("compressing only the reasoning does not orphan the companion assistant text", () => {
+    const core = createCore();
+    const messages = [
+      textMsg("m1"),
+      reasoning("m2"),
+      assistantText("m3"),
+      textMsg("m4"),
+    ];
+    const state = createInitialState();
+    const stateWithRefs = core.processTurn({
+      messages,
+      state,
+      config: cfg,
+      tokenCount: 1000,
+    }).state;
+
+    const result = core.applyCompression({
+      ranges: [
+        {
+          startRef: "m00002",
+          endRef: "m00002",
+          summary:
+            "Compress just the reasoning; its companion text must compress with it.",
+        },
+      ],
+      messages,
+      state: stateWithRefs,
+      config: cfg,
+    });
+
+    const rebuilt = core.processTurn({
+      messages,
+      state: result.state,
+      config: cfg,
+      tokenCount: 500,
+    }).messages;
+    const ids = rebuilt.map((m) => m.id);
+
+    assert.ok(
+      !ids.includes("m2"),
+      "reasoning m2 must be compressed (not survive as orphan)",
+    );
+    assert.ok(
+      !ids.includes("m3"),
+      "companion text m3 must compress WITH its reasoning — an orphaned assistant message with no reasoning_content is the DeepSeek 400 trigger",
+    );
+  });
+
+  it("compressing only the companion text does not orphan the reasoning", () => {
+    const core = createCore();
+    const messages = [
+      textMsg("m1"),
+      reasoning("m2"),
+      assistantText("m3"),
+      textMsg("m4"),
+    ];
+    const state = createInitialState();
+    const stateWithRefs = core.processTurn({
+      messages,
+      state,
+      config: cfg,
+      tokenCount: 1000,
+    }).state;
+
+    const result = core.applyCompression({
+      ranges: [
+        {
+          startRef: "m00003",
+          endRef: "m00003",
+          summary:
+            "Compress just the text; its preceding reasoning must compress with it.",
+        },
+      ],
+      messages,
+      state: stateWithRefs,
+      config: cfg,
+    });
+
+    const rebuilt = core.processTurn({
+      messages,
+      state: result.state,
+      config: cfg,
+      tokenCount: 500,
+    }).messages;
+    const ids = rebuilt.map((m) => m.id);
+
+    assert.ok(
+      !ids.includes("m2"),
+      "reasoning m2 must compress with its companion — an orphaned reasoning with no following assistant text is meaningless",
+    );
+    assert.ok(
+      !ids.includes("m3"),
+      "companion text m3 must be compressed (not survive as orphan)",
+    );
+  });
+});

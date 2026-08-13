@@ -29,7 +29,7 @@ export {
 } from "./refs.js";
 export { prune, SUMMARY_HEADER } from "./prune.js";
 export { syncBlocks } from "./sync.js";
-export { resolveBoundaries, parseBoundary } from "./boundaries.js";
+export { resolveBoundaries, parseBoundary, BoundaryNotFoundError } from "./boundaries.js";
 export { defaultCountTokens, estimateTokensFast, createBpeTokenizer } from "./tokenize.js";
 export type { TokenCountFn } from "./tokenize.js";
 export { renderNudgeText, formatRanges } from "./nudge-text.js";

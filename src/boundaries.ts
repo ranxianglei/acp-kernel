@@ -33,6 +33,31 @@ export function parseBoundary(ref: string): ParsedBoundary | null {
   return null;
 }
 
+/**
+ * Thrown when a boundary ref parses but cannot be anchored in the visible
+ * context. `kind` distinguishes a ref that never existed ("unknown", e.g. a
+ * typo or a ref from another session) from one that was consumed by an
+ * existing block ("consumed", messages hidden by prune). `endpoint` names the
+ * failing side of the range so callers can attribute the error precisely.
+ */
+export class BoundaryNotFoundError extends Error {
+  readonly code = "BOUNDARY_NOT_FOUND";
+  readonly kind: "unknown" | "consumed";
+  readonly endpoint: "start" | "end";
+
+  constructor(
+    kind: "unknown" | "consumed",
+    endpoint: "start" | "end",
+    message: string,
+  ) {
+    super(message);
+    this.name = "BoundaryNotFoundError";
+    this.code = "BOUNDARY_NOT_FOUND";
+    this.kind = kind;
+    this.endpoint = endpoint;
+  }
+}
+
 export interface ResolveBoundariesInput {
   startRef: string;
   endRef: string;
@@ -65,15 +90,8 @@ export function resolveBoundaries(
     indexByRawId.set(message.id, index),
   );
 
-  let startIndex = resolveAnchorIndex(start, input.state, indexByRawId);
-  let endIndex = resolveAnchorIndex(end, input.state, indexByRawId);
-
-  if (startIndex === null || endIndex === null) {
-    throw new Error(
-      `Boundary not found in visible context (likely consumed by an existing block). ` +
-        `startId="${input.startRef}", endId="${input.endRef}".`,
-    );
-  }
+  let startIndex = resolveAnchorIndex(start, input.state, indexByRawId, "start");
+  let endIndex = resolveAnchorIndex(end, input.state, indexByRawId, "end");
 
   if (startIndex > endIndex) {
     [startIndex, endIndex] = [endIndex, startIndex];
@@ -116,19 +134,55 @@ function resolveAnchorIndex(
   boundary: ParsedBoundary,
   state: CompressionState,
   indexByRawId: Map<string, number>,
-): number | null {
+  endpoint: "start" | "end",
+): number {
+  const label = endpoint === "start" ? "startId" : "endId";
   if (boundary.kind === "message") {
     const rawId =
       state.messageRefs.byRef[boundary.raw] ??
       state.messageRefs.byRef[formatPaddedRef(boundary.numericId)];
-    if (!rawId) return null;
+    if (!rawId) {
+      throw new BoundaryNotFoundError(
+        "unknown",
+        endpoint,
+        `${label}="${boundary.raw}" does not exist in this session (typo or wrong session) — run acp_status for current refs.`,
+      );
+    }
     const index = indexByRawId.get(rawId);
-    return index === undefined ? null : index;
+    if (index === undefined) {
+      throw new BoundaryNotFoundError(
+        "consumed",
+        endpoint,
+        `${label}="${boundary.raw}" not found in visible context (likely consumed by an existing block).`,
+      );
+    }
+    return index;
   }
 
   const block = blockById(state, `b${boundary.numericId}`);
-  if (!block || !block.active) return null;
-  return earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+  if (!block) {
+    throw new BoundaryNotFoundError(
+      "unknown",
+      endpoint,
+      `${label}="b${boundary.numericId}" does not exist in this session (typo or wrong session) — run acp_status for current refs.`,
+    );
+  }
+  if (!block.active) {
+    throw new BoundaryNotFoundError(
+      "consumed",
+      endpoint,
+      `${label}="b${boundary.numericId}" not found in visible context (block distilled/consumed by a higher-tier block).`,
+    );
+  }
+  const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+  if (anchor === null) {
+    throw new BoundaryNotFoundError(
+      "consumed",
+      endpoint,
+      `${label}="b${boundary.numericId}" not found in visible context (block messages consumed by a higher-tier block).`,
+    );
+  }
+  return anchor;
 }
 
 function formatPaddedRef(index: number): string {

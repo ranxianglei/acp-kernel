@@ -25,9 +25,11 @@ export function prune(
 
   const anchors = inject ? collectSummaryAnchors(state, indexById) : [];
 
-  return stripOrphanedToolResults(
-    stripOrphanedToolCalls(
-      rebuildMessages(messages, covered, firstUserIndex, anchors),
+  return stripOrphanedReasoning(
+    stripOrphanedToolResults(
+      stripOrphanedToolCalls(
+        rebuildMessages(messages, covered, firstUserIndex, anchors),
+      ),
     ),
   );
 }
@@ -134,4 +136,42 @@ function stripOrphanedToolCalls(messages: CoreMessage[]): CoreMessage[] {
       m.toolName === "compress" ||
       knownResultIds.has(m.toolCallId),
   );
+}
+
+/**
+ * Defense-in-depth for reasoning/text pairing (analogue of
+ * {@link stripOrphanedToolCalls}). A `reasoning` message is only meaningful
+ * when immediately followed — after any same-run reasoning — by its companion
+ * assistant text/tool-call; strict thinking models (DeepSeek et al.) reject
+ * reasoning_content that has lost its response with HTTP 400. Compress-time
+ * boundary expansion normally keeps the pair in one block, so this only fires
+ * for degenerate straddles (block-boundary ranges, malformed input, or a
+ * reasoning that never had a companion): drop the dangling run rather than
+ * ship a 400-triggering half-pair. Runs AFTER tool stripping, since removing
+ * an orphaned tool-call can leave its preceding reasoning dangling too.
+ */
+function stripOrphanedReasoning(messages: CoreMessage[]): CoreMessage[] {
+  const drop = new Set<number>();
+  for (let i = 0; i < messages.length; i++) {
+    if (drop.has(i)) continue;
+    if (messages[i]!.contentType !== "reasoning") continue;
+    let j = i;
+    while (
+      j + 1 < messages.length &&
+      messages[j + 1]!.contentType === "reasoning"
+    ) {
+      j++;
+    }
+    const companion = messages[j + 1];
+    const hasCompanion =
+      companion !== undefined &&
+      companion.role === "assistant" &&
+      (companion.contentType === "text" ||
+        companion.contentType === "tool-call");
+    if (!hasCompanion) {
+      for (let k = i; k <= j; k++) drop.add(k);
+    }
+  }
+  if (drop.size === 0) return messages;
+  return messages.filter((_, i) => !drop.has(i));
 }

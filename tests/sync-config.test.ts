@@ -61,8 +61,9 @@ test("defaultConfig provides sensible production defaults", () => {
   const cfg = defaultConfig(200000);
   assert.equal(cfg.modelContextLimit, 200000);
   assert.equal(cfg.promotionThreshold, 5);
-  assert.equal(cfg.truncate.threshold, 1);
-  assert.equal(cfg.nudge.maxContextLimitPct, 0.55);
+  assert.equal(cfg.truncate.threshold, 0.95);
+  assert.equal(cfg.nudge.maxContextLimitPct, 0.75);
+  assert.equal(cfg.nudge.emergencyThresholdPct, 0.95);
   assert.ok(cfg.tiers.tier3Trigger > cfg.tiers.tier2Trigger);
 });
 

@@ -258,7 +258,7 @@ test("integration: tiny ranges are suppressed — fixes the 19-token compression
     messages,
     state,
     config: config({ modelContextLimit: 12000 }),
-    tokenCount: 9000,
+    tokenCount: 5000,
   });
   assert.equal(result.nudge!.shouldInject, false, "turn 1: growth=0, no nudge");
   assert.ok(result.nudge!.reason.includes("growth"), `reason: ${result.nudge!.reason}`);

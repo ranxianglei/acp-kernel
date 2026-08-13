@@ -148,7 +148,7 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
     };
   }
 
-  const isEmergency = !!decision.breakdown?.emergencyOverride;
+  const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
 
   if (isEmergency) {
     return {

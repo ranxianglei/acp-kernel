@@ -209,6 +209,7 @@ export interface NudgeBreakdown {
   nudgeGrowthTokens: number;
   growthFloor: number;
   hasPendingNudge: number;
+  overLimit: number;
   emergencyOverride: number;
   pendingT1: number;
   pendingT2: number;

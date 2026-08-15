@@ -29,6 +29,10 @@
         ".": {
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js"
+        },
+        "./wire": {
+            "types": "./dist/wire/index.d.ts",
+            "import": "./dist/wire/index.js"
         }
     },
     "files": [

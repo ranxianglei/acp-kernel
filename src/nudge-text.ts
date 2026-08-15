@@ -123,7 +123,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
 export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defaultPrompts): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
   const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
-  const isEmergency = !!decision.breakdown?.emergencyOverride;
+  const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
 
   if (decision.tier !== null && decision.tier >= 2) {
     const isT2 = decision.tier === 2;
@@ -155,8 +155,6 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
       ].join("\n"),
     };
   }
-
-  const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
 
   if (isEmergency) {
     return {

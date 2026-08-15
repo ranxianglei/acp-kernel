@@ -547,6 +547,8 @@ test("arbitration: effective filter drops fragmented merge tail (pendingT1 < raw
     1600,
     "effective filter keeps only the merged m0..m7 range (1600 tokens); drops the m8..m9 tail",
   );
+});
+
 test("over-limit fires force-nudge when compressible content exists", () => {
   const core = createCore();
   const config = buildConfig({
@@ -576,4 +578,37 @@ test("over-limit does NOT inject when nothing is compressible (MAJOR-1 fix)", ()
   assert.equal(turn.nudge.shouldInject, false, "no spam when nothing to compress");
   assert.equal(turn.nudge.breakdown!.overLimit, 1, "overLimit flag still set for reporting");
   assert.ok(turn.nudge.reason.includes("OVER-LIMIT"), `reason: ${turn.nudge.reason}`);
+});
+
+test("emergency suppresses nudge when only sub-minCompressRange tail ranges remain", () => {
+  const core = createCore();
+  const config = buildConfig({
+    nudge: { ...buildConfig().nudge, emergencyThresholdPct: 0.95, maxContextLimitPct: 0.75 },
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 0,
+  });
+  // Compressible content exists but every range is far below minCompressRange
+  // (min 5000 chars = 1250 tokens; these sum to ~300). Recommending them
+  // would guarantee atomic rejection — the exact failure mode the endurance
+  // report showed at 60% failure rate.
+  const messages = ["a", "b", "c"].map((t, i) => textMessage(i % 2 === 0 ? "user" : "assistant", `m${i}`, `tiny ${t} `.repeat(10)));
+  const turn = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 96000 });
+  assert.equal(turn.nudge.shouldInject, false, "no emergency spam when nothing is effectively compressible");
+  assert.equal(turn.nudge.breakdown!.emergencyOverride, 1, "emergency flag still set for reporting");
+  assert.ok(turn.nudge.reason.includes("EMERGENCY"), `reason: ${turn.nudge.reason}`);
+  assert.ok(turn.nudge.reason.includes("minCompressRange"), `reason explains the suppression: ${turn.nudge.reason}`);
+});
+
+test("emergency with effective pending routes to the max-pending tier (post-fix regression)", () => {
+  const core = createCore();
+  const config = buildConfig({
+    nudge: { ...buildConfig().nudge, emergencyThresholdPct: 0.95, maxContextLimitPct: 0.75 },
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 0,
+  });
+  const messages = makeMessages(10);
+  const turn = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 96000 });
+  assert.equal(turn.nudge.shouldInject, true, "emergency fires when effective content exists");
+  assert.equal(turn.nudge.tier, 1, "T1 has the max pending here");
+  assert.ok(turn.nudge.reason.includes("EMERGENCY"), `reason: ${turn.nudge.reason}`);
 });

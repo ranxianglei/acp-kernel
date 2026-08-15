@@ -931,7 +931,6 @@ function decideNudge(input: NudgeInput): NudgeDecision {
 
   const overLimit = usage >= config.nudge.maxContextLimitPct;
   const emergencyOverride = usage >= config.nudge.emergencyThresholdPct;
-  const overLimit = usage >= config.nudge.maxContextLimitPct;
   // High-pressure band: over maxContextLimitPct (subsumes the emergency
   // threshold). Bypasses growth gate + cadence; gated on effective pending.
   const pressure = overLimit || emergencyOverride;

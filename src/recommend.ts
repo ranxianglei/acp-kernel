@@ -273,3 +273,46 @@ export function buildCompressibleRanges(
     protected: protectedRanges,
   };
 }
+
+function mergeBatch(batch: CompressibleRange[]): CompressibleRange {
+  const first = batch[0]!;
+  const last = batch[batch.length - 1]!;
+  const count = batch.reduce((s, r) => s + r.count, 0);
+  const tokens = batch.reduce((s, r) => s + r.tokens, 0);
+  const toolPct = Math.round(
+    batch.reduce((s, r) => s + r.toolPct * r.count, 0) / count,
+  );
+  const merged: CompressibleRange = {
+    startRef: first.startRef,
+    endRef: last.endRef,
+    count,
+    tokens,
+    toolPct,
+    textPct: 100 - toolPct,
+  };
+  if (batch.some((r) => r.dangerous === true)) {
+    merged.dangerous = true;
+  }
+  return merged;
+}
+
+export function mergeRangesToThreshold(
+  ranges: CompressibleRange[],
+  minChars: number,
+): CompressibleRange[] {
+  if (minChars <= 0 || ranges.length === 0) return ranges;
+  const result: CompressibleRange[] = [];
+  let batch: CompressibleRange[] = [];
+  for (const r of ranges) {
+    batch.push(r);
+    const batchTokens = batch.reduce((s, x) => s + x.tokens, 0);
+    if (batchTokens * 4 >= minChars) {
+      result.push(mergeBatch(batch));
+      batch = [];
+    }
+  }
+  if (batch.length > 0) {
+    result.push(mergeBatch(batch));
+  }
+  return result;
+}

@@ -18,6 +18,7 @@ export function defaultConfig(
       minGrowthFloor: 20000,
       minGrowthRatio: 0.45,
       emergencyThresholdPct: 0.95,
+      tier2GrowthMultiplier: 1.5,
     },
     promotionThreshold: 5,
     truncate: { threshold: 0.95 },

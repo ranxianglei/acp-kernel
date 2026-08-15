@@ -502,6 +502,15 @@ const nudgeNode: PipelineNode = {
     ) {
       stamped.lastPerMessageNudgeTokens = ctx.tokenCount;
       stamped.lastNudgeShownTokens = 0;
+      // The context shrank dramatically — host compaction, or a tokenCount
+      // scale switch (an adapter moving from session-tree accounting to
+      // sent-view estimation). Per-tier cadence stamps recorded at the old
+      // scale would otherwise make `tokenCount - lastShownByTier[t] >=
+      // growthFloor` unreachable (a stamp above the window never re-arms),
+      // suppressing mid-band nudges until the absolute overLimit band fires.
+      // Restart tier cadence from the new baseline, mirroring the full stamp
+      // reset a successful applyCompression performs.
+      stamped.lastShownByTier = {};
     }
 
     if (stamped.lastPerMessageNudgeTokens === 0) {

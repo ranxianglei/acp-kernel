@@ -612,3 +612,26 @@ test("emergency with effective pending routes to the max-pending tier (post-fix 
   assert.equal(turn.nudge.tier, 1, "T1 has the max pending here");
   assert.ok(turn.nudge.reason.includes("EMERGENCY"), `reason: ${turn.nudge.reason}`);
 });
+
+test("re-baseline after a tokenCount scale drop also resets per-tier cadence stamps", () => {
+  const core = createCore();
+  const config = buildConfig();
+  // A session carried over from an adapter that fed session-tree accounting:
+  // stamps recorded at 366K while the real (sent-view) tokenCount is 40K.
+  // lastPerMessageNudgeTokens triggers the re-baseline branch (drop far
+  // below baseline - nudgeGrowthTokens); lastShownByTier at the old scale
+  // would make `tokenCount - lastShownByTier[t] >= growthFloor` unreachable
+  // (negative forever), suppressing mid-band nudges until the absolute
+  // overLimit band fires.
+  const state = createInitialState();
+  state.nudge.lastPerMessageNudgeTokens = 366_000;
+  state.nudge.lastNudgeShownTokens = 366_000;
+  state.nudge.lastShownByTier = { 1: 366_000, 2: 366_000 };
+
+  const messages = makeMessages(10);
+  const turn = core.processTurn({ messages, state, config, tokenCount: 40_000 });
+  const stamped = turn.state.nudge;
+  assert.equal(stamped.lastPerMessageNudgeTokens, 40_000, "baseline re-anchored at the new scale");
+  assert.equal(stamped.lastNudgeShownTokens, 0, "shared cadence baseline cleared");
+  assert.deepEqual(stamped.lastShownByTier, {}, "per-tier cadence stamps must not survive a scale drop");
+});

@@ -50,7 +50,7 @@ acp-kernel/
 │   ├── keep-markers.ts       # KEEP/REF marker preservation in summaries
 │   ├── types.ts              # All shared types
 │   └── defaults.ts           # defaultConfig, defaultNodes
-├── tests/                    # 184 tests across 18 files
+├── tests/                    # 295 tests
 ├── tsup.config.ts
 ├── tsconfig.json
 └── package.json

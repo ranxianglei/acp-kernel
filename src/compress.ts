@@ -9,7 +9,12 @@ import {
 } from "./state.js";
 import { defaultCountTokens } from "./tokenize.js";
 import { validateConfig } from "./config.js";
-import { resolveBoundaries, earliestIndexOfIds } from "./boundaries.js";
+import {
+  BoundaryNotFoundError,
+  resolveBoundaries,
+  earliestIndexOfIds,
+} from "./boundaries.js";
+import type { ResolvedRange } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
@@ -17,6 +22,7 @@ import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
+import { adjustBoundariesForReasoningPairs } from "./reasoning-pairs.js";
 import {
   computeProtectedRefs,
   buildCompressibleRanges,
@@ -98,6 +104,26 @@ export interface ApplyCompressionInput {
   protectedMessageIds?: Set<string>;
 }
 
+/**
+ * Per-range classification from a single resolveBoundaries pass. "ok" ranges
+ * go on to applySingleRange (which re-resolves internally for tool-pair
+ * adjustment); "consumed" means the refs existed but their messages were
+ * hidden by an existing block; "unknown" means a ref never existed in this
+ * session; "invalid" means a ref failed to parse (e.g. "foo").
+ */
+type RangeResolution =
+  | { status: "ok"; resolved: ResolvedRange }
+  | { status: "consumed"; error: BoundaryNotFoundError }
+  | { status: "unknown"; error: BoundaryNotFoundError }
+  | { status: "invalid"; error: Error };
+
+function rangeError(
+  spec: { startRef: string; endRef: string },
+  message: string,
+): string {
+  return `range ${spec.startRef}..${spec.endRef}: ${message}`;
+}
+
 export function createCore(ports: Ports = {}): CompressionCore {
   const countTokens = ports.countTokens ?? defaultCountTokens;
 
@@ -120,20 +146,51 @@ export function createCore(ports: Ports = {}): CompressionCore {
 
     const preExistingCoverage = collectCoverage(state);
 
-    const rangeIndexSets: { spec: typeof input.ranges[number]; indices: number[] }[] = [];
+    // Classify every requested range ONCE. The result feeds overlap
+    // skipSpecs, the minCompressRange pre-check, and the per-range loop —
+    // previously each re-resolved and silently swallowed failures, so
+    // consumed/unknown ranges produced misleading "too small" errors.
+    const classifications = new Map<typeof input.ranges[number], RangeResolution>();
+    const classificationErrors: string[] = [];
+    const consumedRanges: typeof input.ranges = [];
     for (const spec of input.ranges) {
-      let resolved;
       try {
-        resolved = resolveBoundaries({
+        const resolved = resolveBoundaries({
           startRef: spec.startRef,
           endRef: spec.endRef,
           messages: input.messages,
           state,
         });
-      } catch {
-        continue;
+        classifications.set(spec, { status: "ok", resolved });
+      } catch (error) {
+        if (error instanceof BoundaryNotFoundError) {
+          classifications.set(
+            spec,
+            error.kind === "unknown"
+              ? { status: "unknown", error }
+              : { status: "consumed", error },
+          );
+          if (error.kind === "consumed") {
+            consumedRanges.push(spec);
+          } else {
+            classificationErrors.push(rangeError(spec, error.message));
+          }
+        } else {
+          classifications.set(spec, {
+            status: "invalid",
+            error: error instanceof Error ? error : new Error(String(error)),
+          });
+          classificationErrors.push(
+            rangeError(spec, error instanceof Error ? error.message : String(error)),
+          );
+        }
       }
-      const indices = resolved.messageIds.map((id) =>
+    }
+
+    const rangeIndexSets: { spec: typeof input.ranges[number]; indices: number[] }[] = [];
+    for (const [spec, resolution] of classifications) {
+      if (resolution.status !== "ok") continue;
+      const indices = resolution.resolved.messageIds.map((id) =>
         input.messages.findIndex((m) => m.id === id),
       ).filter((i) => i >= 0);
       rangeIndexSets.push({ spec, indices });
@@ -163,37 +220,30 @@ export function createCore(ports: Ports = {}): CompressionCore {
     if (input.config.compress.minCompressRange > 0 && input.ranges.length > 0) {
       let totalRangeChars = 0;
       let hasBlockBoundaryRange = false;
-      for (const spec of input.ranges) {
-        if (skipSpecs.has(spec)) continue;
-        let resolved;
-        try {
-          resolved = resolveBoundaries({
-            startRef: spec.startRef,
-            endRef: spec.endRef,
-            messages: input.messages,
-            state,
-          });
-        } catch {
-          continue;
-        }
-        if (resolved.boundaryKind === "block") {
+      let countedRanges = 0;
+      for (const [spec, resolution] of classifications) {
+        if (resolution.status !== "ok" || skipSpecs.has(spec)) continue;
+        if (resolution.resolved.boundaryKind === "block") {
           hasBlockBoundaryRange = true;
           continue;
         }
-        for (const id of resolved.messageIds) {
+        countedRanges++;
+        for (const id of resolution.resolved.messageIds) {
           const msg = input.messages.find((m) => m.id === id);
           totalRangeChars += msg?.text?.length ?? 0;
         }
       }
       if (!hasBlockBoundaryRange && totalRangeChars < input.config.compress.minCompressRange) {
+        const gateMessage =
+          consumedRanges.length > 0
+            ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}); remaining compressible content ${totalRangeChars} chars < min ${input.config.compress.minCompressRange}. Nothing to do — run acp_status to see current compressible ranges.`
+            : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
         return {
           state: input.state,
           result: {
             blocksCreated: 0,
             tokensCompressed: 0,
-            errors: [
-              `Total compressible content too small (${totalRangeChars} chars across ${input.ranges.length} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`,
-            ],
+            errors: [gateMessage, ...classificationErrors],
             warnings: [],
           },
         };
@@ -202,6 +252,18 @@ export function createCore(ports: Ports = {}): CompressionCore {
 
     for (const spec of input.ranges) {
       if (skipSpecs.has(spec)) continue;
+      const resolution = classifications.get(spec);
+      if (resolution === undefined) continue;
+      if (resolution.status === "consumed") {
+        warnings.push(
+          `Skipped range (${spec.startRef}..${spec.endRef}) — already compressed (messages consumed by existing block(s)); nothing to compress.`,
+        );
+        continue;
+      }
+      if (resolution.status === "unknown" || resolution.status === "invalid") {
+        errors.push(rangeError(spec, resolution.error.message));
+        continue;
+      }
       try {
         const outcome = applySingleRange({
           spec,
@@ -217,7 +279,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
         tokensCompressed += outcome.tokens;
         warnings.push(...outcome.warnings);
       } catch (error) {
-        errors.push(error instanceof Error ? error.message : String(error));
+        errors.push(rangeError(spec, error instanceof Error ? error.message : String(error)));
       }
     }
 
@@ -512,7 +574,7 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     state: input.state,
   });
 
-  const rangeMessageIds = applyToolPairAdjustment(
+  const rangeMessageIds = applyPairBoundaryAdjustments(
     resolved,
     input.messages,
   );
@@ -665,26 +727,45 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   return { tokens: compressedTokens, warnings };
 }
 
-function applyToolPairAdjustment(
+function applyPairBoundaryAdjustments(
   resolved: { startIndex: number; endIndex: number; messageIds: string[]; boundaryKind: string },
   messages: CoreMessage[],
 ): string[] {
   if (resolved.boundaryKind === "block") {
     return resolved.messageIds;
   }
-  const adjusted = adjustBoundariesForToolPairs(
-    resolved.startIndex,
-    resolved.endIndex,
-    messages,
-  );
+  // Compose tool-pair and reasoning-pair boundary adjustments to a fixpoint
+  // (≤2 passes). Reasoning may pull in a tool-call whose result tool-pairs
+  // then extends for; tool-pairs may pull in a tool-call whose preceding
+  // reasoning is then drawn in. Both only ever WIDEN the range.
+  let startIndex = resolved.startIndex;
+  let endIndex = resolved.endIndex;
+  for (let pass = 0; pass < 2; pass++) {
+    const reasoningAdjusted = adjustBoundariesForReasoningPairs(
+      startIndex,
+      endIndex,
+      messages,
+    );
+    const toolAdjusted = adjustBoundariesForToolPairs(
+      reasoningAdjusted.startIndex,
+      reasoningAdjusted.endIndex,
+      messages,
+    );
+    const changed =
+      toolAdjusted.startIndex !== startIndex ||
+      toolAdjusted.endIndex !== endIndex;
+    startIndex = toolAdjusted.startIndex;
+    endIndex = toolAdjusted.endIndex;
+    if (!changed) break;
+  }
   if (
-    adjusted.startIndex === resolved.startIndex &&
-    adjusted.endIndex === resolved.endIndex
+    startIndex === resolved.startIndex &&
+    endIndex === resolved.endIndex
   ) {
     return resolved.messageIds;
   }
   const ids: string[] = [];
-  for (let i = adjusted.startIndex; i <= adjusted.endIndex; i++) {
+  for (let i = startIndex; i <= endIndex; i++) {
     const msg = messages[i];
     if (msg) ids.push(msg.id);
   }
@@ -848,7 +929,12 @@ function decideNudge(input: NudgeInput): NudgeDecision {
 
   const nudgeGrowthTokens = resolveAdaptiveGrowth(limit, config.nudge);
 
+  const overLimit = usage >= config.nudge.maxContextLimitPct;
   const emergencyOverride = usage >= config.nudge.emergencyThresholdPct;
+  const overLimit = usage >= config.nudge.maxContextLimitPct;
+  // High-pressure band: over maxContextLimitPct (subsumes the emergency
+  // threshold). Bypasses growth gate + cadence; gated on effective pending.
+  const pressure = overLimit || emergencyOverride;
 
   const baseline = state.nudge.lastPerMessageNudgeTokens;
   const hadPendingNudge = state.nudge.lastNudgeShownTokens > 0;
@@ -895,7 +981,13 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const t2Pen = tiers[2]?.pending ?? 0;
   const t3Pen = tiers[3]?.pending ?? 0;
 
-  if (emergencyOverride) {
+  if (pressure) {
+    // High pressure: pick the tier with the MAX pending so pressure can route
+    // to distillation when that reclaims the most tokens. Gated on effective
+    // pending (tokens*4 >= minCompressRange for T1) so we never offer ranges
+    // the kernel would atomically reject. emergency vs over-limit only
+    // changes the reason label/voice; truncate.threshold remains the
+    // independent last resort when there is genuinely nothing to compress.
     const candidates: CompressionTier[] = [1];
     if (config.tiers.enabled) {
       candidates.push(2, 3);
@@ -909,12 +1001,13 @@ function decideNudge(input: NudgeInput): NudgeDecision {
         best = t;
       }
     }
-    if (best !== null) {
+    if (best !== null && bestPending > 0) {
       injectedTier = best;
+      const label = emergencyOverride ? "EMERGENCY" : "OVER-LIMIT";
       injectedReason =
         best === 1
-          ? `EMERGENCY T1: max effective pending ${bestPending}, usage ${Math.round(usage * 100)}%`
-          : `EMERGENCY T${best} distill: max pending ${bestPending} (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}), usage ${Math.round(usage * 100)}%`;
+          ? `${label} T1: max effective pending ${bestPending}, usage ${Math.round(usage * 100)}%`
+          : `${label} T${best} distill: max pending ${bestPending} (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}), usage ${Math.round(usage * 100)}%`;
     }
   } else if (growthReady) {
     if (t1Eff >= nudgeGrowthTokens) {
@@ -948,13 +1041,14 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     }
   }
 
-  const shouldInject = emergencyOverride || injectedTier !== null;
+  const shouldInject = injectedTier !== null;
 
   let reason: string;
-  if (emergencyOverride) {
-    reason = `EMERGENCY: usage ${Math.round(usage * 100)}% >= ${Math.round(config.nudge.emergencyThresholdPct * 100)}%`;
-  } else if (injectedTier !== null) {
+  if (injectedTier !== null) {
     reason = injectedReason;
+  } else if (pressure) {
+    const label = emergencyOverride ? "EMERGENCY" : "OVER-LIMIT";
+    reason = `${label}: usage ${Math.round(usage * 100)}% but no tier has effective compressible content (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — nudge suppressed to avoid offering ranges below minCompressRange`;
   } else {
     const tiersList = [1, 2, 3] as const;
     const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
@@ -998,6 +1092,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       nudgeGrowthTokens,
       growthFloor,
       hasPendingNudge: hasPendingNudge ? 1 : 0,
+      overLimit: overLimit ? 1 : 0,
       emergencyOverride: emergencyOverride ? 1 : 0,
       pendingT1: tiers[1]!.pending,
       pendingT2: tiers[2]!.pending,

@@ -163,3 +163,14 @@ test("dangerous flag appears in range listing", () => {
   const result = renderNudgeText(makeDecision({ compressibleRanges: ranges }));
   assert.ok(result.text.includes("⚠️"), "should show dangerous flag");
 });
+
+test("over-limit renders with emergency voice (MAJOR-2 fix)", () => {
+  const result = renderNudgeText(
+    makeDecision({
+      contextUsage: 0.85,
+      breakdown: { overLimit: 1 },
+    }),
+  );
+  assert.equal(result.voice, "emergency", "over-limit should use emergency voice, not gentle");
+  assert.ok(!result.text.includes("not an overflow warning"), "should NOT contain gentle reassurance");
+});

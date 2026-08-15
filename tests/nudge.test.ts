@@ -547,4 +547,33 @@ test("arbitration: effective filter drops fragmented merge tail (pendingT1 < raw
     1600,
     "effective filter keeps only the merged m0..m7 range (1600 tokens); drops the m8..m9 tail",
   );
+test("over-limit fires force-nudge when compressible content exists", () => {
+  const core = createCore();
+  const config = buildConfig({
+    nudge: { ...buildConfig().nudge, maxContextLimitPct: 0.75 },
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 0,
+  });
+  const messages = makeMessages(10);
+  const turn = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 80000 });
+  assert.equal(turn.nudge.shouldInject, true, "force-nudge should fire with compressible content");
+  assert.equal(turn.nudge.breakdown!.overLimit, 1, "overLimit flag set");
+  assert.ok(turn.nudge.reason.includes("OVER-LIMIT"), `reason: ${turn.nudge.reason}`);
+});
+
+test("over-limit does NOT inject when nothing is compressible (MAJOR-1 fix)", () => {
+  const core = createCore();
+  const config = buildConfig({
+    nudge: { ...buildConfig().nudge, maxContextLimitPct: 0.75 },
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 5,
+  });
+  const messages = [
+    textMessage("user", "a", "hello"),
+    textMessage("assistant", "b", "world"),
+  ];
+  const turn = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 80000 });
+  assert.equal(turn.nudge.shouldInject, false, "no spam when nothing to compress");
+  assert.equal(turn.nudge.breakdown!.overLimit, 1, "overLimit flag still set for reporting");
+  assert.ok(turn.nudge.reason.includes("OVER-LIMIT"), `reason: ${turn.nudge.reason}`);
 });

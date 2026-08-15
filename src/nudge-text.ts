@@ -1,5 +1,6 @@
 import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock } from "./types.js";
-import { COMPRESS_PHILOSOPHY, HOW_TO_COMPRESS_RULES, TIER2_DISTILL_RULES, TIER3_CONDENSE_RULES } from "./compression-rules.js";
+import { defaultPrompts } from "./prompts.js";
+import type { Prompts } from "./prompts.js";
 
 export type NudgeVoice = "gentle" | "emergency";
 
@@ -8,9 +9,13 @@ export interface RenderedNudge {
   text: string;
 }
 
-const EFFICIENCY_NOTE = `This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${COMPRESS_PHILOSOPHY}`;
+function efficiencyNote(prompts: Prompts): string {
+  return `This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${prompts.compressPhilosophy}`;
+}
 
-const EMERGENCY_HEADER = `⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n${COMPRESS_PHILOSOPHY}`;
+function emergencyHeader(prompts: Prompts): string {
+  return `⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n${prompts.compressPhilosophy}`;
+}
 
 function formatK(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
@@ -115,7 +120,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   return `Compressible ranges (${merged.length}, oldest first):\n${lines.join("\n")}`;
 }
 
-export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
+export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defaultPrompts): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
   const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
   const isEmergency = !!decision.breakdown?.emergencyOverride;
@@ -126,7 +131,6 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
     const blockList = formatTierTargetBlocks(targets);
     const startId = targets[0]?.blockId ?? "b1";
     const endId = targets[targets.length - 1]?.blockId ?? "b5";
-    const header = isEmergency ? EMERGENCY_HEADER : EFFICIENCY_NOTE;
     const voice: NudgeVoice = isEmergency ? "emergency" : "gentle";
     const triggerLine = isEmergency
       ? `[EMERGENCY — TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"}] Context limit reached — distill NOW into a denser summary to reclaim tokens.`
@@ -134,7 +138,7 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
     return {
       voice,
       text: [
-        header,
+        efficiencyNote(prompts),
         "",
         breakdownStr,
         "",
@@ -145,22 +149,24 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
         blockList,
         `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
         "",
-        HOW_TO_COMPRESS_RULES,
+        prompts.howToCompressRules,
         "",
-        isT2 ? TIER2_DISTILL_RULES : TIER3_CONDENSE_RULES,
+        isT2 ? prompts.tier2DistillRules : prompts.tier3CondenseRules,
       ].join("\n"),
     };
   }
+
+  const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
 
   if (isEmergency) {
     return {
       voice: "emergency",
       text: [
-        EMERGENCY_HEADER,
+        emergencyHeader(prompts),
         "",
         breakdownStr,
         "",
-        HOW_TO_COMPRESS_RULES,
+        prompts.howToCompressRules,
         "",
         `{ "topic": "...", "content": [{ "startId": "<ID>", "endId": "<ID>", "summary": "..." }] }`,
         "Only use IDs from visible messages above. Compress older work first.",
@@ -173,11 +179,11 @@ export function renderNudgeText(decision: NudgeDecision): RenderedNudge {
   return {
     voice: "gentle",
     text: [
-      EFFICIENCY_NOTE,
+      efficiencyNote(prompts),
       "",
       breakdownStr,
       "",
-      HOW_TO_COMPRESS_RULES,
+      prompts.howToCompressRules,
       "",
       rangesStr,
       "",

@@ -85,6 +85,14 @@ processTurn({ messages, state, config, tokenCount, renderTags: "none" });
 `renderTags` is optional and defaults to `"all"`, so existing call sites keep
 working unchanged.
 
+**Token counts in rendered tags are snapshots.** Each message's
+`<acp tokens="N">` attribute is frozen at the tag's first render (the
+per-message `tokenSnapshot` in state) and is not recomputed when the message
+text is later filtered, truncated, or edited by the host — the number always
+describes what the model originally saw. Nudge/pressure *decisions* are
+unaffected: they recount live text every turn. If you need the legacy
+live-recomputed tags, use `renderVisibleRefs` directly.
+
 ### Standalone modules
 
 | Module | Purpose |
@@ -108,7 +116,7 @@ The nudge system tells the model *when* to compress. It implements:
 
 ## Status
 
-✅ **Engine complete** — 23 source modules, 167 tests, typecheck + build clean. 3-tier compression, growth-gated nudges, emergency truncation,, fork-recovery, batch merge, composable node pipeline. Ready for adapter authoring.
+✅ **Engine complete** — 23 source modules, full suite green (`npm test`), typecheck + build clean. 3-tier compression, growth-gated nudges, emergency truncation, fork-recovery, batch merge, composable node pipeline. Ready for adapter authoring.
 
 > **Protected tool messages:** protected tool calls (per `config.protectedTools`) and their paired tool-results are hard-excluded from compression — they are dropped from the compressible set and from the new block's `effectiveMessageIds`, so they stay fully visible and are never folded into a summary. This matches opencode-acp's Bug 39 fix. The soft-protected recent zone (`preserveRecentMessages` / last user message) is handled separately: messages there are excluded from the range but do not fail it (an entirely-protected range fails with a clear error).
 

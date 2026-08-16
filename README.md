@@ -103,6 +103,7 @@ live-recomputed tags, use `renderVisibleRefs` directly.
 | `mergeMarkedBlocks` / `collectOldGenBlocks` | Batch merge old-gen blocks into one summary |
 | `rebuildCompressionState` | Fork-recovery: replay historical compress calls |
 | `applyMessageFilters` | Pluggable message-filter framework |
+| `resolveTransformChannel` | Channel-selection policy: an explicit preference wins; the default is the wire channel only when the caller reports it viable |
 
 ### Nudge system
 
@@ -113,6 +114,19 @@ The nudge system tells the model *when* to compress. It implements:
 - **Tier-distillation triggers**: when active tier-1 blocks pile up past `tiers.tier2Trigger`, emit a tier-2 distillation nudge; tier-3 analogously.
 - **Compressible-range computation**: reports the actual compressible ranges (excluding covered + preserved-recent messages) so the model knows what to target.
 - **Baseline reset on compress**: `applyCompression` clears the growth baseline on success, preventing the feedback-loop bug where the nudge re-fires post-compress.
+
+## Wire codec (`acp-kernel/wire`)
+
+The `acp-kernel/wire` subpath ships the provider wire-body codecs (lossless
+round-trip via the `BiliMessage` sidecar): `anthropicToCore`/`coreToAnthropic`,
+`openaiToCore`/`coreToOpenai`, `responsesToCore`/`coreToResponses`, plus
+`deriveMessageId` (content-hash message identity), conversation signals and the
+subagent-namespace helpers. `WIRE_FORMATS` / `detectWireFormat` classify a
+request body by the codec that can parse it — `undefined` means the body is
+unparseable and must be passed through untransformed. Adapters map their
+host's model/API ids to formats and use `resolveTransformChannel` (with
+`wireViable` = body parseable AND the host applies the payload replacement)
+to decide between message-level and wire-level surgery.
 
 ## Status
 

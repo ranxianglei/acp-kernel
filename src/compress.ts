@@ -907,9 +907,12 @@ function resolveAdaptiveGrowth(
 }
 
 /** Compressible amount for each tier. T1 = EFFECTIVE merged-range tokens —
- *  only ranges whose `tokens*4 >= minCompressRange` count (avoids inflation
- *  from fragmentation); T2 = total summary tokens of all active tier-1 blocks;
- *  T3 = total summary tokens of all active tier-2 blocks. */
+ *  only ranges whose real char count >= minCompressRange count (avoids
+ *  inflation from fragmentation; matches the apply-side gate, which counts
+ *  raw `msg.text.length`, so a nudge never offers a range the kernel would
+ *  atomically reject — see CompressibleRange.chars); T2 = total summary
+ *  tokens of all active tier-1 blocks; T3 = total summary tokens of all
+ *  active tier-2 blocks. */
 function pendingByTier(
   state: CompressionState,
   recommendation: Recommendation | undefined,
@@ -920,7 +923,7 @@ function pendingByTier(
   const merged = recommendation?.recommendedRanges ?? [];
   const effective =
     minCompressRange > 0
-      ? merged.filter((r) => r.tokens * 4 >= minCompressRange)
+      ? merged.filter((r) => (r.chars ?? r.tokens * 4) >= minCompressRange)
       : merged;
   out[1] = { pending: effective.reduce((s, r) => s + r.tokens, 0), targetBlocks: [] };
   const active = activeBlocks(state);
@@ -992,7 +995,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   if (pressure) {
     // High pressure: pick the tier with the MAX pending so pressure can route
     // to distillation when that reclaims the most tokens. Gated on effective
-    // pending (tokens*4 >= minCompressRange for T1) so we never offer ranges
+    // pending (real chars >= minCompressRange for T1) so we never offer ranges
     // the kernel would atomically reject. emergency vs over-limit only
     // changes the reason label/voice; truncate.threshold remains the
     // independent last resort when there is genuinely nothing to compress.

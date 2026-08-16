@@ -155,6 +155,7 @@ export function buildCompressibleRanges(
     ref: string;
     refNum: number;
     tokens: number;
+    chars: number;
     isTool: boolean;
     isUser: boolean;
   }[] = [];
@@ -194,6 +195,7 @@ export function buildCompressibleRanges(
       ref,
       refNum: rn,
       tokens: countTokens(msg.text ?? ""),
+      chars: (msg.text ?? "").length,
       isTool: isToolMessage(msg),
       isUser: msg.role === "user",
     });
@@ -222,6 +224,7 @@ export function buildCompressibleRanges(
         endRef: info.ref,
         count: 1,
         tokens: info.tokens,
+        chars: info.chars,
         toolPct: info.isTool ? 100 : 0,
         textPct: info.isTool ? 0 : 100,
       };
@@ -229,6 +232,7 @@ export function buildCompressibleRanges(
       cur.endRef = info.ref;
       cur.count++;
       cur.tokens += info.tokens;
+      cur.chars = (cur.chars ?? 0) + info.chars;
       if (info.isTool) {
         cur.toolPct = Math.round((cur.toolPct * (cur.count - 1) + 100) / cur.count);
       } else {
@@ -281,6 +285,7 @@ function mergeBatch(batch: CompressibleRange[]): CompressibleRange {
   const last = batch[batch.length - 1]!;
   const count = batch.reduce((s, r) => s + r.count, 0);
   const tokens = batch.reduce((s, r) => s + r.tokens, 0);
+  const chars = batch.reduce((s, r) => s + rangeChars(r), 0);
   const toolPct = Math.round(
     batch.reduce((s, r) => s + r.toolPct * r.count, 0) / count,
   );
@@ -289,6 +294,7 @@ function mergeBatch(batch: CompressibleRange[]): CompressibleRange {
     endRef: last.endRef,
     count,
     tokens,
+    chars,
     toolPct,
     textPct: 100 - toolPct,
   };
@@ -298,6 +304,21 @@ function mergeBatch(batch: CompressibleRange[]): CompressibleRange {
   return merged;
 }
 
+/** Effective size of a range in characters — the unit the apply-side
+ *  minCompressRange gate uses. Falls back to the historical tokens*4
+ *  estimate only for hand-built ranges that predate the `chars` field. */
+function rangeChars(r: CompressibleRange): number {
+  return r.chars ?? r.tokens * 4;
+}
+
+/** Merge adjacent ranges into batches that clear `minChars` of REAL text —
+ *  the same accounting `applyCompression` uses — so a recommended range is
+ *  never below the threshold the kernel would atomically reject. Batching by
+ *  token estimates (tokens*4) instead broke whenever the host injected a
+ *  tokenizer where tokens != chars/4 (CJK-aware estimators are ~1:1, so
+ *  tokens*4 overestimated size ~4x and nudge recommended ranges the apply
+ *  side then refused). A sub-threshold tail batch is still emitted — callers
+ *  filter by effectiveness separately (see pendingByTier). */
 export function mergeRangesToThreshold(
   ranges: CompressibleRange[],
   minChars: number,
@@ -305,12 +326,14 @@ export function mergeRangesToThreshold(
   if (minChars <= 0 || ranges.length === 0) return ranges;
   const result: CompressibleRange[] = [];
   let batch: CompressibleRange[] = [];
+  let batchChars = 0;
   for (const r of ranges) {
     batch.push(r);
-    const batchTokens = batch.reduce((s, x) => s + x.tokens, 0);
-    if (batchTokens * 4 >= minChars) {
+    batchChars += rangeChars(r);
+    if (batchChars >= minChars) {
       result.push(mergeBatch(batch));
       batch = [];
+      batchChars = 0;
     }
   }
   if (batch.length > 0) {

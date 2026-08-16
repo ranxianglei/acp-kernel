@@ -33,6 +33,8 @@ function refNum(ref: string): number {
   return Number.isNaN(n) ? -1 : n;
 }
 
+/** Default token estimate (chars/4) used when the caller doesn't inject a
+ *  countTokens — preserves the historical behavior for backwards compat. */
 function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }

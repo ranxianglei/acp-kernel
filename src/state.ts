@@ -4,6 +4,7 @@ export function createInitialState(): CompressionState {
   return {
     blocks: [],
     messageRefs: { byRaw: {}, byRef: {} },
+    tokenSnapshot: {},
     nudge: {
       lastPerMessageNudgeTokens: 0,
       lastNudgeShownTokens: 0,

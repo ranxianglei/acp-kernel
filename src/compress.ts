@@ -1142,6 +1142,7 @@ function cloneState(state: CompressionState): CompressionState {
       byRaw: { ...state.messageRefs.byRaw },
       byRef: { ...state.messageRefs.byRef },
     },
+    tokenSnapshot: { ...(state.tokenSnapshot ?? {}) },
     nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
     stats: { ...state.stats },
     nextBlockId: state.nextBlockId,

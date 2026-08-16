@@ -56,6 +56,8 @@ export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
 export { renderVisibleRefs, renderRefsNode, createRenderRefsNode } from "./render-refs.js";
 export type { RenderStrategy } from "./render-refs.js";
+export { resolveTransformChannel } from "./transform-channel.js";
+export type { TransformChannel } from "./transform-channel.js";
 export { searchBlocks, searchBlocksAsync, blockDocs, messageDocs } from "./search.js";
 export type { SearchResult, SearchOptions, SearchAlgorithm, AsyncSearchAlgorithm, AnySearchAlgorithm, SearchDoc, SearchDocKind, ScoredBlock, MessageRole, RoleWeights, MessageInput } from "./search.js";
 export { DEFAULT_ALGORITHM, DEFAULT_ROLE_WEIGHTS, registerSearchAlgorithm, getSearchAlgorithm, listSearchAlgorithms } from "./search.js";

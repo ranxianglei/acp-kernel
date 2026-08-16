@@ -403,17 +403,45 @@ export function conversationSignalResponses(body: ResponsesRequestBody, headerVa
 // changes for the conversation, even if the main prompt drifts), and any other
 // instructions value maps to a separate `|sub:` namespace with its own empty
 // compression state. Subagent requests are self-contained replays, so the
-// fresh namespace is lossless. Unbounded growth is fine: one ~100-byte entry
-// per conversation identity.
-const instructionAnchors = new Map<string, string>();
+// fresh namespace is lossless.
+export interface SubagentNamespaces {
+    /** Resolve the compression-state namespace for a request: the identity
+     *  itself for the anchored (main) instructions, `identity|sub:<fp>` for
+     *  any other instructions value. First-seen instructions anchor. */
+    namespaceFor(identityValue: string, instructions: unknown): string;
+}
+
+/** Host-owned subagent-namespace store.
+ *
+ * The anchor map is per-conversation mutable state, so it belongs to the
+ * host — NOT to a library module global. Create one instance and keep it for
+ * the process lifetime (or persist it alongside your session store if you
+ * need namespaces to survive restarts: a fresh instance re-anchors on the
+ * first request it sees, which after a restart may be a subagent request,
+ * orphaning the main conversation's stored compression state). */
+export function createSubagentNamespaces(): SubagentNamespaces {
+    const anchors = new Map<string, string>();
+    return {
+        namespaceFor(identityValue: string, instructions: unknown): string {
+            if (typeof instructions !== "string" || instructions.trim().length === 0) return identityValue;
+            const fp = hashId(instructions);
+            const anchor = anchors.get(identityValue);
+            if (anchor === undefined) {
+                anchors.set(identityValue, fp);
+                return identityValue;
+            }
+            return anchor === fp ? identityValue : `${identityValue}|sub:${fp}`;
+        },
+    };
+}
+
+// Convenience singleton for single-process proxies that don't manage
+// per-session state themselves. Hosts needing isolation between
+// conversations, deterministic namespaces across restarts, or a bound on
+// anchor memory should create their own instance via
+// createSubagentNamespaces() and own its lifecycle.
+const defaultNamespaces = createSubagentNamespaces();
 
 export function subagentNamespace(identityValue: string, instructions: unknown): string {
-    if (typeof instructions !== "string" || instructions.trim().length === 0) return identityValue;
-    const fp = hashId(instructions);
-    const anchor = instructionAnchors.get(identityValue);
-    if (anchor === undefined) {
-        instructionAnchors.set(identityValue, fp);
-        return identityValue;
-    }
-    return anchor === fp ? identityValue : `${identityValue}|sub:${fp}`;
+    return defaultNamespaces.namespaceFor(identityValue, instructions);
 }

@@ -24,3 +24,28 @@ test("subagentNamespace: absent or empty instructions never anchor or split", ()
     assert.equal(subagentNamespace(id, "   "), id);
     assert.equal(subagentNamespace(id, "real prompt"), id);
 });
+
+import { createSubagentNamespaces } from "../src/wire/responses.js";
+
+test("createSubagentNamespaces: instances own their anchor state independently", () => {
+    const a = createSubagentNamespaces();
+    const b = createSubagentNamespaces();
+    assert.equal(a.namespaceFor("ns-iso", "main prompt"), "ns-iso");
+    assert.equal(b.namespaceFor("ns-iso", "other prompt"), "ns-iso", "b anchors independently — no shared module state");
+    const subA = a.namespaceFor("ns-iso", "guardian prompt");
+    assert.match(subA, /^ns-iso\|sub:[0-9a-f]{16}$/);
+    assert.equal(a.namespaceFor("ns-iso", "main prompt"), "ns-iso", "a keeps its own anchor");
+    assert.equal(a.namespaceFor("ns-iso", "guardian prompt"), subA, "stable within the instance");
+});
+
+test("createSubagentNamespaces: fresh instance re-anchors (restart semantics documented)", () => {
+    const first = createSubagentNamespaces();
+    assert.equal(first.namespaceFor("ns-restart", "main prompt"), "ns-restart");
+    // Simulated restart: new instance, subagent request arrives FIRST — it
+    // becomes the anchor, so the main prompt lands in a |sub: namespace.
+    // This is the documented first-seen tradeoff; hosts needing
+    // restart-stable namespaces must persist their own instance state.
+    const second = createSubagentNamespaces();
+    assert.equal(second.namespaceFor("ns-restart", "guardian prompt"), "ns-restart");
+    assert.match(second.namespaceFor("ns-restart", "main prompt"), /^ns-restart\|sub:[0-9a-f]{16}$/);
+});

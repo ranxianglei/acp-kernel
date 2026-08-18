@@ -9,8 +9,8 @@ import { charBigrams } from "../tokenizer.js";
  * uniformly across all scripts (CJK benefits most). Only considers query
  * tokens of length >= 4 to avoid noise from short common-character pairs.
  *
- * On benchmark: highest recall@3 (0.913) of any single algorithm — it is
- * the recall boost in the hybrid default.
+ * On benchmark: lowest MRR of any single algorithm (0.683) — precision is
+ * weak, but it is the recall boost in the hybrid default.
  */
 export const fuzzyAlgorithm: SearchAlgorithm = {
     name: "fuzzy",

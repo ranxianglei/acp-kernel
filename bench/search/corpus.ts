@@ -19,7 +19,7 @@ export const CORPUS: BenchBlock[] = [
   { blockId: "b2", topic: "database-connection-pool", summary: "Database connection pooling for PostgreSQL. Configured pg Pool with max 20 connections, idle timeout 30s. Connection pool lives in src/db/pool.ts. Resolved connection leak where queries weren't releasing clients back to pool. Added pool.end() on graceful shutdown." },
   { blockId: "b3", topic: "decompress-default-to-file", summary: "Changed decompress tool to write restored content to a file by default instead of returning inline. Prevents context bloat when decompressing large blocks. New API: decompress({blockId}) writes to ~/.cache/pi/acp-decompress/, decompress({blockId, inline:true}) for explicit inline." },
   { blockId: "b4", topic: "compression-protected-zone", summary: "Soft-protect recent zone: filter protected refs instead of failing the whole compression call. NEVER_PRESERVE_RECENT_TOOLS excludes decompress results from the preserve set. applySingleRange now filters and warns rather than throwing on partial overlap." },
-  { blockId: "b5", topic: "用户认证模块", summary: "实现了用户登录认证流程，包含密码哈希（bcrypt）、session 管理、权限校验中间件。登录接口 POST /api/login 返回 JWT token。身份验证失败返回 401。支持 OAuth2 第三方登录（Google、GitHub）。token 过期自动刷新机制。" },
+  { blockId: "b5", topic: "用户认证模块", summary: "实现了用户登录认证流程，包含密码哈希（bcrypt）、session 管理、权限校验中间件。验证逻辑覆盖登录验证、token 验证、二次验证。登录接口 POST /api/login 返回 JWT token。身份验证失败返回 401。支持 OAuth2 第三方登录（Google、GitHub）。token 过期自动刷新机制。" },
   { blockId: "b6", topic: "npm-publish-workflow", summary: "CI release workflow: on merge of release-v* branch, CI runs typecheck + test + build, creates git tag, publishes to npm. Prerelease versions (containing -) published with --tag dev. NPM_TOKEN secret required." },
   { blockId: "b7", topic: "context-token-estimation", summary: "Token estimation uses chars/4 heuristic. Real tokenizer differs — the gap lands in 'Framework' category in breakdown. displayTotal reflects real context size, not classified sum. systemPromptTokens measured separately from message categories." },
   { blockId: "b8", topic: "review-fixes", summary: "Code review findings: config 150K context cap fix, token counting precision, protect-recent zone edge cases. Reviewer approved after addressing warnings field backward compatibility. Merged to master." },
@@ -45,6 +45,8 @@ export const CORPUS: BenchBlock[] = [
   { blockId: "b28", topic: "ci-cache-optimization", summary: "GitHub Actions cache optimization. Cached node_modules and .turbo. Reduced CI time from 4min to 90s. Cache key includes lockfile hash. Used actions/cache@v3 with restore-keys fallback. Matrix build parallelized across node versions." },
   { blockId: "b29", topic: "memory-leak-debug", summary: "Debugged memory leak in worker pool. Event listeners accumulated — removed on disconnect. WeakRef for cached objects. Heap snapshot comparison found detached DOM nodes. Set maxOldSpaceSize to 4096. Used --inspect to trace retention path." },
   { blockId: "b30", topic: "文件上传oss", summary: "文件上传到阿里云 OSS。分片上传大文件（>5MB），断点续传。预签名 URL 直传前端，减轻服务端压力。图片自动压缩生成缩略图（sharp）。CDN 加速静态资源分发。" },
+  { blockId: "b31", topic: "试验记录", summary: "试验记录表：记录三次批次的数据结果。" },
+  { blockId: "b32", topic: "图表工具", summary: "图表组件用于绘制折线图和柱状图。" },
 ];
 
 export interface BenchQuery {
@@ -73,7 +75,7 @@ export const QUERIES: BenchQuery[] = [
   { query: "token bucket", expectFirst: "b11", note: "disambiguation" },
   { query: "tokan", expectFirst: "b1", note: "typo" },
   { query: "authentication tokan", expectFirst: "b1", note: "multi-word typo+morph" },
-  { query: "redis", expectFirst: "b11", note: "ambiguous (token-densest wins)" },
+  { query: "redis", expectFirst: "b19", note: "ambiguous (token-densest wins)" },
   { query: "缓存", expectFirst: "b19", note: "CJK exact (redis cache)" },
   { query: "cache", expectFirst: "b19", note: "synonym (缓存=cache)" },
   { query: "webpack", expectFirst: "b10", note: "exact" },
@@ -100,4 +102,6 @@ export const QUERIES: BenchQuery[] = [
   { query: "日志", expectFirst: "b23", note: "CJK exact" },
   { query: "elk", expectFirst: "b23", note: "abbreviation" },
   { query: "security header", expectFirst: "b21", note: "phrase (csp)" },
+  { query: "试验证明", expectFirst: "b31", note: "CJK anti-fragment (must not match 验证 in b5)" },
+  { query: "图表可视化", expectFirst: "b32", note: "CJK phrase must not match b23 可视化 char-run" },
 ];

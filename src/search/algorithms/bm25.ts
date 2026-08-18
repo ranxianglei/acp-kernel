@@ -9,8 +9,8 @@ import { tokenize, tfMap } from "../tokenizer.js";
  * raw term count. Stemming collapses English morphology
  * (compress/compressed/compression → ~compress).
  *
- * On a 30-block mixed EN/CJK benchmark: MRR 0.812 vs 0.821 for substring
- * alone — not better in isolation, but a strong precision component when
+ * On a 32-block mixed EN/CJK benchmark: MRR 0.818 vs 0.786 for substring
+ * — not better in isolation, but a strong precision component when
  * combined with fuzzy recall (see hybrid.ts).
  */
 export const bm25Algorithm: SearchAlgorithm = {

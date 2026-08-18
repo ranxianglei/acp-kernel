@@ -52,15 +52,14 @@ Override via `SearchOptions.roleWeights`.
 
 ## Why the default is "hybrid"
 
-The default algorithm is `hybrid` (BM25+stem ⊕ fuzzy n-gram). On a 30-block
-mixed EN/CJK benchmark with 45 queries, against the original substring counter:
-
+The default algorithm is `hybrid` (BM25+stem ⊕ fuzzy n-gram). On a 32-block
+mixed EN/CJK benchmark with 48 queries, against the original substring counter:
 | algorithm   | MRR   | R@1   | R@3   |
 |-------------|-------|-------|-------|
-| substring   | 0.821 | 0.804 | 0.826 |
-| bm25        | 0.812 | 0.804 | 0.826 |
-| fuzzy       | 0.691 | 0.630 | 0.761 |
-| **hybrid**  | **0.879** | **0.848** | **0.913** |
+| substring   | 0.786 | 0.771 | 0.792 |
+| bm25        | 0.818 | 0.813 | 0.813 |
+| fuzzy       | 0.683 | 0.604 | 0.771 |
+| **hybrid**  | **0.883** | **0.854** | **0.896** |
 
 The wins come from three fixes to plain substring matching:
 

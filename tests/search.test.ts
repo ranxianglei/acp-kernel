@@ -237,6 +237,74 @@ test("hybrid: stemming matches morphological variants", () => {
     assert.equal(r[0].ref, "b1");
 });
 
+test("tokenize: CJK runs become dictionary words, no single-char noise", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    assert.deepEqual(tokenize("身份验证流程"), ["身份", "验证", "流程"]);
+    assert.equal(tokenize("身份验证流程").includes("份"), false);
+    assert.equal(tokenize("身份验证流程").includes("证流"), false);
+});
+
+test("tokenize: all-OOV run falls back to bigrams (recall preserved)", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    const toks = tokenize("可视化");
+    assert.ok(toks.includes("可视") || toks.includes("视化"), `got ${JSON.stringify(toks)}`);
+});
+
+test("tokenize: Japanese katakana becomes dictionary words, not char-run fragments", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    const toks = tokenize("テスト用の文章です");
+    assert.ok(toks.includes("テスト"), `got ${JSON.stringify(toks)}`);
+    assert.ok(toks.includes("文章"), `got ${JSON.stringify(toks)}`);
+    assert.equal(toks.includes("テス"), false, "katakana must not be split into char runs");
+    assert.equal(toks.includes("スト"), false, "katakana must not be split into char runs");
+});
+
+test("tokenize: Japanese kanji compounds are kept whole, no cross-word fragments", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    const toks = tokenize("日本語の検索テスト");
+    assert.ok(toks.includes("日本語"), `got ${JSON.stringify(toks)}`);
+    assert.equal(toks.includes("索テ"), false, "no cross-word '索テ' fragment");
+});
+
+test("tokenize: Korean hangul becomes dictionary words, no cross-word fragments", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    const toks = tokenize("테스트 문장입니다");
+    assert.ok(toks.includes("테스트"), `got ${JSON.stringify(toks)}`);
+    assert.equal(toks.includes("니다"), false, "no cross-word '니다' fragment");
+});
+
+test("tokenize: single-char query survives via fallback", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    assert.deepEqual(tokenize("验"), ["验"]);
+});
+
+test("hybrid: CJK query no longer matches across word boundaries (试验证明 vs 验证)", () => {
+    const docs = blockDocs(stateWithBlocks(
+        makeBlock({ blockId: "b1", topic: "auth", summary: "用户身份验证通过" }),
+        makeBlock({ blockId: "b2", topic: "experiment", summary: "试验数据采集已完成" }),
+    ));
+    const r = searchBlocks(docs, "试验证明");
+    assert.equal(r[0].ref, "b2", "word-segmented docs must not rank 验证 above 试验");
+});
+
+test("hybrid: dictionary word query hits the doc containing the whole word", () => {
+    const docs = blockDocs(stateWithBlocks(
+        makeBlock({ blockId: "b1", topic: "i18n", summary: "i18n 国际化 setup with locales" }),
+        makeBlock({ blockId: "b2", topic: "logs", summary: "ELK 日志栈 采集 过滤 存储。结构化日志 JSON。" }),
+    ));
+    const r = searchBlocks(docs, "国际化");
+    assert.equal(r[0].ref, "b1");
+});
+
+test("hybrid: OOV doc still recallable via bigram fallback", () => {
+    const docs = blockDocs(stateWithBlocks(
+        makeBlock({ blockId: "b1", topic: "dash", summary: "可视化" }),
+        makeBlock({ blockId: "b2", topic: "cache", summary: "缓存策略 redis 层" }),
+    ));
+    const r = searchBlocks(docs, "可视化");
+    assert.equal(r[0].ref, "b1");
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Async / semantic
 // ─────────────────────────────────────────────────────────────────────────
@@ -267,4 +335,131 @@ test("searchBlocksAsync: semantic ranks synonyms by cosine similarity", async ()
     ]);
     const r = await searchBlocksAsync(docs, "signin", { algorithm: "semantic-syn" });
     assert.equal(r[0].ref, "m1", "semantic catches synonym signin≈login");
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pinned status-quo guards — record CURRENT behavior and fail loudly on
+// drift. A green test means "unchanged from the rework baseline", NOT
+// "behavior is correct": several of these pin known defects until a fix
+// decision is made. Query-side users are LLMs (no typos, retry-capable),
+// so typo/camelCase/single-char gaps are low-value defects, not blockers.
+// ─────────────────────────────────────────────────────────────────────────
+
+test("stem: authenticate family does not converge (pinned, defect #2)", async () => {
+    const { stem } = await import("../src/search/stemmer.js");
+    assert.equal(stem("authenticate"), "authenticate");
+    assert.equal(stem("authenticated"), "authenticat");
+    assert.equal(stem("authentication"), "authenticat");
+});
+
+test("searchBlocks: morphology family only rescued by fuzzy cap (pinned)", () => {
+    const docs = blockDocs(stateWithBlocks(makeBlock({ blockId: "b1", summary: "authenticate the user account" })));
+    const r = searchBlocks(docs, "authentication");
+    assert.equal(r[0].ref, "b1", "fuzzy bigram overlap still rescues the hit");
+    assert.ok(r[0].score < 0.7, `fuzzy-only rescue must stay under BM25 cap, got ${r[0].score}`);
+});
+
+test("fuzzy: query tokens under 4 chars are filtered out entirely (pinned, defect #1)", () => {
+    const docs = blockDocs(stateWithBlocks(makeBlock({ blockId: "b1", summary: "实现了用户登录认证流程" })));
+    const r = searchBlocks(docs, "登入", { algorithm: "fuzzy" });
+    assert.equal(r.length, 0, "2-char CJK query never reaches the fuzzy scorer");
+});
+
+test("searchBlocks: 2-char CJK typo returns nothing end-to-end (pinned; LLM users don't typo)", () => {
+    const docs = blockDocs(stateWithBlocks(makeBlock({ blockId: "b1", topic: "用户认证", summary: "实现了用户登录认证流程" })));
+    const r = searchBlocks(docs, "登入");
+    assert.equal(r.length, 0, "BM25 sees no token overlap, fuzzy filters 2-char query");
+});
+
+test("searchBlocks: single-char query misses dict-word docs, hits OOV docs (pinned, defect #3)", () => {
+    const docs = blockDocs(stateWithBlocks(
+        makeBlock({ blockId: "b1", topic: "auth", summary: "身份验证流程" }),
+        makeBlock({ blockId: "b2", topic: "viz", summary: "可视化" }),
+    ));
+    const r = searchBlocks(docs, "验");
+    assert.ok(r.every((x) => x.ref !== "b1"), `dict-word doc has no single-char token, got ${JSON.stringify(r)}`);
+    const oov = blockDocs(stateWithBlocks(makeBlock({ blockId: "b3", summary: "验" })));
+    const r2 = searchBlocks(oov, "验");
+    assert.equal(r2[0].ref, "b3", "OOV fallback docs keep single chars, still recallable");
+});
+
+test("tokenize: camelCase is not split (pinned, defect #3)", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    assert.deepEqual(tokenize("syncBlocks"), ["syncblocks"]);
+});
+
+test("searchBlocks: space-separated camelCase query rescued by fuzzy cap (pinned)", () => {
+    const docs = blockDocs(stateWithBlocks(makeBlock({ blockId: "b1", summary: "syncBlocks registry walk" })));
+    const r = searchBlocks(docs, "sync blocks");
+    assert.equal(r[0].ref, "b1");
+    assert.ok(r[0].score < 0.7, `single camelCase token can't be BM25-hit via 'sync', got ${r[0].score}`);
+});
+
+test("hybrid: fuzzy-only full overlap caps at 0.3 (pinned weight split)", () => {
+    const docs = messageDocs([
+        { ref: "m1", role: "assistant", text: "auth token refresh", blockId: "b1" },
+        { ref: "m2", role: "assistant", text: "tokanxyz", blockId: "b2" },
+    ]);
+    const r = searchBlocks(docs, "tokan");
+    assert.equal(r[0].ref, "m2", "fuzzy full overlap wins");
+    assert.ok(r[0].score <= 0.31, `fuzzy-only score stuck at W_FUZZY cap, got ${r[0].score}`);
+});
+
+test("searchBlocks: exact BM25 term hit dominates fuzzy-only overlap (weights pinned)", () => {
+    const docs = messageDocs([
+        { ref: "m1", role: "assistant", text: "tokenized", blockId: "b1" },
+        { ref: "m2", role: "assistant", text: "token", blockId: "b2" },
+    ]);
+    const r = searchBlocks(docs, "token");
+    assert.equal(r[0].ref, "m2", "exact 'token' beats 'tokenized' (stem splits -ized, pinned)");
+    assert.ok(r[0].score >= 0.7, `BM25 channel carries exact hit, got ${r[0].score}`);
+});
+
+test("preview: anchored on FIRST hit term only, later terms ignored (pinned, defect #6)", () => {
+    const text = "a".repeat(20) + " cache strategy " + "b".repeat(40) + " redis config";
+    const r = searchBlocks(messageDocs([{ ref: "m1", role: "assistant", text, blockId: "b1" }]), "cache redis", { previewLength: 40 });
+    const preview = r[0].preview;
+    assert.ok(preview.includes("cache"), `preview centers first hit: ${preview}`);
+    assert.ok(!preview.includes("redis"), `second hit term left out of window: ${preview}`);
+});
+
+test("tokenize: empty / punctuation / pure digits (edge)", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    assert.deepEqual(tokenize(""), []);
+    assert.deepEqual(tokenize("!! ... "), []);
+    assert.deepEqual(tokenize("4096"), [], "leading-digit run fails LATIN_WORD first alt, single digits filtered");
+    assert.deepEqual(tokenize("value=4096"), ["value"]);
+});
+
+test("tokenize: digits inside CJK run dropped (edge)", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    const toks = tokenize("检测到3个异常");
+    assert.ok(toks.includes("检测") || toks.includes("检测到"), `got ${JSON.stringify(toks)}`);
+    assert.ok(toks.includes("异常"), `got ${JSON.stringify(toks)}`);
+    assert.equal(toks.includes("3"), false, "digit is not CJK, never tokenized");
+});
+
+test("tokenize: lone single char survives, in-word single chars drop (asymmetry pinned)", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    assert.deepEqual(tokenize("验"), ["验"], "fallback keeps single-char query");
+    assert.equal(tokenize("身份验证流程").includes("份"), false, "segmented words drop interior chars");
+});
+
+test("tokenize: stem flag leaves CJK untouched (invariance)", async () => {
+    const { tokenize } = await import("../src/search/tokenizer.js");
+    assert.deepEqual(tokenize("身份验证", { stem: true }), tokenize("身份验证", { stem: false }));
+});
+
+test("charBigrams: pairs, whitespace filtered, short input empty", async () => {
+    const { charBigrams } = await import("../src/search/tokenizer.js");
+    assert.deepEqual(charBigrams("登录"), ["登录"]);
+    assert.deepEqual(charBigrams("可视 化"), ["可视"]);
+    assert.deepEqual(charBigrams("a"), []);
+});
+
+test("tfMap: counts per token, stems by flag", async () => {
+    const { tfMap } = await import("../src/search/tokenizer.js");
+    const m = tfMap("token token 身份", true);
+    assert.equal(m.get("token"), 2);
+    assert.equal(m.get("身份"), 1);
 });

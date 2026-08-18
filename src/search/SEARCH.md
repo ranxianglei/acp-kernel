@@ -59,16 +59,26 @@ mixed EN/CJK benchmark with 48 queries, against the original substring counter:
 | substring   | 0.786 | 0.771 | 0.792 |
 | bm25        | 0.818 | 0.813 | 0.813 |
 | fuzzy       | 0.683 | 0.604 | 0.771 |
-| **hybrid**  | **0.883** | **0.854** | **0.896** |
+| **hybrid**  | **0.898** | **0.875** | **0.917** |
+
+hybrid row measured on the rework benchmark (32 blocks / 48 queries); the
+single-algorithm rows predate the CJK segmenter rework.
 
 The wins come from three fixes to plain substring matching:
 
-1. **CJK bigram tokenization** — Chinese/Japanese has no spaces, so `"登录"`
-   tokenizes into overlapping bigrams that match inside `"登录认证流程"`.
+1. **CJK word segmentation** — Chinese/Japanese has no spaces, so `"登录"` is
+   segmented via `Intl.Segmenter("zh", {granularity:"word"})` (CLDR
+   dictionary): multi-char words stay atomic, and all-OOV runs fall back to
+   overlapping bigrams + single chars — `"身份验证"` still matches
+   `"身份验证流程"`, while `"试验证明"` no longer false-hits `"验证"`.
 2. **English stemming** — `compressed`/`compression`/`compressing` collapse to a
    common root (lightweight Porter-inspired suffix stripper, no deps).
 3. **Character n-gram fuzzy recall** — typo-tolerant (`tokan`≈`token`),
-   script-agnostic; BM25 supplies precision, fuzzy supplies recall.
+   script-agnostic; BM25 supplies precision, fuzzy supplies recall. The
+   query-token gate is script-aware: Latin tokens need >= 4 chars (2-3 char
+   stop-words are noise), but 2-char CJK words (`登录`/`缓存`) are admitted —
+   most CJK words are exactly 2 characters, so a Latin-style threshold would
+   starve the recall channel for a whole script.
 
 Previews are **match-context snippets**, not arbitrary prefixes — the result
 shows the sentence around the hit so the user sees *why* a block matched.
@@ -145,7 +155,7 @@ single batch keeps it to one round-trip per search.
 ```
 src/search/
 ├── types.ts              SearchAlgorithm, AsyncSearchAlgorithm, SearchOptions, SearchResult
-├── tokenizer.ts          Latin words + CJK bigram tokenization
+├── tokenizer.ts          Latin words + CJK word segmentation w/ bigram fallback
 ├── stemmer.ts            lightweight English stemmer
 ├── registry.ts           register / get / list algorithms
 ├── algorithms/

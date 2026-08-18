@@ -343,6 +343,8 @@ test("searchBlocksAsync: semantic ranks synonyms by cosine similarity", async ()
 // "behavior is correct": several of these pin known defects until a fix
 // decision is made. Query-side users are LLMs (no typos, retry-capable),
 // so typo/camelCase/single-char gaps are low-value defects, not blockers.
+// NOTE: "defect #1" (2-char CJK queries never reached the fuzzy scorer) was
+// FIXED by the CJK-only gate below — its tests now pin the new behavior.
 // ─────────────────────────────────────────────────────────────────────────
 
 test("stem: authenticate family does not converge (pinned, defect #2)", async () => {
@@ -359,16 +361,57 @@ test("searchBlocks: morphology family only rescued by fuzzy cap (pinned)", () =>
     assert.ok(r[0].score < 0.7, `fuzzy-only rescue must stay under BM25 cap, got ${r[0].score}`);
 });
 
-test("fuzzy: query tokens under 4 chars are filtered out entirely (pinned, defect #1)", () => {
-    const docs = blockDocs(stateWithBlocks(makeBlock({ blockId: "b1", summary: "实现了用户登录认证流程" })));
-    const r = searchBlocks(docs, "登入", { algorithm: "fuzzy" });
-    assert.equal(r.length, 0, "2-char CJK query never reaches the fuzzy scorer");
+test("fuzzy: 2-char CJK query reaches the scorer, full bigram overlap scores 1 (defect #1 fixed)", () => {
+    // 缓存 has no dictionary word in the CLDR zh segmenter — the query would
+    // have been dropped by the old >= 4 gate. The CJK-only gate admits it.
+    const docs = blockDocs(stateWithBlocks(makeBlock({ blockId: "b1", summary: "缓存策略 redis 层" })));
+    const r = searchBlocks(docs, "缓存", { algorithm: "fuzzy" });
+    assert.equal(r.length, 1, "2-char CJK query must reach the fuzzy scorer");
+    assert.equal(r[0].ref, "b1");
+    assert.equal(r[0].score, 1, "full bigram overlap scores 1.0");
 });
 
-test("searchBlocks: 2-char CJK typo returns nothing end-to-end (pinned; LLM users don't typo)", () => {
+test("fuzzy: 1-char CJK and 2-char Latin queries still filtered (gate is CJK-only)", () => {
+    const docs = blockDocs(stateWithBlocks(makeBlock({ blockId: "b1", summary: "缓存策略 redis 层" })));
+    assert.equal(searchBlocks(docs, "验", { algorithm: "fuzzy" }).length, 0, "single char cannot form a bigram");
+    assert.equal(searchBlocks(docs, "ok", { algorithm: "fuzzy" }).length, 0, "2-char Latin stays filtered (noise)");
+    assert.equal(searchBlocks(docs, "to", { algorithm: "fuzzy" }).length, 0, "2-char Latin stays filtered (noise)");
+});
+
+test("searchBlocks: 2-char CJK typo (登入 vs 登录) still returns nothing — gram mismatch, not gate", () => {
     const docs = blockDocs(stateWithBlocks(makeBlock({ blockId: "b1", topic: "用户认证", summary: "实现了用户登录认证流程" })));
     const r = searchBlocks(docs, "登入");
-    assert.equal(r.length, 0, "BM25 sees no token overlap, fuzzy filters 2-char query");
+    assert.equal(r.length, 0, "BM25 sees no shared token; 登入 is now admitted to fuzzy but shares no bigram with 登录");
+});
+
+test("searchBlocks: 2-char CJK query rescued end-to-end by fuzzy (缓存 → 缓存策略 doc)", () => {
+    // BM25 misses on purpose: 缓存 is not a dictionary word, and the doc's own
+    // tokens are its other dictionary words (策略/redis/层). Only the fuzzy
+    // channel sees the raw-text bigram 缓存 — which is exactly the recall gap
+    // the CJK gate repairs.
+    const docs = blockDocs(stateWithBlocks(
+        makeBlock({ blockId: "b1", topic: "viz", summary: "可视化 dashboards" }),
+        makeBlock({ blockId: "b2", topic: "cache", summary: "缓存策略 redis 层" }),
+    ));
+    const r = searchBlocks(docs, "缓存");
+    assert.equal(r.length, 1);
+    assert.equal(r[0].ref, "b2", "fuzzy bigram overlap must rescue the cache block");
+    assert.ok(r[0].score > 0, "rescued result must not be filtered");
+    assert.ok(r[0].score <= 0.31, `fuzzy-only rescue caps at W_FUZZY, got ${r[0].score}`);
+});
+
+test("hybrid: CJK phrase still ranks whole-word doc above char-run doc (图表可视化, no leftover noise)", () => {
+    // Regression guard: the pr-rework guarantee must survive the fuzzy gate —
+    // a phrase must rank the fully-matching doc first and must not let the
+    // OOV-run doc's bigram leftovers (可视/视化) outrank it via fuzzy.
+    const docs = blockDocs(stateWithBlocks(
+        makeBlock({ blockId: "b1", topic: "dash", summary: "可视化" }),
+        makeBlock({ blockId: "b2", topic: "charts", summary: "图表可视化" }),
+    ));
+    const r = searchBlocks(docs, "图表可视化");
+    assert.equal(r[0].ref, "b2", "whole-word doc must win");
+    assert.ok(r[0].score > 0.5, `BM25 carries the full match, got ${r[0].score}`);
+    assert.ok(r.every((x) => x.ref !== "b1") || (r[0].ref === "b2" && r[1]?.ref !== "b2"), "OOV leftovers must not rank first");
 });
 
 test("searchBlocks: single-char query misses dict-word docs, hits OOV docs (pinned, defect #3)", () => {

@@ -8,7 +8,15 @@
  * like "身份验证" still scores against doc text "身份验证流程".
  */
 
-const CJK = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/;
+/**
+ * CJK ideograph/kana/hangul class — the one shared definition of "non-Latin
+ * script that must be handled specially". Exported so fuzzy.ts relaxes its
+ * short-query gate for the SAME range tokenizer.ts segments: two hand-copied
+ * regexes would silently drift apart. Latin is deliberately absent — 2-char
+ * English tokens ("to", "of") carry no meaning, while nearly all CJK words
+ * are 2-char atomic units (登录/缓存), so the two scripts need opposite rules.
+ */
+export const CJK = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/;
 const CJK_RUN = new RegExp(`${CJK.source}+`, "g");
 const LATIN_WORD = /[a-z][a-z0-9_]*[a-z0-9]|[a-z0-9]/g;
 

@@ -397,6 +397,12 @@ test("searchBlocks: 2-char CJK query rescued end-to-end by fuzzy (缓存 → 缓
     assert.equal(r.length, 1);
     assert.equal(r[0].ref, "b2", "fuzzy bigram overlap must rescue the cache block");
     assert.ok(r[0].score > 0, "rescued result must not be filtered");
+    // Fuzzy-only rescue scores exactly W_FUZZY (0.3) — but ONLY while the ICU
+    // dictionary keeps 缓存 a non-word and BM25 misses. That is deliberate:
+    // if a Node/ICU bump starts segmenting 缓存 as a dictionary word, BM25
+    // takes over and this assertion turns red. The red IS the signal that the
+    // dictionary changed — don't paper over it; decide then (e.g. swap the
+    // fixture to a word the dictionary still doesn't know).
     assert.ok(r[0].score <= 0.31, `fuzzy-only rescue caps at W_FUZZY, got ${r[0].score}`);
 });
 

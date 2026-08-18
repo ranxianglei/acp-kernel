@@ -4,6 +4,13 @@ Block search finds compressed (invisible) content by keyword — the core value
 of ACP as conversations grow. This module is a **pluggable algorithm registry**:
 one stable interface, multiple strategies, zero runtime dependencies.
 
+> **Legacy path warning:** `CompressionCore.search()` (`src/compress.ts`) is a
+> separate substring-only implementation that does NOT go through this
+> registry — it over-matches short terms ("the" ≈ "theater") and sees only
+> active blocks. Production adapters use `searchBlocks`. The delegation plan
+> (core.search → searchBlocks) is tracked in
+> [issue #44](https://github.com/ranxianglei/acp-kernel/issues/44).
+
 ## Quick start
 
 ```ts

@@ -8,6 +8,7 @@ import { createCore } from "../src/compress.js";
 import { createInitialState } from "../src/state.js";
 import { assignRefs } from "../src/refs.js";
 import type { Config, CoreMessage } from "../src/types.js";
+import { defaultCountTokens } from "../src/tokenize.js";
 
 function config(overrides: Partial<Config> = {}): Config {
   return {
@@ -89,6 +90,38 @@ test("computeProtectedRefs: preserves last N tokens expanding backward", () => {
   assert.ok(refs.has("m00003"));
   assert.ok(refs.has("m00002"));
   assert.ok(!refs.has("m00001"), "a is outside the 500-token window");
+});
+
+test("computeProtectedRefs: respects injected countTokens for the preserveRecentTokens zone (CJK-aware)", () => {
+  // Regression guard: threshold 150 → chars/4 (25/msg) protects {a,b,c},
+  // CJK-aware (100/msg) protects {b,c}. The zone must follow the injected tokenizer.
+  const messages = [
+    msg("a", "文".repeat(100)),
+    msg("b", "文".repeat(100)),
+    msg("c", "文".repeat(100)),
+  ];
+  const state = assignAll(messages);
+  const refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentTokens: 150 }),
+    defaultCountTokens,
+  );
+  assert.ok(refs.has("m00003"), "c is always within the recent-token zone");
+  assert.ok(refs.has("m00002"), "b is within the CJK-aware token budget");
+  assert.ok(!refs.has("m00001"), "a falls outside the CJK-aware token budget");
+});
+
+test("buildCompressibleRanges: range tokens follow injected countTokens (feeds pendingByTier)", () => {
+  // Regression guard for the 2nd call site of the countTokens fix.
+  // range.tokens sums into pendingByTier (compress.ts:829) → decideNudge
+  // tier-1 arbitration; a chars/4 revert would undercount CJK ~4×.
+  const messages = [msg("a", "x".repeat(100)), msg("b", "y".repeat(100))];
+  const state = assignAll(messages);
+  const mock = (t: string): number => t.length * 7;
+  const ranges = buildCompressibleRanges(messages, state, config(), undefined, mock);
+  assert.equal(ranges.compressible.length, 1);
+  assert.equal(ranges.compressible[0]!.tokens, 1400, "range.tokens must follow injected countTokens, not chars/4");
 });
 
 test("computeProtectedRefs: combines count + token rules (union)", () => {
@@ -225,7 +258,7 @@ test("integration: tiny ranges are suppressed — fixes the 19-token compression
     messages,
     state,
     config: config({ modelContextLimit: 12000 }),
-    tokenCount: 9000,
+    tokenCount: 5000,
   });
   assert.equal(result.nudge!.shouldInject, false, "turn 1: growth=0, no nudge");
   assert.ok(result.nudge!.reason.includes("growth"), `reason: ${result.nudge!.reason}`);
@@ -256,14 +289,17 @@ test("buildCompressibleRanges: default countTokens preserves chars/4 legacy beha
 });
 
 test("computeProtectedRefs: injected countTokens sizes the recent-token zone", () => {
-  const messages = [msg("a", "前"), msg("b", "x".repeat(400)), msg("c", "后", "assistant")];
+  // Sizes chosen so the zone DIFFERS under chars/4 vs CJK-aware: chars/4 → all
+  // three fit in 100 tokens (zone {a,b,c}); CJK-aware (1 tok/char) → b alone
+  // blows past 100 (zone {b,c}). If countTokens were ignored, both calls would
+  // protect a and the cjk assertion below would fail.
+  const messages = [msg("a", "x".repeat(200)), msg("b", "x".repeat(200)), msg("c", "y")];
   const state = assignAll(messages);
-  // preserveRecentTokens = 100 with chars/4: last 400 chars msg b = 100 tokens → zone covers b, a unprotected
   const chars4 = computeProtectedRefs(messages, state, config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }));
-  assert.equal(chars4.has("m00001"), false, "chars/4: a (1 token) stays outside 100-token zone starting at b(100)");
-  assert.equal(chars4.has("m00002"), true, "chars/4: b fills the zone");
-  // same config but CJK-aware: b = 400 tokens → zone far exceeds, a (1 token) still outside, but b dominates
+  assert.equal(chars4.has("m00001"), true, "chars/4: a (50 tok) fits within 100-token zone");
+  assert.equal(chars4.has("m00003"), true, "chars/4: c is most recent, in zone");
   const cjk = computeProtectedRefs(messages, state, config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }), (t) => t.length);
-  assert.equal(cjk.has("m00002"), true, "cjk: b is in recent zone");
-  assert.equal(cjk.has("m00003"), true, "cjk: c is in recent zone");
+  assert.equal(cjk.has("m00001"), false, "cjk: a excluded (b alone exceeds 100-token budget)");
+  assert.equal(cjk.has("m00002"), true, "cjk: b in zone");
+  assert.equal(cjk.has("m00003"), true, "cjk: c most recent, in zone");
 });

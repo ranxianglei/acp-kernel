@@ -33,6 +33,8 @@ export interface CompressionBlock {
   active: boolean;
   durationMs?: number;
   compressCallId?: string;
+  startRef?: string;
+  endRef?: string;
 }
 
 export interface MessageRefMap {
@@ -96,6 +98,10 @@ export interface NudgeConfig {
   minGrowthRatio: number;
   /** Emergency override: always nudge when usage ≥ this fraction. Default 0.98 (98%). */
   emergencyThresholdPct: number;
+  /** Growth multiplier for the tier-2 trigger: T2 distillation fires when T2
+   *  pending ≥ nudgeGrowthTokens × this multiplier AND T2 > T1 effective.
+   *  Default 1.5. */
+  tier2GrowthMultiplier: number;
 }
 
 export interface TruncateConfig {
@@ -153,6 +159,15 @@ export interface CompressibleRange {
   endRef: string;
   count: number;
   tokens: number;
+  /** Range size in characters (sum of message text lengths). The apply-side
+   *  minCompressRange gate counts raw `msg.text.length`, so recommend-side
+   *  gates must use this field — NOT `tokens` — or the two sides disagree
+   *  whenever a host injects a tokenizer where tokens != chars/4 (e.g. a
+   *  CJK-aware estimator: 1 token per char, making `tokens*4` a ~4x
+   *  overestimate). Always set on ranges produced by buildCompressibleRanges
+   *  / mergeRangesToThreshold; hand-built ranges without it fall back to the
+   *  historical tokens*4 estimate for backwards compat. */
+  chars?: number;
   toolPct: number;
   textPct: number;
   dangerous?: boolean;
@@ -213,6 +228,7 @@ export interface NudgeBreakdown {
   nudgeGrowthTokens: number;
   growthFloor: number;
   hasPendingNudge: number;
+  overLimit: number;
   emergencyOverride: number;
   pendingT1: number;
   pendingT2: number;

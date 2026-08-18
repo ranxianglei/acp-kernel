@@ -71,6 +71,44 @@ test("tier-3 distillation: text contains tier header", () => {
   assert.ok(result.text.includes("Condense"), "should mention condensation");
 });
 
+test("tier-2 distillation: guidance warns raw messages in span are absorbed", () => {
+  const result = renderNudgeText(makeDecision({ tier: 2 }));
+  assert.ok(result.text.includes("raw"), "should mention raw messages in span");
+  assert.ok(result.text.includes("absorbed"), "should state raw messages are absorbed into the tier-2 block");
+  assert.ok(result.text.includes("HOW TO COMPRESS"), "should direct raw messages to HOW TO COMPRESS rules");
+});
+
+test("tier-3 condensation: guidance warns raw messages in span are absorbed", () => {
+  const result = renderNudgeText(makeDecision({ tier: 3 }));
+  assert.ok(result.text.includes("raw"), "should mention raw messages in span");
+  assert.ok(result.text.includes("absorbed"), "should state raw messages are absorbed into the tier-3 block");
+  assert.ok(result.text.includes("HOW TO COMPRESS"), "should direct raw messages to HOW TO COMPRESS rules");
+});
+
+test("emergency + tier 2: emergency voice with distillation guidance", () => {
+  const result = renderNudgeText(
+    makeDecision({ tier: 2, breakdown: { emergencyOverride: 1 } }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(
+    result.text.toLowerCase().includes("distill"),
+    "should still carry distillation guidance",
+  );
+  assert.ok(result.text.includes("TIER 2"), "should still name the tier");
+});
+
+test("emergency + tier 3: emergency voice with condensation guidance", () => {
+  const result = renderNudgeText(
+    makeDecision({ tier: 3, breakdown: { emergencyOverride: 1 } }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(
+    result.text.toLowerCase().includes("condense"),
+    "should still carry condensation guidance",
+  );
+  assert.ok(result.text.includes("TIER 3"), "should still name the tier");
+});
+
 test("both modes include compressible ranges", () => {
   const gentle = renderNudgeText(makeDecision({ contextUsage: 0.5 }));
   const emergency = renderNudgeText(
@@ -124,4 +162,15 @@ test("dangerous flag appears in range listing", () => {
   ];
   const result = renderNudgeText(makeDecision({ compressibleRanges: ranges }));
   assert.ok(result.text.includes("⚠️"), "should show dangerous flag");
+});
+
+test("over-limit renders with emergency voice (MAJOR-2 fix)", () => {
+  const result = renderNudgeText(
+    makeDecision({
+      contextUsage: 0.85,
+      breakdown: { overLimit: 1 },
+    }),
+  );
+  assert.equal(result.voice, "emergency", "over-limit should use emergency voice, not gentle");
+  assert.ok(!result.text.includes("not an overflow warning"), "should NOT contain gentle reassurance");
 });

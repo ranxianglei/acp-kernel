@@ -23,12 +23,15 @@ export function estimateTokensFast(text: string): number {
 
 export type TokenCountFn = (text: string) => number;
 
+const BPE_SIZE_GUARD = 100_000;
+
 export function createBpeTokenizer(): TokenCountFn {
   try {
     const mod = require("@anthropic-ai/tokenizer");
     const bpeCount = mod.countTokens ?? mod.default?.countTokens;
     if (typeof bpeCount !== "function") return defaultCountTokens;
     return (text: string) => {
+      if (text.length > BPE_SIZE_GUARD) return defaultCountTokens(text);
       try {
         return bpeCount(text);
       } catch {

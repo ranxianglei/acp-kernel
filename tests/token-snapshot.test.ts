@@ -203,3 +203,17 @@ test("renderRefsNode: steady-state hit does not churn the state object", () => {
   const out = renderRefsNode.run(io, ctx);
   assert.equal(out.state, filled, "all-hit render must reuse the same state object");
 });
+
+test("syncBlocks prunes tokenSnapshot entries for absent messages", () => {
+  const messages = [msg("a", "first message here"), msg("b", "second message here")];
+  const state = stateWithRefs(messages);
+  const { tokenSnapshot } = renderWithSnapshot(
+    messages,
+    state,
+    (t) => Math.ceil(t.length / 2),
+    "all",
+  );
+  const synced = syncBlocks([msg("b", "second message here")], { ...state, tokenSnapshot });
+  assert.equal("m00001" in synced.state.tokenSnapshot, false, "absent 'a' entry must be pruned");
+  assert.equal("m00002" in synced.state.tokenSnapshot, true, "present 'b' entry must be retained");
+});

@@ -85,6 +85,14 @@ processTurn({ messages, state, config, tokenCount, renderTags: "none" });
 `renderTags` is optional and defaults to `"all"`, so existing call sites keep
 working unchanged.
 
+**Token counts in rendered tags are snapshots.** Each message's
+`<acp tokens="N">` attribute is frozen at the tag's first render (the
+per-message `tokenSnapshot` in state) and is not recomputed when the message
+text is later filtered, truncated, or edited by the host — the number always
+describes what the model originally saw. Nudge/pressure *decisions* are
+unaffected: they recount live text every turn. If you need the legacy
+live-recomputed tags, use `renderVisibleRefs` directly.
+
 ### Standalone modules
 
 | Module | Purpose |
@@ -95,6 +103,7 @@ working unchanged.
 | `mergeMarkedBlocks` / `collectOldGenBlocks` | Batch merge old-gen blocks into one summary |
 | `rebuildCompressionState` | Fork-recovery: replay historical compress calls |
 | `applyMessageFilters` | Pluggable message-filter framework |
+| `resolveTransformChannel` | Channel-selection policy: an explicit preference wins; the default is the wire channel only when the caller reports it viable |
 
 ### Nudge system
 
@@ -106,9 +115,22 @@ The nudge system tells the model *when* to compress. It implements:
 - **Compressible-range computation**: reports the actual compressible ranges (excluding covered + preserved-recent messages) so the model knows what to target.
 - **Baseline reset on compress**: `applyCompression` clears the growth baseline on success, preventing the feedback-loop bug where the nudge re-fires post-compress.
 
+## Wire codec (`acp-kernel/wire`)
+
+The `acp-kernel/wire` subpath ships the provider wire-body codecs (lossless
+round-trip via the `BiliMessage` sidecar): `anthropicToCore`/`coreToAnthropic`,
+`openaiToCore`/`coreToOpenai`, `responsesToCore`/`coreToResponses`, plus
+`deriveMessageId` (content-hash message identity), conversation signals and the
+subagent-namespace helpers. `WIRE_FORMATS` / `detectWireFormat` classify a
+request body by the codec that can parse it — `undefined` means the body is
+unparseable and must be passed through untransformed. Adapters map their
+host's model/API ids to formats and use `resolveTransformChannel` (with
+`wireViable` = body parseable AND the host applies the payload replacement)
+to decide between message-level and wire-level surgery.
+
 ## Status
 
-✅ **Engine complete** — 23 source modules, 167 tests, typecheck + build clean. 3-tier compression, growth-gated nudges, emergency truncation,, fork-recovery, batch merge, composable node pipeline. Ready for adapter authoring.
+✅ **Engine complete** — 23 source modules, full suite green (`npm test`), typecheck + build clean. 3-tier compression, growth-gated nudges, emergency truncation, fork-recovery, batch merge, composable node pipeline. Ready for adapter authoring.
 
 > **Protected tool messages:** protected tool calls (per `config.protectedTools`) and their paired tool-results are hard-excluded from compression — they are dropped from the compressible set and from the new block's `effectiveMessageIds`, so they stay fully visible and are never folded into a summary. This matches opencode-acp's Bug 39 fix. The soft-protected recent zone (`preserveRecentMessages` / last user message) is handled separately: messages there are excluded from the range but do not fail it (an entirely-protected range fails with a clear error).
 

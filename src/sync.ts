@@ -34,6 +34,22 @@ export function syncBlocks(
     nextRunId: state.nextRunId,
   };
 
+  // Refs are additive (assignRefs never removes them from messageRefs), so
+  // prune the snapshot by currently-present message refs — otherwise it grows
+  // unboundedly as messages are compressed/deleted across a long session.
+  const liveRefs = new Set(
+    messages
+      .map((m) => result.messageRefs.byRaw[m.id])
+      .filter((r): r is string => typeof r === "string"),
+  );
+  if (Object.keys(result.tokenSnapshot).length !== liveRefs.size) {
+    const pruned: Record<string, number> = {};
+    for (const [ref, n] of Object.entries(result.tokenSnapshot)) {
+      if (liveRefs.has(ref)) pruned[ref] = n;
+    }
+    result.tokenSnapshot = pruned;
+  }
+
   const consumedBlockIds = new Set<string>();
   for (const block of result.blocks) {
     for (const consumedId of block.directBlockIds) {

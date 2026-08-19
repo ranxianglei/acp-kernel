@@ -9,7 +9,7 @@
  *   node --import tsx bench/search/bench.ts
  */
 
-import { searchBlocks } from "../../src/search.js";
+import { searchBlocks, blockDocs } from "../../src/search.js";
 import { createInitialState } from "../../src/state.js";
 import type { CompressionState, CompressionBlock } from "../../src/types.js";
 import { CORPUS, QUERIES } from "./corpus.js";
@@ -28,7 +28,7 @@ function evaluate(algorithm: string | undefined) {
   let rr = 0, c1 = 0, it3 = 0;
   const fails: string[] = [];
   for (const q of QUERIES) {
-    const r = searchBlocks(state, q.query, { algorithm });
+    const r = searchBlocks(blockDocs(state), q.query, { algorithm });
     const got = r[0]?.blockId ?? null;
     const top3 = r.slice(0, 3).map((x) => x.blockId);
     const idx = r.findIndex((x) => x.blockId === q.expectFirst);

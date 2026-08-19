@@ -4,6 +4,13 @@ Block search finds compressed (invisible) content by keyword — the core value
 of ACP as conversations grow. This module is a **pluggable algorithm registry**:
 one stable interface, multiple strategies, zero runtime dependencies.
 
+> **Legacy path warning:** `CompressionCore.search()` (`src/compress.ts`) is a
+> separate substring-only implementation that does NOT go through this
+> registry — it over-matches short terms ("the" ≈ "theater") and sees only
+> active blocks. Production adapters use `searchBlocks`. The delegation plan
+> (core.search → searchBlocks) is tracked in
+> [issue #44](https://github.com/ranxianglei/acp-kernel/issues/44).
+
 ## Quick start
 
 ```ts
@@ -52,24 +59,33 @@ Override via `SearchOptions.roleWeights`.
 
 ## Why the default is "hybrid"
 
-The default algorithm is `hybrid` (BM25+stem ⊕ fuzzy n-gram). On a 30-block
-mixed EN/CJK benchmark with 45 queries, against the original substring counter:
-
+The default algorithm is `hybrid` (BM25+stem ⊕ fuzzy n-gram). On a 32-block
+mixed EN/CJK benchmark with 48 queries, against the original substring counter:
 | algorithm   | MRR   | R@1   | R@3   |
 |-------------|-------|-------|-------|
-| substring   | 0.821 | 0.804 | 0.826 |
-| bm25        | 0.812 | 0.804 | 0.826 |
-| fuzzy       | 0.691 | 0.630 | 0.761 |
-| **hybrid**  | **0.879** | **0.848** | **0.913** |
+| substring   | 0.797 | 0.792 | 0.792 |
+| bm25        | 0.833 | 0.833 | 0.833 |
+| fuzzy       | 0.795 | 0.708 | 0.875 |
+| **hybrid**  | **0.898** | **0.875** | **0.917** |
+
+All rows measured on the rework benchmark (32 blocks / 48 queries) with the
+final code (segmenter tokenizer + CJK fuzzy gate).
 
 The wins come from three fixes to plain substring matching:
 
-1. **CJK bigram tokenization** — Chinese/Japanese has no spaces, so `"登录"`
-   tokenizes into overlapping bigrams that match inside `"登录认证流程"`.
+1. **CJK word segmentation** — Chinese/Japanese has no spaces, so `"登录"` is
+   segmented via `Intl.Segmenter("zh", {granularity:"word"})` (CLDR
+   dictionary): multi-char words stay atomic, and all-OOV runs fall back to
+   overlapping bigrams + single chars — `"身份验证"` still matches
+   `"身份验证流程"`, while `"试验证明"` no longer false-hits `"验证"`.
 2. **English stemming** — `compressed`/`compression`/`compressing` collapse to a
    common root (lightweight Porter-inspired suffix stripper, no deps).
 3. **Character n-gram fuzzy recall** — typo-tolerant (`tokan`≈`token`),
-   script-agnostic; BM25 supplies precision, fuzzy supplies recall.
+   script-agnostic; BM25 supplies precision, fuzzy supplies recall. The
+   query-token gate is script-aware: Latin tokens need >= 4 chars (2-3 char
+   stop-words are noise), but 2-char CJK words (`登录`/`缓存`) are admitted —
+   most CJK words are exactly 2 characters, so a Latin-style threshold would
+   starve the recall channel for a whole script.
 
 Previews are **match-context snippets**, not arbitrary prefixes — the result
 shows the sentence around the hit so the user sees *why* a block matched.
@@ -146,7 +162,7 @@ single batch keeps it to one round-trip per search.
 ```
 src/search/
 ├── types.ts              SearchAlgorithm, AsyncSearchAlgorithm, SearchOptions, SearchResult
-├── tokenizer.ts          Latin words + CJK bigram tokenization
+├── tokenizer.ts          Latin words + CJK word segmentation w/ bigram fallback
 ├── stemmer.ts            lightweight English stemmer
 ├── registry.ts           register / get / list algorithms
 ├── algorithms/

@@ -10,12 +10,12 @@ import { fuzzyAlgorithm } from "./fuzzy.js";
  * Each component is max-normalized to [0,1] before weighting so their
  * scales are comparable regardless of corpus size.
  *
- * Benchmark (30 blocks, 45 mixed EN/CJK queries):
- *   substring  MRR 0.821  R@1 0.804  R@3 0.826
- *   bm25       MRR 0.812  R@1 0.804  R@3 0.826
- *   fuzzy      MRR 0.834  R@1 0.761  R@3 0.913
- *   hybrid     MRR 0.881  R@1 0.848  R@3 0.913   ← best on every metric
- *
+ * Benchmark (32 blocks, 48 mixed EN/CJK queries, final code — segmenter
+ * tokenizer + CJK fuzzy gate):
+ *   substring  MRR 0.797  R@1 0.792  R@3 0.792
+ *   bm25       MRR 0.833  R@1 0.833  R@3 0.833
+ *   fuzzy      MRR 0.795  R@1 0.708  R@3 0.875
+ *   hybrid     MRR 0.898  R@1 0.875  R@3 0.917   ← best on every metric
  * The weight ratio is robust: 0.6–0.8 for BM25 all score within 0.001 MRR.
  */
 

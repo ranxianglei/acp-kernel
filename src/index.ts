@@ -59,6 +59,7 @@ export type { RenderStrategy } from "./render-refs.js";
 export { resolveTransformChannel } from "./transform-channel.js";
 export type { TransformChannel } from "./transform-channel.js";
 export { searchBlocks, searchBlocksAsync, blockDocs, messageDocs } from "./search.js";
+export { clearDocFeatures, docCacheInfo, docFeatures, setDocCacheCap } from "./search.js";
 export type { SearchResult, SearchOptions, SearchAlgorithm, AsyncSearchAlgorithm, AnySearchAlgorithm, SearchDoc, SearchDocKind, ScoredBlock, MessageRole, RoleWeights, MessageInput } from "./search.js";
 export { DEFAULT_ALGORITHM, DEFAULT_ROLE_WEIGHTS, registerSearchAlgorithm, getSearchAlgorithm, listSearchAlgorithms } from "./search.js";
 export { isMessageProtected, matchToolPattern } from "./protected.js";

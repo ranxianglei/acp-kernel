@@ -127,6 +127,9 @@ export function searchBlocks(docs: SearchDoc[], query: string, options: SearchOp
     return result;
 }
 
+export { clearDocFeatures, docCacheInfo, docFeatures, setDocCacheCap } from "./doc-cache.js";
+export type { DocFeatures } from "./doc-cache.js";
+
 export async function searchBlocksAsync(docs: SearchDoc[], query: string, options: SearchOptions = {}): Promise<SearchResult[]> {
     return await runSearch(docs, query, options);
 }

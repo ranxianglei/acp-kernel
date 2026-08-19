@@ -1,5 +1,6 @@
 import type { SearchAlgorithm, SearchDoc, ScoredBlock } from "../types.js";
-import { tokenize, tfMap } from "../tokenizer.js";
+import { tokenize } from "../tokenizer.js";
+import { docFeatures } from "../doc-cache.js";
 
 /**
  * BM25 with stemming + CJK bigram tokenization.
@@ -9,9 +10,9 @@ import { tokenize, tfMap } from "../tokenizer.js";
  * raw term count. Stemming collapses English morphology
  * (compress/compressed/compression → ~compress).
  *
- * On a 30-block mixed EN/CJK benchmark: MRR 0.812 vs 0.821 for substring
- * alone — not better in isolation, but a strong precision component when
- * combined with fuzzy recall (see hybrid.ts).
+ * On the 32-block mixed EN/CJK benchmark: MRR 0.833 / R@1 0.833 / R@3 0.833
+ * vs 0.797 / 0.792 / 0.792 for substring — better in isolation on every
+ * metric, and the precision component of the hybrid default (see hybrid.ts).
  */
 export const bm25Algorithm: SearchAlgorithm = {
     name: "bm25",
@@ -21,11 +22,8 @@ export const bm25Algorithm: SearchAlgorithm = {
         const k1 = 1.2;
         const b = 0.75;
         const parsed = docs.map((d) => {
-            const text = d.text;
-            const tf = tfMap(text, true);
-            let len = 0;
-            for (const v of tf.values()) len += v;
-            return { id: d.ref, tf, len };
+            const f = docFeatures(d.text); // memoized: tf + length, cached across calls
+            return { id: d.ref, tf: f.tf, len: f.len };
         });
         const avgdl = parsed.reduce((s, d) => s + d.len, 0) / (N || 1);
 

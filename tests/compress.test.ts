@@ -337,7 +337,7 @@ test("retrying a consumed range reports already-compressed guidance, not too-sma
   assert.equal(retry.result.blocksCreated, 0);
   assert.equal(retry.result.errors.length, 1);
   assert.match(retry.result.errors[0]!, /already compressed/);
-  assert.match(retry.result.errors[0]!, /run acp_status/);
+  assert.match(retry.result.errors[0]!, /Current active blocks span/);
   assert.doesNotMatch(retry.result.errors[0]!, /Total compressible content too small/);
 });
 
@@ -549,5 +549,223 @@ test("resolveBoundaries throws typed BoundaryNotFoundError with kind and endpoin
     () => resolveBoundaries({ startRef: "m00002", endRef: "m00003", messages: pruned, state: after }),
     (e: unknown) =>
       e instanceof BoundaryNotFoundError && e.kind === "consumed" && e.endpoint === "start",
+  );
+});
+
+test("consumed block anchor snaps to the active owning block instead of failing the call (#32 livelock)", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [
+    msg("a", "old one"),
+    msg("b", "old two"),
+    msg("c", "raw c"),
+    msg("d", "raw d"),
+    msg("e", "raw e"),
+    msg("f", "raw f"),
+    msg("g", "raw g"),
+    msg("h", "raw h"),
+    msg("i", "raw i"),
+    msg("j", "raw j"),
+    msg("k", "recent one"),
+    msg("l", "recent two"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+  state.blocks.push(
+    {
+      blockId: "b2",
+      runId: "r1",
+      tier: 1,
+      topic: "t",
+      summary: "s2",
+      directMessageIds: ["a"],
+      effectiveMessageIds: ["a", "b"],
+      directBlockIds: [],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: false,
+    },
+    {
+      blockId: "b50",
+      runId: "r1",
+      tier: 2,
+      topic: "t",
+      summary: "t2 distill",
+      directMessageIds: [],
+      effectiveMessageIds: ["a", "b"],
+      directBlockIds: ["b2"],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: true,
+    },
+    {
+      blockId: "b110",
+      runId: "r1",
+      tier: 1,
+      topic: "t",
+      summary: "s110",
+      directMessageIds: ["k"],
+      effectiveMessageIds: ["k", "l"],
+      directBlockIds: [],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: true,
+    },
+  );
+  state.nextBlockId = 111;
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "b2", endRef: "b110", summary: "distilled span", topic: "t" }],
+    messages,
+    state,
+    config: config(),
+  });
+
+  assert.equal(result.result.blocksCreated, 1, JSON.stringify(result.result));
+  assert.equal(result.result.errors.length, 0);
+  assert.ok(
+    result.result.warnings.some((w) =>
+      w.includes('startId="b2" was consumed by a higher-tier block'),
+    ),
+    `expected snap warning in: ${JSON.stringify(result.result.warnings)}`,
+  );
+  const created = result.state.blocks.find((b) => b.blockId === "b111");
+  assert.ok(created, "new block allocated after b110");
+  assert.equal(created!.tier, 2);
+  assert.deepEqual(created!.directBlockIds, ["b110"]);
+  assert.equal(result.state.blocks.find((b) => b.blockId === "b110")!.active, false);
+  assert.equal(result.state.blocks.find((b) => b.blockId === "b50")!.active, true);
+});
+
+test("consumed message anchor snaps to the active block covering it", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const full = [
+    msg("a", "old one"),
+    msg("b", "old two"),
+    msg("c", "raw c"),
+    msg("d", "raw d"),
+    msg("e", "raw e"),
+    msg("f", "raw f"),
+    msg("g", "raw g"),
+    msg("h", "raw h"),
+    msg("i", "raw i"),
+    msg("j", "raw j"),
+    msg("k", "recent one"),
+    msg("l", "recent two"),
+  ];
+  state.messageRefs = assignRefs(full, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+  state.blocks.push(
+    {
+      blockId: "b50",
+      runId: "r1",
+      tier: 2,
+      topic: "t",
+      summary: "t2 distill",
+      directMessageIds: ["c"],
+      effectiveMessageIds: ["a", "b", "c"],
+      directBlockIds: ["b2"],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: true,
+    },
+    {
+      blockId: "b110",
+      runId: "r1",
+      tier: 1,
+      topic: "t",
+      summary: "s110",
+      directMessageIds: ["k"],
+      effectiveMessageIds: ["k", "l"],
+      directBlockIds: [],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: true,
+    },
+  );
+  const visible = full.slice(2);
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "b110", summary: "distilled span", topic: "t" }],
+    messages: visible,
+    state,
+    config: config(),
+  });
+
+  assert.equal(result.result.blocksCreated, 1, JSON.stringify(result.result));
+  assert.equal(result.result.errors.length, 0);
+  assert.ok(
+    result.result.warnings.some((w) =>
+      w.includes('startId="m00001" refers to a message already compressed'),
+    ),
+    `expected snap warning in: ${JSON.stringify(result.result.warnings)}`,
+  );
+});
+
+test("gate error names the current active block span when anchors stay consumed", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [msg("a", "x"), msg("b", "y"), msg("k", "z")];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+  state.blocks.push(
+    {
+      blockId: "b2",
+      runId: "r1",
+      tier: 1,
+      topic: "t",
+      summary: "s2",
+      directMessageIds: ["a"],
+      effectiveMessageIds: ["a", "b"],
+      directBlockIds: [],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: false,
+    },
+    {
+      blockId: "b110",
+      runId: "r1",
+      tier: 1,
+      topic: "t",
+      summary: "s110",
+      directMessageIds: ["k"],
+      effectiveMessageIds: ["k"],
+      directBlockIds: [],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: true,
+    },
+  );
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "b2", endRef: "b110", summary: "distilled span", topic: "t" }],
+    messages,
+    state,
+    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+  });
+
+  assert.equal(result.result.blocksCreated, 0);
+  assert.equal(result.result.errors.length, 1);
+  assert.match(
+    result.result.errors[0]!,
+    /Requested range\(s\) already compressed \(e\.g\. b2\.\.b110\)/,
+  );
+  assert.match(
+    result.result.errors[0]!,
+    /Current active blocks span b110\.\.b110 — retry with startId\/endId set to active block IDs in that span\./,
   );
 });

@@ -1,5 +1,6 @@
 import type { SearchAlgorithm, SearchDoc, ScoredBlock } from "../types.js";
-import { tokenize, tfMap } from "../tokenizer.js";
+import { tokenize } from "../tokenizer.js";
+import { docFeatures } from "../doc-cache.js";
 
 /**
  * BM25 with stemming + CJK bigram tokenization.
@@ -21,11 +22,8 @@ export const bm25Algorithm: SearchAlgorithm = {
         const k1 = 1.2;
         const b = 0.75;
         const parsed = docs.map((d) => {
-            const text = d.text;
-            const tf = tfMap(text, true);
-            let len = 0;
-            for (const v of tf.values()) len += v;
-            return { id: d.ref, tf, len };
+            const f = docFeatures(d.text); // memoized: tf + length, cached across calls
+            return { id: d.ref, tf: f.tf, len: f.len };
         });
         const avgdl = parsed.reduce((s, d) => s + d.len, 0) / (N || 1);
 

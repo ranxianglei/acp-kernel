@@ -1,5 +1,6 @@
 import type { SearchAlgorithm, SearchDoc, ScoredBlock } from "../types.js";
 import { charBigrams, CJK } from "../tokenizer.js";
+import { docFeatures } from "../doc-cache.js";
 
 /**
  * Fuzzy character-bigram matching (Jaccard-style).
@@ -36,8 +37,7 @@ export const fuzzyAlgorithm: SearchAlgorithm = {
         if (qGrams.size === 0) return docs.map((d) => ({ ref: d.ref, score: 0 }));
 
         return docs.map((d) => {
-            const haystack = d.text.toLowerCase();
-            const docGrams = new Set(charBigrams(haystack));
+            const docGrams = docFeatures(d.text).grams; // memoized bigram set
             let hits = 0;
             for (const g of qGrams) if (docGrams.has(g)) hits++;
             return { ref: d.ref, score: hits / qGrams.size };

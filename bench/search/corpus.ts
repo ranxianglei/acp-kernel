@@ -75,7 +75,7 @@ export const QUERIES: BenchQuery[] = [
   { query: "token bucket", expectFirst: "b11", note: "disambiguation" },
   { query: "tokan", expectFirst: "b1", note: "typo" },
   { query: "authentication tokan", expectFirst: "b1", note: "multi-word typo+morph" },
-  { query: "redis", expectFirst: "b19", note: "ambiguous (token-densest wins)" },
+  { query: "redis", expectFirst: "b19", note: "ambiguous — b19 is the actual Redis cache block (bigram bloat had buried it under b11)" },
   { query: "缓存", expectFirst: "b19", note: "CJK exact (redis cache)" },
   { query: "cache", expectFirst: "b19", note: "synonym (缓存=cache)" },
   { query: "webpack", expectFirst: "b10", note: "exact" },

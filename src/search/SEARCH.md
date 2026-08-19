@@ -63,13 +63,13 @@ The default algorithm is `hybrid` (BM25+stem ⊕ fuzzy n-gram). On a 32-block
 mixed EN/CJK benchmark with 48 queries, against the original substring counter:
 | algorithm   | MRR   | R@1   | R@3   |
 |-------------|-------|-------|-------|
-| substring   | 0.786 | 0.771 | 0.792 |
-| bm25        | 0.818 | 0.813 | 0.813 |
-| fuzzy       | 0.683 | 0.604 | 0.771 |
+| substring   | 0.797 | 0.792 | 0.792 |
+| bm25        | 0.833 | 0.833 | 0.833 |
+| fuzzy       | 0.795 | 0.708 | 0.875 |
 | **hybrid**  | **0.898** | **0.875** | **0.917** |
 
-hybrid row measured on the rework benchmark (32 blocks / 48 queries); the
-single-algorithm rows predate the CJK segmenter rework.
+All rows measured on the rework benchmark (32 blocks / 48 queries) with the
+final code (segmenter tokenizer + CJK fuzzy gate).
 
 The wins come from three fixes to plain substring matching:
 

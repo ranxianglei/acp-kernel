@@ -16,11 +16,11 @@
  * English tokens ("to", "of") carry no meaning, while nearly all CJK words
  * are 2-char atomic units (登录/缓存), so the two scripts need opposite rules.
  */
+import { stem } from "./stemmer.js";
+
 export const CJK = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/;
 const CJK_RUN = new RegExp(`${CJK.source}+`, "g");
 const LATIN_WORD = /[a-z][a-z0-9_]*[a-z0-9]|[a-z0-9]/g;
-
-import { stem } from "./stemmer.js";
 
 const cjkSegmenter = new Intl.Segmenter("zh", { granularity: "word" });
 

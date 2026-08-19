@@ -18,8 +18,9 @@ import { charBigrams, CJK } from "../tokenizer.js";
  *       (that gap is what bench "缓存 → nothing" exposed). Single CJK chars
  *       stay excluded — one char cannot form a bigram, nothing to compare.
  *
- * On benchmark: lowest MRR of any single algorithm (0.683) — precision is
- * weak, but it is the recall boost in the hybrid default.
+ * On benchmark: lowest MRR of any single algorithm (0.795 — a hair under
+ * substring's 0.797) — precision is weak, but it is the recall boost in the
+ * hybrid default.
  */
 export const fuzzyAlgorithm: SearchAlgorithm = {
     name: "fuzzy",

@@ -210,10 +210,23 @@ export interface NudgeDecision {
   /** When `tier` is set, the active lower-tier blocks that should be distilled
    *  into a single higher-tier block. Empty when no tier nudge. */
   tierTargetBlocks?: CompressionBlock[];
+  /** Per-block summary token counts for `tierTargetBlocks`, precomputed by the
+   *  decision layer with the active countTokens so the renderer never re-estimates.
+   *  Absent for hand-built decisions; renderers then keep the legacy estimate. */
+  tierTargetBlockStats?: TierTargetBlockStat[];
   contextUsage: number;
   tier: CompressionTier | null;
   breakdown: NudgeBreakdown;
   contextBreakdown?: ContextBreakdown;
+}
+
+/** Derived token accounting for one tier-target block, computed once in the
+ *  decision layer and consumed as-is by renderers. Not persisted on
+ *  CompressionBlock: countTokens is host-injected and may change between
+ *  sessions, so storing it on the block would go stale. */
+export interface TierTargetBlockStat {
+  blockId: string;
+  summaryTokens: number;
 }
 
 /** Numeric debug/reason fields exposed alongside a nudge decision. Keeping

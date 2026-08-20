@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCore } from "../src/compress.js";
 import { createInitialState } from "../src/state.js";
+import { renderNudgeText } from "../src/nudge-text.js";
+import { defaultCountTokens } from "../src/tokenize.js";
 import type { Config, CoreMessage } from "../src/types.js";
 
 function buildConfig(overrides: Partial<Config> = {}): Config {
@@ -634,4 +636,91 @@ test("re-baseline after a tokenCount scale drop also resets per-tier cadence sta
   assert.equal(stamped.lastPerMessageNudgeTokens, 40_000, "baseline re-anchored at the new scale");
   assert.equal(stamped.lastNudgeShownTokens, 0, "shared cadence baseline cleared");
   assert.deepEqual(stamped.lastShownByTier, {}, "per-tier cadence stamps must not survive a scale drop");
+});
+
+function cjkBlocks(count: number, summary: string) {
+  return Array.from({ length: count }, (_, i) => ({
+    blockId: `b${i + 1}`,
+    runId: "r1",
+    tier: 1 as const,
+    summary,
+    directMessageIds: [`m${i}`],
+    effectiveMessageIds: [`m${i}`],
+    directBlockIds: [],
+    compressedTokens: 5000,
+    createdAt: Date.now(),
+    survivedCount: 0,
+    generation: "young" as const,
+    active: true,
+  }));
+}
+
+test("issue #45: custom tokenizer stats flow from decision to renderer (fake-fix guard)", () => {
+  // countTokens deliberately differs from BOTH length/4 and defaultCountTokens.
+  // If the fix were merely "renderer switches to defaultCountTokens", the
+  // renderer output would not match the decision-layer stats here.
+  const custom = (t: string) => Math.ceil(t.length / 2);
+  const core = createCore({ countTokens: custom });
+  const config = buildConfig({
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 10,
+  });
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 50000 }).state;
+  // 13200 chars incl. CJK period: custom = 6600, length/4 = 3300, defaultCountTokens = 12300.
+  const summary = "汉字摘要记录压缩范围。".repeat(1200);
+  state = { ...state, blocks: cjkBlocks(3, summary) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(turn.nudge.tier, 2, "3 blocks x 6600 = 19800 >= 9000 (1.5x) and > T1 effective 0");
+  const stats = turn.nudge.tierTargetBlockStats!;
+  assert.equal(stats.length, 3, "one stat per target block");
+  for (const s of stats) {
+    assert.equal(s.summaryTokens, custom(summary), "stat matches the injected custom tokenizer");
+  }
+  assert.equal(
+    turn.nudge.breakdown.pendingT2,
+    stats.reduce((a, s) => a + s.summaryTokens, 0),
+    "pendingT2 aggregates the same per-block stats",
+  );
+  const rendered = renderNudgeText(turn.nudge).text;
+  assert.match(rendered, /b1\s+1 msgs\s+5\.0K→6\.6K/, "renderer shows the custom-tokenizer value (6600)");
+  assert.ok(!rendered.includes("3.3K"), "renderer must NOT show length/4 (3300)");
+  assert.ok(!rendered.includes("12.3K"), "renderer must NOT show defaultCountTokens (12300)");
+});
+
+test("issue #45: CJK summaries render with CJK-aware token values, not length/4", () => {
+  const core = createCore();
+  const config = buildConfig({
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 10,
+  });
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 50000 }).state;
+  // Pure-CJK summary: defaultCountTokens == length (1 CJK char = 1 token);
+  // length/4 stays ~4x lower, which is the issue #45 divergence.
+  const summary = "汉字摘要记录了压缩范围的完整内容包含关键决策文件路径与错误信息".repeat(200);
+  state = { ...state, blocks: cjkBlocks(3, summary) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(turn.nudge.tier, 2);
+  const stats = turn.nudge.tierTargetBlockStats!;
+  assert.equal(stats.length, 3);
+  const expected = defaultCountTokens(summary);
+  for (const s of stats) {
+    assert.equal(s.summaryTokens, expected, "stat matches the CJK-aware defaultCountTokens");
+  }
+  assert.equal(turn.nudge.breakdown.pendingT2, stats.reduce((a, s) => a + s.summaryTokens, 0));
+  const rendered = renderNudgeText(turn.nudge).text;
+  assert.match(
+    rendered,
+    new RegExp(`b1\\s+1 msgs\\s+5\\.0K→${(expected / 1000).toFixed(1)}K`),
+    "renderer shows the CJK-aware value",
+  );
+  assert.ok(
+    !rendered.includes(`${(Math.ceil(summary.length / 4) / 1000).toFixed(1)}K`),
+    "renderer must NOT show length/4",
+  );
 });

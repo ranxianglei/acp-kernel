@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderNudgeText } from "../src/nudge-text.js";
-import type { NudgeDecision, CompressibleRange } from "../src/types.js";
+import type { NudgeDecision, CompressibleRange, CompressionBlock } from "../src/types.js";
 
 function makeRanges(count: number): CompressibleRange[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -173,4 +173,57 @@ test("over-limit renders with emergency voice (MAJOR-2 fix)", () => {
   );
   assert.equal(result.voice, "emergency", "over-limit should use emergency voice, not gentle");
   assert.ok(!result.text.includes("not an overflow warning"), "should NOT contain gentle reassurance");
+});
+
+function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock {
+  return {
+    blockId: "b1",
+    runId: "r1",
+    tier: 1 as const,
+    summary: "s".repeat(10000), // length/4 = 2500
+    directMessageIds: ["m00001"],
+    effectiveMessageIds: ["m00001"],
+    directBlockIds: [],
+    compressedTokens: 5000,
+    createdAt: Date.now(),
+    survivedCount: 0,
+    generation: "young" as const,
+    active: true,
+    ...overrides,
+  };
+}
+
+test("tier-2 renderer uses precomputed tierTargetBlockStats, not length/4 (issue #45)", () => {
+  const result = renderNudgeText(
+    makeDecision({
+      tier: 2,
+      tierTargetBlocks: [makeBlock()],
+      tierTargetBlockStats: [{ blockId: "b1", summaryTokens: 12345 }],
+    }),
+  );
+  assert.ok(result.text.includes("12.3K"), "should display the precomputed summary token count");
+  assert.ok(!result.text.includes("2.5K"), "must NOT fall back to length/4 when stats are present");
+});
+
+test("tier-2 renderer without stats keeps legacy length/4 behavior (compat)", () => {
+  const result = renderNudgeText(
+    makeDecision({ tier: 2, tierTargetBlocks: [makeBlock()] }),
+  );
+  assert.ok(result.text.includes("2.5K"), "legacy hand-built decisions still estimate via length/4");
+});
+
+test("tier-2 ASCII output unchanged when precomputed stats match the legacy estimate", () => {
+  const block = makeBlock();
+  const legacy = renderNudgeText(
+    makeDecision({ tier: 2, tierTargetBlocks: [block] }),
+  );
+  const withStats = renderNudgeText(
+    makeDecision({
+      tier: 2,
+      tierTargetBlocks: [block],
+      tierTargetBlockStats: [{ blockId: "b1", summaryTokens: 2500 }],
+    }),
+  );
+  assert.equal(withStats.text, legacy.text, "precomputed stats equal to the legacy estimate must not alter output");
+  assert.equal(withStats.voice, legacy.voice, "voice must be identical as well");
 });

@@ -192,6 +192,13 @@ export function createCore(ports: Ports = {}): CompressionCore {
       }
     }
 
+    let resolvableCount = 0;
+    let unknownCount = 0;
+    for (const resolution of classifications.values()) {
+      if (resolution.status === "ok") resolvableCount++;
+      else if (resolution.status === "unknown") unknownCount++;
+    }
+
     const rangeIndexSets: { spec: typeof input.ranges[number]; indices: number[] }[] = [];
     for (const [spec, resolution] of classifications) {
       if (resolution.status !== "ok") continue;
@@ -247,7 +254,9 @@ export function createCore(ports: Ports = {}): CompressionCore {
             ? ` Current active blocks span ${live[0]}..${live[live.length - 1]} — retry with startId/endId set to active block IDs in that span.`
             : "";
         const gateMessage =
-          consumedRanges.length > 0
+          resolvableCount === 0 && consumedRanges.length === 0 && unknownCount > 0
+            ? `None of the ${input.ranges.length} requested range(s) resolved — every ref failed with "does not exist in this session". Refs recorded before an earlier compress are stale: each successful compress renumbers the remaining refs. Run acp_status, then re-issue the compress in the same turn using only the refs it reports.`
+            : consumedRanges.length > 0
             ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}); remaining compressible content ${totalRangeChars} chars < min ${input.config.compress.minCompressRange}. Nothing to do.${liveHint}`
             : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
         return {

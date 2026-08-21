@@ -1,4 +1,4 @@
-import type { Config } from "./types.js";
+import type { Config, NudgeConfig } from "./types.js";
 
 export function defaultConfig(
   modelContextLimit: number,
@@ -71,6 +71,34 @@ export function validateConfig(config: Config): string[] {
   }
   if (config.tiers.tier3Trigger <= config.tiers.tier2Trigger) {
     errors.push("tiers.tier3Trigger must be greater than tiers.tier2Trigger");
+  }
+  const nonNegative: Array<
+    keyof Pick<
+      NudgeConfig,
+      "growthRatio" | "growthFloor" | "minGrowthFloor" | "minGrowthRatio"
+    >
+  > = ["growthRatio", "growthFloor", "minGrowthFloor", "minGrowthRatio"];
+  for (const field of nonNegative) {
+    const v = config.nudge[field];
+    if (!Number.isFinite(v)) {
+      errors.push(`nudge.${field} must be a finite number`);
+    } else if (v < 0) {
+      errors.push(`nudge.${field} must be >= 0`);
+    }
+  }
+  if (!Number.isFinite(config.nudge.growthCap)) {
+    errors.push("nudge.growthCap must be a finite number");
+  } else if (
+    Number.isFinite(config.nudge.growthFloor) &&
+    config.nudge.growthCap < config.nudge.growthFloor
+  ) {
+    errors.push("nudge.growthCap must be >= nudge.growthFloor");
+  }
+  const emergency = config.nudge.emergencyThresholdPct;
+  if (!Number.isFinite(emergency)) {
+    errors.push("nudge.emergencyThresholdPct must be a finite number");
+  } else if (emergency <= 0 || emergency > 1) {
+    errors.push("nudge.emergencyThresholdPct must be in (0, 1]");
   }
   return errors;
 }

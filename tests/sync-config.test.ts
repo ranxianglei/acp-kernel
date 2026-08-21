@@ -93,3 +93,111 @@ test("validateConfig flags min > max nudge thresholds", () => {
 test("validateConfig passes for default config", () => {
   assert.deepEqual(validateConfig(defaultConfig(200000)), []);
 });
+
+// Issue #46 scope: tier2GrowthMultiplier is intentionally left unvalidated.
+type NudgeNumberField =
+  | "growthRatio"
+  | "growthFloor"
+  | "growthCap"
+  | "minGrowthFloor"
+  | "minGrowthRatio"
+  | "emergencyThresholdPct";
+
+test("validateConfig rejects negative nudge growth values", () => {
+  const cases: Array<{ field: NudgeNumberField; value: number }> = [
+    { field: "growthRatio", value: -0.1 },
+    { field: "growthFloor", value: -1 },
+    { field: "minGrowthFloor", value: -1 },
+    { field: "minGrowthRatio", value: -0.1 },
+  ];
+  for (const { field, value } of cases) {
+    const cfg = defaultConfig(200000);
+    cfg.nudge[field] = value;
+    assert.ok(
+      validateConfig(cfg).some((e) => e.includes(`nudge.${field}`)),
+      `expected nudge.${field} to be rejected`,
+    );
+  }
+});
+
+test("validateConfig rejects non-finite nudge numbers", () => {
+  const cases: Array<{ field: NudgeNumberField; value: number }> = [
+    { field: "growthRatio", value: NaN },
+    { field: "growthFloor", value: Infinity },
+    { field: "growthCap", value: Infinity },
+    { field: "minGrowthFloor", value: NaN },
+    { field: "minGrowthRatio", value: Infinity },
+    { field: "emergencyThresholdPct", value: NaN },
+  ];
+  for (const { field, value } of cases) {
+    const cfg = defaultConfig(200000);
+    cfg.nudge[field] = value;
+    assert.ok(
+      validateConfig(cfg).some((e) => e.includes(`nudge.${field}`)),
+      `expected non-finite nudge.${field} to be rejected`,
+    );
+  }
+});
+
+test("validateConfig accepts zero for non-negative nudge fields", () => {
+  const fields: NudgeNumberField[] = [
+    "growthRatio",
+    "growthFloor",
+    "minGrowthFloor",
+    "minGrowthRatio",
+  ];
+  for (const field of fields) {
+    const cfg = defaultConfig(200000);
+    cfg.nudge[field] = 0;
+    assert.deepEqual(
+      validateConfig(cfg),
+      [],
+      `expected nudge.${field}=0 to be valid`,
+    );
+  }
+});
+
+test("validateConfig rejects growthCap below growthFloor", () => {
+  const cfg = defaultConfig(200000);
+  cfg.nudge.growthFloor = 100;
+  cfg.nudge.growthCap = 99;
+  assert.ok(
+    validateConfig(cfg).some((e) => e.includes("nudge.growthCap")),
+  );
+});
+
+test("validateConfig accepts growthCap equal to growthFloor", () => {
+  const cfg = defaultConfig(200000);
+  cfg.nudge.growthFloor = 100;
+  cfg.nudge.growthCap = 100;
+  assert.deepEqual(validateConfig(cfg), []);
+});
+
+test("validateConfig rejects emergencyThresholdPct of 0", () => {
+  const cfg = defaultConfig(200000);
+  cfg.nudge.emergencyThresholdPct = 0;
+  assert.ok(
+    validateConfig(cfg).some((e) => e.includes("nudge.emergencyThresholdPct")),
+  );
+});
+
+test("validateConfig rejects emergencyThresholdPct above 1", () => {
+  const cfg = defaultConfig(200000);
+  cfg.nudge.emergencyThresholdPct = 1.01;
+  assert.ok(
+    validateConfig(cfg).some((e) => e.includes("nudge.emergencyThresholdPct")),
+  );
+});
+
+test("validateConfig accepts emergencyThresholdPct of 1", () => {
+  const cfg = defaultConfig(200000);
+  cfg.nudge.emergencyThresholdPct = 1;
+  assert.deepEqual(validateConfig(cfg), []);
+});
+
+test("validateConfig does not reject finite ratios above 1", () => {
+  const cfg = defaultConfig(200000);
+  cfg.nudge.growthRatio = 2;
+  cfg.nudge.minGrowthRatio = 2;
+  assert.deepEqual(validateConfig(cfg), []);
+});

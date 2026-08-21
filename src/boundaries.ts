@@ -72,6 +72,7 @@ export interface ResolvedRange {
   nestedBlockIds: string[];
   boundaryKind: BoundaryKind;
   protectedGaps: number[];
+  snappedBoundaries: string[];
 }
 
 export function resolveBoundaries(
@@ -90,8 +91,13 @@ export function resolveBoundaries(
     indexByRawId.set(message.id, index),
   );
 
-  let startIndex = resolveAnchorIndex(start, input.state, indexByRawId, "start");
-  let endIndex = resolveAnchorIndex(end, input.state, indexByRawId, "end");
+  let snappedBoundaries: string[] = [];
+  const startAnchor = resolveAnchorIndex(start, input.state, indexByRawId, "start");
+  if (startAnchor.snapped) snappedBoundaries.push(startAnchor.snapped);
+  const endAnchor = resolveAnchorIndex(end, input.state, indexByRawId, "end");
+  if (endAnchor.snapped) snappedBoundaries.push(endAnchor.snapped);
+  let startIndex = startAnchor.index;
+  let endIndex = endAnchor.index;
 
   if (startIndex > endIndex) {
     [startIndex, endIndex] = [endIndex, startIndex];
@@ -127,7 +133,13 @@ export function resolveBoundaries(
     nestedBlockIds,
     boundaryKind,
     protectedGaps,
+    snappedBoundaries,
   };
+}
+
+interface AnchorResolution {
+  index: number;
+  snapped: string | null;
 }
 
 function resolveAnchorIndex(
@@ -135,7 +147,7 @@ function resolveAnchorIndex(
   state: CompressionState,
   indexByRawId: Map<string, number>,
   endpoint: "start" | "end",
-): number {
+): AnchorResolution {
   const label = endpoint === "start" ? "startId" : "endId";
   if (boundary.kind === "message") {
     const rawId =
@@ -149,14 +161,21 @@ function resolveAnchorIndex(
       );
     }
     const index = indexByRawId.get(rawId);
-    if (index === undefined) {
-      throw new BoundaryNotFoundError(
-        "consumed",
-        endpoint,
-        `${label}="${boundary.raw}" not found in visible context (likely consumed by an existing block).`,
-      );
+    if (index !== undefined) {
+      return { index, snapped: null };
     }
-    return index;
+    const owner = activeOwnerAnchor(state, [rawId], indexByRawId);
+    if (owner !== null) {
+      return {
+        index: owner,
+        snapped: `${label}="${boundary.raw}" refers to a message already compressed into an active block — anchored to that block's summary instead.`,
+      };
+    }
+    throw new BoundaryNotFoundError(
+      "consumed",
+      endpoint,
+      `${label}="${boundary.raw}" not found in visible context (likely consumed by an existing block).`,
+    );
   }
 
   const block = blockById(state, `b${boundary.numericId}`);
@@ -167,6 +186,19 @@ function resolveAnchorIndex(
       `${label}="b${boundary.numericId}" does not exist in this session (typo or wrong session) — run acp_status for current refs.`,
     );
   }
+  if (block.active) {
+    const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+    if (anchor !== null) {
+      return { index: anchor, snapped: null };
+    }
+  }
+  const owner = activeOwnerAnchor(state, block.effectiveMessageIds, indexByRawId);
+  if (owner !== null) {
+    return {
+      index: owner,
+      snapped: `${label}="b${boundary.numericId}" was consumed by a higher-tier block — anchored to the active block covering its content instead.`,
+    };
+  }
   if (!block.active) {
     throw new BoundaryNotFoundError(
       "consumed",
@@ -174,15 +206,36 @@ function resolveAnchorIndex(
       `${label}="b${boundary.numericId}" not found in visible context (block distilled/consumed by a higher-tier block).`,
     );
   }
-  const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
-  if (anchor === null) {
-    throw new BoundaryNotFoundError(
-      "consumed",
-      endpoint,
-      `${label}="b${boundary.numericId}" not found in visible context (block messages consumed by a higher-tier block).`,
-    );
+  throw new BoundaryNotFoundError(
+    "consumed",
+    endpoint,
+    `${label}="b${boundary.numericId}" not found in visible context (block messages consumed by a higher-tier block).`,
+  );
+}
+
+/**
+ * Snap a consumed anchor to the active block that now owns its content.
+ * Throwing instead dead-ends compress calls that follow nudge instructions
+ * with older (already-distilled) refs — the livelock in dog/billion-context-pi#32.
+ */
+function activeOwnerAnchor(
+  state: CompressionState,
+  ownedIds: string[],
+  indexByRawId: Map<string, number>,
+): number | null {
+  if (ownedIds.length === 0) return null;
+  const owned = new Set(ownedIds);
+  let best: number | null = null;
+  for (const block of state.blocks) {
+    if (!block.active) continue;
+    const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+    if (anchor === null) continue;
+    const ownsContent = block.effectiveMessageIds.some((id) => owned.has(id));
+    if (ownsContent && (best === null || anchor < best)) {
+      best = anchor;
+    }
   }
-  return anchor;
+  return best;
 }
 
 function formatPaddedRef(index: number): string {

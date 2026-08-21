@@ -994,7 +994,10 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   // priority and picks the tier with the MAX pending. Non-emergency defaults to
   // T1; T2 and T3 override when each crossed the shared 1.5x threshold AND
   // exceeds the effective pending of every lower tier (T2 > T1 effective;
-  // T3 > T2 and > T1 effective).
+  // T3 > T2 and > T1 effective), OR when the lower-tier BLOCK COUNT crossed
+  // tiers.tier2Trigger/tier3Trigger — in active sessions summary mass always
+  // loses the token race to fresh content, so without the block-count trigger
+  // T1 blocks accumulate forever (the "T1 treadmill").
   const tier2Threshold = Math.round(
     nudgeGrowthTokens * (config.nudge.tier2GrowthMultiplier ?? 1.5),
   );
@@ -1037,30 +1040,36 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     if (t1Eff >= nudgeGrowthTokens) {
       injectedTier = 1;
       injectedReason = `T1 effective ${t1Eff} >= ${nudgeGrowthTokens}, growth ${growthSinceReference}, usage ${Math.round(usage * 100)}%`;
-    } else if (
-      config.tiers.enabled &&
-      t2Pen >= tier2Threshold &&
-      t2Pen > t1Eff
-    ) {
-      const lastShown = state.nudge.lastShownByTier[2] ?? 0;
-      const cadenceMet =
-        lastShown === 0 || tokenCount - lastShown >= growthFloor;
-      if (cadenceMet) {
-        injectedTier = 2;
-        injectedReason = `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
-      }
-    } else if (
-      config.tiers.enabled &&
-      t3Pen >= tier2Threshold &&
-      t3Pen > t2Pen &&
-      t3Pen > t1Eff
-    ) {
-      const lastShown = state.nudge.lastShownByTier[3] ?? 0;
-      const cadenceMet =
-        lastShown === 0 || tokenCount - lastShown >= growthFloor;
-      if (cadenceMet) {
-        injectedTier = 3;
-        injectedReason = `T3 condense ready: ${tiers[3]!.targetBlocks.length} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+    } else if (config.tiers.enabled) {
+      const t1Count = tiers[2]!.targetBlocks.length;
+      const t2Count = tiers[3]!.targetBlocks.length;
+      const t2ByMass = t2Pen >= tier2Threshold && t2Pen > t1Eff;
+      const t2ByCount = t1Count >= config.tiers.tier2Trigger;
+      if (t2ByMass || t2ByCount) {
+        const lastShown = state.nudge.lastShownByTier[2] ?? 0;
+        const cadenceMet =
+          lastShown === 0 || tokenCount - lastShown >= growthFloor;
+        if (cadenceMet) {
+          injectedTier = 2;
+          injectedReason = t2ByMass
+            ? `T2 distill ready: ${t1Count} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`
+            : `T2 distill ready (block count): ${t1Count} tier-1 blocks (mass ${t2Pen} tokens) >= trigger ${config.tiers.tier2Trigger}, T1 effective ${t1Eff} — summary mass loses the token race in active sessions, so cap block accumulation early, usage ${Math.round(usage * 100)}%`;
+        }
+      } else {
+        const t3ByMass =
+          t3Pen >= tier2Threshold && t3Pen > t2Pen && t3Pen > t1Eff;
+        const t3ByCount = t2Count >= config.tiers.tier3Trigger;
+        if (t3ByMass || t3ByCount) {
+          const lastShown = state.nudge.lastShownByTier[3] ?? 0;
+          const cadenceMet =
+            lastShown === 0 || tokenCount - lastShown >= growthFloor;
+          if (cadenceMet) {
+            injectedTier = 3;
+            injectedReason = t3ByMass
+              ? `T3 condense ready: ${t2Count} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`
+              : `T3 condense ready (block count): ${t2Count} tier-2 blocks (mass ${t3Pen} tokens) >= trigger ${config.tiers.tier3Trigger}, T2 ${t2Pen}, T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+          }
+        }
       }
     }
   }

@@ -258,6 +258,97 @@ test("nudge: tier distillation fires when lower-tier blocks accumulate enough", 
   assert.ok((turn.nudge.tierTargetBlocks?.length ?? 0) >= 1, "target T1 blocks listed");
 });
 
+test("nudge: tier-2 distillation fires by BLOCK COUNT below the mass threshold", () => {
+  const core = createCore();
+  // Preserve all messages so t1Eff stays 0 and only the tier-2 paths can fire;
+  // summaries are tiny so mass (~175 tokens) never reaches the 9000 threshold.
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 50000 }).state;
+  state = {
+    ...state,
+    blocks: [0, 1, 2, 3, 4].map((i) => ({
+      blockId: `b${i + 1}`,
+      runId: "r1",
+      tier: 1 as const,
+      summary: `tier-1 summary block ${i} `,
+      directMessageIds: [`m${i}`],
+      effectiveMessageIds: [`m${i}`],
+      directBlockIds: [],
+      compressedTokens: 5000,
+      createdAt: Date.now(),
+      survivedCount: 0,
+      generation: "root" as const,
+      active: true,
+    })),
+  };
+
+  let turn = core.processTurn({ messages, state, config, tokenCount: 50000 });
+  assert.equal(turn.nudge.shouldInject, false, "no growth → no injection even at trigger count");
+
+  turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, true, "growth past floor → injects");
+  assert.equal(turn.nudge.tier, 2, "5 blocks >= tier2Trigger 5 fires despite tiny mass");
+  assert.match(turn.nudge.reason ?? "", /block count/);
+});
+
+test("nudge: tier-2 block-count trigger stays quiet below the trigger", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 50000 }).state;
+  state = {
+    ...state,
+    blocks: [0, 1, 2].map((i) => ({
+      blockId: `b${i + 1}`,
+      runId: "r1",
+      tier: 1 as const,
+      summary: `tier-1 summary block ${i} `,
+      directMessageIds: [`m${i}`],
+      effectiveMessageIds: [`m${i}`],
+      directBlockIds: [],
+      compressedTokens: 5000,
+      createdAt: Date.now(),
+      survivedCount: 0,
+      generation: "root" as const,
+      active: true,
+    })),
+  };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, false, "3 blocks < tier2Trigger 5 and mass < threshold → nothing to inject");
+});
+
+test("nudge: tier-3 condensation fires by BLOCK COUNT below the mass threshold", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 50000 }).state;
+  state = {
+    ...state,
+    blocks: Array.from({ length: 10 }, (_, i) => ({
+      blockId: `b${i + 1}`,
+      runId: "r1",
+      tier: 2 as const,
+      summary: `tier-2 summary block ${i} `,
+      directMessageIds: [`m${i}`],
+      effectiveMessageIds: [`m${i}`],
+      directBlockIds: [`b0${i}`],
+      compressedTokens: 5000,
+      createdAt: Date.now(),
+      survivedCount: 0,
+      generation: "root" as const,
+      active: true,
+    })),
+  };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, true, "growth past floor → injects");
+  assert.equal(turn.nudge.tier, 3, "10 tier-2 blocks >= tier3Trigger 10 fires despite tiny mass");
+  assert.match(turn.nudge.reason ?? "", /block count/);
+});
+
 test("nudge: production config (preserveRecentMessages > 0) computes compressible ranges", () => {
   const core = createCore();
   const config = buildConfig({ preserveRecentMessages: 5 });

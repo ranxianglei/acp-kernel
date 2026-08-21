@@ -50,14 +50,21 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
             }
             case "user": {
                 const text = stringContent(m.content);
-                const img = firstImagePart(m.content);
+                const imgs = allImageParts(m.content);
+                const firstImg = imgs[0];
+                const firstUrl = firstImg ? firstImg.image_url.url : undefined;
+                const firstParsed = firstUrl ? parseDataUrl(firstUrl) : undefined;
                 const base = deriveMessageId("user", "text", text);
                 msgs.push({
                     id: clusters.next(base),
                     role: "user",
                     contentType: "text",
                     text,
-                    ...(img ? { rawOpenaiContent: img.part, imageMediaType: img.mediaType, imageBase64: img.base64 } : {}),
+                    ...(imgs.length === 1 && firstParsed
+                        ? { rawOpenaiContent: imgs[0], imageMediaType: firstParsed.mediaType, imageBase64: firstParsed.base64 }
+                        : imgs.length > 1
+                            ? { rawOpenaiContentParts: imgs }
+                            : {}),
                 });
                 break;
             }
@@ -153,10 +160,12 @@ export function coreToOpenai(messages: BiliMessage[]): OpenAIMessage[] {
             if (m.role === "system") {
                 out.push({ role: m.originalRole === "developer" ? "developer" : "system", content: m.text ?? "" });
             } else if (m.role === "user") {
-                if (m.rawOpenaiContent || m.imageBase64) {
+                if (m.rawOpenaiContent || m.imageBase64 || m.rawOpenaiContentParts) {
                     const parts: OpenAIContentPart[] = [];
                     if (m.text) parts.push({ type: "text", text: m.text });
-                    if (m.rawOpenaiContent) {
+                    if (m.rawOpenaiContentParts && m.rawOpenaiContentParts.length > 0) {
+                        for (const part of m.rawOpenaiContentParts) parts.push(part as OpenAIContentPart);
+                    } else if (m.rawOpenaiContent) {
                         parts.push(m.rawOpenaiContent as OpenAIContentPart);
                     } else if (m.imageBase64 && m.imageMediaType) {
                         parts.push({ type: "image_url", image_url: { url: `data:${m.imageMediaType};base64,${m.imageBase64}` } });
@@ -207,17 +216,22 @@ function stringContent(content: OpenAIMessage["content"]): string {
     return "";
 }
 
-function firstImagePart(content: OpenAIMessage["content"]): { part: OpenAIContentPart; mediaType: string; base64: string } | undefined {
-    if (!Array.isArray(content)) return undefined;
+type OpenAIImagePart = { type: "image_url"; image_url: { url: string } };
+
+/** Collect ALL data-URL image parts in a user content array, in wire order.
+ *  (firstImagePart only kept the first, which silently dropped images 2..N
+ *  on the coreToOpenai rebuild.) */
+function allImageParts(content: OpenAIMessage["content"]): OpenAIImagePart[] {
+    if (!Array.isArray(content)) return [];
+    const out: OpenAIImagePart[] = [];
     for (const p of content) {
-        if (p && typeof p === "object" && p.type === "image_url") {
-            const iu = (p as { image_url?: { url?: string } }).image_url;
-            const url = iu?.url;
-            if (typeof url === "string") {
-                const parsed = parseDataUrl(url);
-                if (parsed) return { part: p, mediaType: parsed.mediaType, base64: parsed.base64 };
-            }
-        }
+        if (typeof p !== "object" || p === null) continue;
+        if (!("type" in p) || p.type !== "image_url" || !("image_url" in p)) continue;
+        // The union's index-signature member leaves image_url as `unknown`, so
+        // narrow via a named const before reading the url.
+        const imagePart = p as { image_url: { url?: unknown } };
+        const url = imagePart.image_url.url;
+        if (typeof url === "string" && parseDataUrl(url)) out.push(p as OpenAIImagePart);
     }
-    return undefined;
+    return out;
 }

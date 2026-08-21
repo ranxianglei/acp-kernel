@@ -142,6 +142,41 @@ test("openai: user image_url content part is restored", () => {
     assert.deepEqual((img as unknown as { image_url: { url: string } }).image_url.url, DATA_URL, "image data URL restored");
 });
 
+// 5b. OpenAI multi-image user message preserves ALL images. firstImagePart
+//     previously kept only the first image, so images 2..N were silently
+//     dropped on the coreToOpenai rebuild (and the omp wire-fold gate failed
+//     open on the whole payload). All data-URL parts must round-trip in order.
+test("openai: user message with multiple image_url parts round-trips ALL images", () => {
+    const DATA_URL2 = `data:image/png;base64,${IMG_DATA}AAAA`;
+    const DATA_URL3 = `data:image/png;base64,${IMG_DATA}AAAAA`;
+    const body: OpenAIRequestBody = {
+        messages: [
+            {
+                role: "user",
+                content: [
+                    { type: "text", text: "compare these?" },
+                    { type: "image_url", image_url: { url: DATA_URL } },
+                    { type: "image_url", image_url: { url: DATA_URL2 } },
+                    { type: "image_url", image_url: { url: DATA_URL3 } },
+                ],
+            },
+        ],
+    };
+    const { msgs } = openaiToCore(body);
+    assert.ok(msgs[0]?.rawOpenaiContentParts, "multi-image sidecar stored (not singular rawOpenaiContent)");
+    assert.equal((msgs[0]?.rawOpenaiContentParts ?? []).length, 3);
+    const rebuilt = coreToOpenai(msgs);
+    const u = rebuilt[0]!;
+    assert.ok(Array.isArray(u.content), "content rebuilt as array");
+    const parts = u.content as unknown as { type: string; [k: string]: unknown }[];
+    const imgs = parts.filter((p) => p.type === "image_url");
+    assert.equal(imgs.length, 3, "all 3 image_url parts preserved");
+    const urls = imgs.map((p) => (p as unknown as { image_url: { url: string } }).image_url.url);
+    assert.deepEqual(urls, [DATA_URL, DATA_URL2, DATA_URL3], "image order preserved");
+    const text = parts.find((p) => p.type === "text");
+    assert.ok(typeof text?.text === "string" && text.text.startsWith("compare these?"), "text preserved");
+});
+
 // 6. Responses API input_image round-trips (image was previously dropped).
 test("responses: user input_image is restored via rawResponsesItem", () => {
     const body: ResponsesRequestBody = {

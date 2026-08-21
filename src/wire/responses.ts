@@ -90,6 +90,19 @@ function isOpaqueItem(item: ResponseInputItem): boolean {
     return OPAQUE_ITEM_TYPES.has(item.type);
 }
 
+const EASY_INPUT_ROLES = new Set(["user", "assistant", "system", "developer"]);
+
+/** OpenAI's EasyInputMessage shorthand legally omits `type` (e.g. omp sends
+ *  `{ role: "user", content: "..." }`); without normalization those items fall
+ *  through the switch's `default` into the preamble and are never folded. */
+function normalizeEasyInputItem(item: ResponseInputItem): ResponseInputItem {
+    if (typeof item.type === "string") return item;
+    if (EASY_INPUT_ROLES.has(String((item as { role?: unknown }).role))) {
+        return { ...(item as { [key: string]: unknown }), type: "message" } as ResponseInputMessage;
+    }
+    return item;
+}
+
 function shouldDropAllReasoning(): boolean {
     return (process.env.ACP_REASONING_KEEP ?? "").trim().toLowerCase() === "none";
 }
@@ -120,7 +133,8 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
         msgs.push({ id, role: "user", contentType: "text", text: body.input });
         return { msgs, systemParts, preamble, customToolCallIds, layout, droppedReasoning, stringInput: { original: body.input, coreId: id } };
     }
-    for (const item of body.input) {
+    for (const raw of body.input) {
+        const item = normalizeEasyInputItem(raw);
         let coreId: string | undefined;
         if (isOpaqueItem(item)) preamble.push(item);
         switch (item.type) {

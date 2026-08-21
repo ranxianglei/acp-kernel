@@ -47,6 +47,7 @@ import type {
   ProcessTurnResult,
   Recommendation,
   StatusReport,
+  TierTargetBlockStat,
 } from "./types.js";
 
 export interface Ports {
@@ -935,24 +936,40 @@ function resolveAdaptiveGrowth(
  *  atomically reject — see CompressibleRange.chars); T2 = total summary
  *  tokens of all active tier-1 blocks; T3 = total summary tokens of all
  *  active tier-2 blocks. */
+interface TierPending {
+  pending: number;
+  targetBlocks: CompressionBlock[];
+  targetBlockStats: TierTargetBlockStat[];
+}
+
 function pendingByTier(
   state: CompressionState,
   recommendation: Recommendation | undefined,
   countTokens: (t: string) => number,
   minCompressRange: number,
-): Record<number, { pending: number; targetBlocks: CompressionBlock[] }> {
-  const out: Record<number, { pending: number; targetBlocks: CompressionBlock[] }> = {};
+): Record<number, TierPending> {
+  const out: Record<number, TierPending> = {};
   const merged = recommendation?.recommendedRanges ?? [];
   const effective =
     minCompressRange > 0
       ? merged.filter((r) => (r.chars ?? r.tokens * 4) >= minCompressRange)
       : merged;
-  out[1] = { pending: effective.reduce((s, r) => s + r.tokens, 0), targetBlocks: [] };
+  out[1] = { pending: effective.reduce((s, r) => s + r.tokens, 0), targetBlocks: [], targetBlockStats: [] };
   const active = activeBlocks(state);
   const t1 = active.filter((b) => b.tier === 1);
   const t2 = active.filter((b) => b.tier === 2);
-  out[2] = { pending: t1.reduce((s, b) => s + countTokens(b.summary), 0), targetBlocks: t1 };
-  out[3] = { pending: t2.reduce((s, b) => s + countTokens(b.summary), 0), targetBlocks: t2 };
+  const t1Stats = t1.map((b) => ({ blockId: b.blockId, summaryTokens: countTokens(b.summary) }));
+  const t2Stats = t2.map((b) => ({ blockId: b.blockId, summaryTokens: countTokens(b.summary) }));
+  out[2] = {
+    pending: t1Stats.reduce((s, st) => s + st.summaryTokens, 0),
+    targetBlocks: t1,
+    targetBlockStats: t1Stats,
+  };
+  out[3] = {
+    pending: t2Stats.reduce((s, st) => s + st.summaryTokens, 0),
+    targetBlocks: t2,
+    targetBlockStats: t2Stats,
+  };
   return out;
 }
 
@@ -1115,6 +1132,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     compressibleRanges: rec?.recommendedRanges ?? [],
     protectedRanges: rec?.contextRanges.protected ?? [],
     tierTargetBlocks: injectedTier ? tiers[injectedTier]!.targetBlocks : [],
+    tierTargetBlockStats: injectedTier ? tiers[injectedTier]!.targetBlockStats : [],
     contextUsage: usage,
     tier: injectedTier,
     breakdown: {

@@ -1,4 +1,4 @@
-import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock } from "./types.js";
+import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock, TierTargetBlockStat } from "./types.js";
 import { defaultPrompts } from "./prompts.js";
 import type { Prompts } from "./prompts.js";
 
@@ -36,12 +36,13 @@ function formatBreakdown(bd?: ContextBreakdown): string {
 
 
 
-function formatTierTargetBlocks(blocks: CompressionBlock[]): string {
+function formatTierTargetBlocks(blocks: CompressionBlock[], stats: TierTargetBlockStat[] = []): string {
   if (blocks.length === 0) {
     return "Target blocks: (none — no tier blocks found)";
   }
+  const statByBlock = new Map(stats.map((s) => [s.blockId, s.summaryTokens]));
   const lines = blocks.map((b) => {
-    const summaryTokens = Math.ceil((b.summary ?? "").length / 4);
+    const summaryTokens = statByBlock.get(b.blockId) ?? Math.ceil((b.summary ?? "").length / 4);
     const topic = b.topic ? `  "${b.topic}"` : "";
     return `  ${b.blockId}  ${b.effectiveMessageIds.length} msgs  ${formatK(b.compressedTokens)}→${formatK(summaryTokens)}${topic}`;
   });
@@ -128,7 +129,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
   if (decision.tier !== null && decision.tier >= 2) {
     const isT2 = decision.tier === 2;
     const targets = decision.tierTargetBlocks ?? [];
-    const blockList = formatTierTargetBlocks(targets);
+    const blockList = formatTierTargetBlocks(targets, decision.tierTargetBlockStats ?? []);
     const startId = targets[0]?.blockId ?? "b1";
     const endId = targets[targets.length - 1]?.blockId ?? "b5";
     const voice: NudgeVoice = isEmergency ? "emergency" : "gentle";

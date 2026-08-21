@@ -246,21 +246,30 @@ export function createCore(ports: Ports = {}): CompressionCore {
         }
       }
       if (!hasBlockBoundaryRange && totalRangeChars < input.config.compress.minCompressRange) {
+        const rejectionSpec = input.ranges.map((r) => `${r.startRef}..${r.endRef}`).join(",");
+        const priorCount = state.rejections?.find((r) => r.spec === rejectionSpec)?.count ?? 0;
+        const rejectionCount = priorCount + 1;
+        state.rejections = [
+          ...(state.rejections ?? []).filter((r) => r.spec !== rejectionSpec),
+          { spec: rejectionSpec, count: rejectionCount },
+        ].slice(-8);
         const live = activeBlocks(state)
           .map((b) => b.blockId)
           .sort((x, y) => numericBlockId(x) - numericBlockId(y));
         const liveHint =
           live.length > 0
-            ? ` Current active blocks span ${live[0]}..${live[live.length - 1]} — retry with startId/endId set to active block IDs in that span.`
+            ? ` Current active blocks span ${live[0]}..${live[live.length - 1]} — only a block-to-block distillation (startId/endId set to those block IDs) can reclaim more; otherwise nothing remains to compress.`
             : "";
         const gateMessage =
-          resolvableCount === 0 && consumedRanges.length === 0 && unknownCount > 0
+          rejectionCount >= 2
+            ? `Identical range(s) rejected ${rejectionCount} times now — nothing new is compressible, and re-submitting the same compress will keep failing. Stop calling compress with these refs and answer the user instead; new content becomes compressible once it exceeds ${input.config.compress.minCompressRange} chars.`
+            : resolvableCount === 0 && consumedRanges.length === 0 && unknownCount > 0
             ? `None of the ${input.ranges.length} requested range(s) resolved — every ref failed with "does not exist in this session". Refs recorded before an earlier compress are stale: each successful compress renumbers the remaining refs. Run acp_status, then re-issue the compress in the same turn using only the refs it reports.`
             : consumedRanges.length > 0
             ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}); remaining compressible content ${totalRangeChars} chars < min ${input.config.compress.minCompressRange}. Nothing to do.${liveHint}`
             : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
         return {
-          state: input.state,
+          state,
           result: {
             blocksCreated: 0,
             tokensCompressed: 0,
@@ -1170,6 +1179,7 @@ function cloneState(state: CompressionState): CompressionState {
     tokenSnapshot: { ...(state.tokenSnapshot ?? {}) },
     nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
     stats: { ...state.stats },
+    rejections: (state.rejections ?? []).map((r) => ({ ...r })),
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
   };

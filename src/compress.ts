@@ -124,6 +124,11 @@ function rangeError(
   return `range ${spec.startRef}..${spec.endRef}: ${message}`;
 }
 
+function numericBlockId(id: string): number {
+  const parsed = /^b(\d+)$/.exec(id);
+  return parsed ? Number(parsed[1]) : 0;
+}
+
 export function createCore(ports: Ports = {}): CompressionCore {
   const countTokens = ports.countTokens ?? defaultCountTokens;
 
@@ -234,9 +239,16 @@ export function createCore(ports: Ports = {}): CompressionCore {
         }
       }
       if (!hasBlockBoundaryRange && totalRangeChars < input.config.compress.minCompressRange) {
+        const live = activeBlocks(state)
+          .map((b) => b.blockId)
+          .sort((x, y) => numericBlockId(x) - numericBlockId(y));
+        const liveHint =
+          live.length > 0
+            ? ` Current active blocks span ${live[0]}..${live[live.length - 1]} — retry with startId/endId set to active block IDs in that span.`
+            : "";
         const gateMessage =
           consumedRanges.length > 0
-            ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}); remaining compressible content ${totalRangeChars} chars < min ${input.config.compress.minCompressRange}. Nothing to do — run acp_status to see current compressible ranges.`
+            ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}); remaining compressible content ${totalRangeChars} chars < min ${input.config.compress.minCompressRange}. Nothing to do.${liveHint}`
             : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
         return {
           state: input.state,
@@ -264,6 +276,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
         errors.push(rangeError(spec, resolution.error.message));
         continue;
       }
+      warnings.push(...resolution.resolved.snappedBoundaries);
       try {
         const outcome = applySingleRange({
           spec,

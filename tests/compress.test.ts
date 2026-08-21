@@ -378,6 +378,77 @@ test("consumed plus fresh-but-small range is not misreported as too small", () =
   assert.doesNotMatch(retry.result.errors[0]!, /Combine more messages/);
 });
 
+test("all-unknown batch reports stale refs instead of too-small (billion-context-pi#178)", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [
+    msg("u", "the task"),
+    msg("a", "alpha"),
+    msg("b", "beta"),
+    msg("c", "gamma"),
+    msg("d", "delta"),
+  ];
+  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+
+  const result = core.applyCompression({
+    ranges: [
+      { startRef: "m00050", endRef: "m00060", summary: "stale A" },
+      { startRef: "m00070", endRef: "m00080", summary: "stale B" },
+    ],
+    messages,
+    state,
+    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+  });
+
+  assert.equal(result.result.blocksCreated, 0);
+  assert.equal(result.result.errors.length, 3);
+  assert.match(result.result.errors[0]!, /None of the 2 requested range\(s\) resolved/);
+  assert.match(result.result.errors[0]!, /renumbers the remaining refs/);
+  assert.match(result.result.errors[0]!, /Run acp_status/);
+  assert.doesNotMatch(result.result.errors[0]!, /too small/);
+  assert.match(result.result.errors[1]!, /does not exist in this session/);
+  assert.match(result.result.errors[2]!, /does not exist in this session/);
+});
+
+test("consumed plus unknown ranges keep the already-compressed message", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [
+    msg("u", "the task"),
+    msg("a", "alpha"),
+    msg("b", "beta"),
+    msg("c", "gamma"),
+    msg("d", "delta"),
+  ];
+  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+
+  const { state: after } = core.applyCompression({
+    ranges: [{ startRef: "m00002", endRef: "m00003", summary: "intro recap" }],
+    messages,
+    state,
+    config: config(),
+  });
+  const pruned = prune(messages, after);
+
+  const retry = core.applyCompression({
+    ranges: [
+      { startRef: "m00002", endRef: "m00003", summary: "intro recap" },
+      { startRef: "m00050", endRef: "m00060", summary: "stale" },
+    ],
+    messages: pruned,
+    state: after,
+    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+  });
+
+  assert.equal(retry.result.blocksCreated, 0);
+  assert.match(retry.result.errors[0]!, /already compressed/);
+  assert.doesNotMatch(retry.result.errors[0]!, /None of the 2 requested range\(s\) resolved/);
+  assert.match(
+    retry.result.errors.find((e) => e.startsWith("range m00050..m00060")) ?? "",
+    /does not exist in this session/,
+  );
+});
+
 test("fresh small content without consumed ranges keeps the too-small message", () => {
   const core = createCore();
   const state = createInitialState();

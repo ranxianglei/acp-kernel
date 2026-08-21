@@ -837,6 +837,6 @@ test("gate error names the current active block span when anchors stay consumed"
   );
   assert.match(
     result.result.errors[0]!,
-    /Current active blocks span b110\.\.b110 — retry with startId\/endId set to active block IDs in that span\./,
+    /Current active blocks span b110\.\.b110 — only a block-to-block distillation \(startId\/endId set to those block IDs\) can reclaim more; otherwise nothing remains to compress\./,
   );
 });

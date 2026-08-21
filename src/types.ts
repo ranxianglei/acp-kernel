@@ -73,6 +73,12 @@ export interface CompressionState {
   stats: CompressionStats;
   nextBlockId: number;
   nextRunId: number;
+  /** Identical min-gate rejections seen consecutively per range signature
+   *  (bounded FIFO). Weak models re-submit a rejected compress verbatim
+   *  forever when the error keeps suggesting a retry — from the 2nd identical
+   *  rejection the gate message switches to a terminal "stop" form with no
+   *  retry guidance. Optional: old persisted states simply start counting. */
+  rejections?: { spec: string; count: number }[];
 }
 
 export interface TierConfig {

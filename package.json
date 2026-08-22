@@ -33,6 +33,10 @@
         "./wire": {
             "types": "./dist/wire/index.d.ts",
             "import": "./dist/wire/index.js"
+        },
+        "./panel": {
+            "types": "./dist/panel/index.d.ts",
+            "import": "./dist/panel/index.js"
         }
     },
     "files": [

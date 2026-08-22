@@ -72,3 +72,5 @@ export {
   type NodeEffects,
 } from "./pipeline.js";
 export * from "./filter/index.js";
+
+export { VIABLE_RANGE_MIN_TOKENS, viableRanges } from "./viable.js";

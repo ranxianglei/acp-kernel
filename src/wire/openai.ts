@@ -36,15 +36,29 @@ export type OpenAIRequestBody = {
     [key: string]: unknown;
 };
 
-type Flat = { msgs: BiliMessage[] };
+type Flat = { msgs: BiliMessage[]; systemText: string };
 
+/** Hoist the contiguous leading system/developer prefix out of the fold
+ *  space (openai-chat variant of the responses codec's systemParts and the
+ *  anthropic codec's top-level `system` field). The system prompt is host
+ *  runtime state: its content varies across restarts (injected reminders,
+ *  host-composed instructions), so keeping it inside the id space made every
+ *  downstream fingerprint spanning it unstable, and a compress range that
+ *  covered it removed the model's system prompt from the rebuilt wire
+ *  entirely. Mid-conversation system messages (rare, host-synthetic) stay in
+ *  the fold space unchanged. */
 export function openaiToCore(body: OpenAIRequestBody): Flat {
     const msgs: BiliMessage[] = [];
+    const systemParts: string[] = [];
     const clusters = new ClusterCounter();
     for (const m of body.messages) {
         switch (m.role) {
             case "system":
             case "developer": {
+                if (msgs.length === 0) {
+                    systemParts.push(stringContent(m.content));
+                    break;
+                }
                 const base = deriveMessageId(m.role, "text", stringContent(m.content));
                 msgs.push({ id: clusters.next(base), role: "system", contentType: "text", text: stringContent(m.content), originalRole: m.role });
                 break;
@@ -134,7 +148,7 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
             }
         }
     }
-    return { msgs };
+    return { msgs, systemText: systemParts.join("\n\n") };
 }
 
 export function coreToOpenai(messages: BiliMessage[]): OpenAIMessage[] {

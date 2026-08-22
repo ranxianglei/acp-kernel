@@ -3,6 +3,41 @@ import type { CompressionState, CoreMessage } from "./types.js";
 
 export const SUMMARY_HEADER = "[Compressed conversation section]";
 
+// Reserved prefix for rendered-summary ids. Hosts own their message ids and
+// must never assign one with this prefix; kernel-generated ids are mNNNNN
+// refs and bN block ids.
+const SUMMARY_ID_PREFIX = "acp_summary_";
+
+/**
+ * The transient visible id of an active block's rendered summary message.
+ * This is a VIEW-ONLY representation: it must never be persisted into
+ * `effectiveMessageIds`/`directMessageIds` (the durable coverage is the
+ * block's raw message ids).
+ */
+export function summaryMessageId(blockId: string): string {
+  return `${SUMMARY_ID_PREFIX}${blockId}`;
+}
+
+export function isSummaryMessageId(id: string): boolean {
+  return id.startsWith(SUMMARY_ID_PREFIX);
+}
+
+/**
+ * True when a message is a rendered block summary (the exact shape prune
+ * emits). The id prefix alone is not sufficient — a host-authored message
+ * that happens to carry a reserved id must not be treated as a rendered
+ * summary (it would be silently dropped from ranges or deleted by rebuild).
+ */
+export function isRenderedSummaryMessage(
+  message: Pick<CoreMessage, "id" | "role" | "contentType">,
+): boolean {
+  return (
+    isSummaryMessageId(message.id) &&
+    message.role === "system" &&
+    message.contentType === "text"
+  );
+}
+
 export interface PruneOptions {
   injectSummaries?: boolean;
 }
@@ -21,9 +56,16 @@ export function prune(
   );
 
   const indexById = new Map<string, number>();
-  messages.forEach((message, index) => indexById.set(message.id, index));
+  const summaryIndexById = new Map<string, number>();
+  messages.forEach((message, index) => {
+    indexById.set(message.id, index);
+    if (isRenderedSummaryMessage(message))
+      summaryIndexById.set(message.id, index);
+  });
 
-  const anchors = inject ? collectSummaryAnchors(state, indexById) : [];
+  const anchors = inject
+    ? collectSummaryAnchors(state, indexById, summaryIndexById)
+    : [];
 
   return stripOrphanedReasoning(
     stripOrphanedToolResults(
@@ -44,9 +86,23 @@ interface SummaryAnchor {
 function collectSummaryAnchors(
   state: CompressionState,
   indexById: Map<string, number>,
+  summaryIndexById: Map<string, number>,
 ): SummaryAnchor[] {
   const anchors: SummaryAnchor[] = [];
   for (const block of activeBlocks(state)) {
+    // Prefer the position of an already-rendered summary (hosts may pass a
+    // previously-pruned view): keeps the summary stable in place instead of
+    // jumping to index 0 when the raw ids are no longer in the input.
+    const existingIndex = summaryIndexById.get(summaryMessageId(block.blockId));
+    if (existingIndex !== undefined) {
+      anchors.push({
+        blockId: block.blockId,
+        summary: block.summary,
+        topic: block.topic,
+        insertAt: existingIndex,
+      });
+      continue;
+    }
     let earliest: number | null = null;
     for (const id of block.effectiveMessageIds) {
       const index = indexById.get(id);
@@ -73,6 +129,9 @@ function rebuildMessages(
 ): CoreMessage[] {
   const result: CoreMessage[] = [];
   const pending = [...anchors];
+  const anchoredSummaryIds = new Set(
+    anchors.map((anchor) => summaryMessageId(anchor.blockId)),
+  );
 
   for (let index = 0; index < messages.length; index++) {
     while (pending.length > 0 && pending[0]!.insertAt === index) {
@@ -83,6 +142,15 @@ function rebuildMessages(
       continue;
     }
     if (covered.has(messages[index]!.id)) continue;
+    // A stale copy of this block's summary from a previously-pruned view:
+    // the freshly rendered one above replaces it. Only rendered-summary
+    // shaped messages qualify — a host message that merely reuses the
+    // reserved prefix is content, not a stale copy.
+    if (
+      isRenderedSummaryMessage(messages[index]!) &&
+      anchoredSummaryIds.has(messages[index]!.id)
+    )
+      continue;
     result.push(messages[index]!);
   }
 
@@ -100,7 +168,7 @@ function renderSummary(anchor: SummaryAnchor): CoreMessage {
     : SUMMARY_HEADER;
   const text = body.length === 0 ? topicLine : `${topicLine}\n${body}`;
   return {
-    id: `acp_summary_${anchor.blockId}`,
+    id: summaryMessageId(anchor.blockId),
     role: "system",
     contentType: "text",
     text,

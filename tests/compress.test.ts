@@ -263,7 +263,11 @@ test("blocks are never deactivated for age (no maxBlockAge behavior)", () => {
     config: config(),
     tokenCount: 95000,
   });
-  assert.equal(result.state.blocks[0]!.active, true, "block must stay active regardless of age");
+  assert.equal(
+    result.state.blocks[0]!.active,
+    true,
+    "block must stay active regardless of age",
+  );
 });
 
 test("applyCompression reports error for unknown boundary ref", () => {
@@ -289,22 +293,49 @@ test("applyCompression reports error for unknown boundary ref", () => {
 test("batch compress attributes per-range errors and keeps partial success", () => {
   const core = createCore();
   const state = createInitialState();
-  const messages = [msg("a", "alpha"), msg("b", "beta"), msg("c", "gamma"), msg("d", "delta")];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  const messages = [
+    msg("a", "alpha"),
+    msg("b", "beta"),
+    msg("c", "gamma"),
+    msg("d", "delta"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const result = core.applyCompression({
     ranges: [
-      { startRef: "m00001", endRef: "m00002", summary: "x".repeat(60), topic: "ok" },
-      { startRef: "m00003", endRef: "m00004", summary: "y".repeat(22), topic: "short" },
+      {
+        startRef: "m00001",
+        endRef: "m00002",
+        summary: "x".repeat(60),
+        topic: "ok",
+      },
+      {
+        startRef: "m00003",
+        endRef: "m00004",
+        summary: "y".repeat(22),
+        topic: "short",
+      },
     ],
     messages,
     state,
-    config: config({ compress: { minCompressRange: 0, maxSummaryLength: 0, minSummaryLength: 50 } }),
+    config: config({
+      compress: {
+        minCompressRange: 0,
+        maxSummaryLength: 0,
+        minSummaryLength: 50,
+      },
+    }),
   });
 
   assert.equal(result.result.blocksCreated, 1, "valid range still compresses");
   assert.equal(result.result.errors.length, 1);
-  assert.match(result.result.errors[0]!, /^range m00003\.\.m00004: Summary too short \(22 chars, min 50\)/);
+  assert.match(
+    result.result.errors[0]!,
+    /^range m00003\.\.m00004: Summary too short \(22 chars, min 50\)/,
+  );
 });
 
 test("retrying a consumed range reports already-compressed guidance, not too-small", () => {
@@ -317,7 +348,10 @@ test("retrying a consumed range reports already-compressed guidance, not too-sma
     msg("c", "gamma"),
     msg("d", "delta"),
   ];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const { state: after } = core.applyCompression({
     ranges: [{ startRef: "m00002", endRef: "m00003", summary: "intro recap" }],
@@ -331,14 +365,23 @@ test("retrying a consumed range reports already-compressed guidance, not too-sma
     ranges: [{ startRef: "m00002", endRef: "m00003", summary: "intro recap" }],
     messages: pruned,
     state: after,
-    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
   });
 
   assert.equal(retry.result.blocksCreated, 0);
   assert.equal(retry.result.errors.length, 1);
   assert.match(retry.result.errors[0]!, /already compressed/);
   assert.match(retry.result.errors[0]!, /Current active blocks span/);
-  assert.doesNotMatch(retry.result.errors[0]!, /Total compressible content too small/);
+  assert.doesNotMatch(
+    retry.result.errors[0]!,
+    /Total compressible content too small/,
+  );
 });
 
 test("consumed plus fresh-but-small range is not misreported as too small", () => {
@@ -351,7 +394,10 @@ test("consumed plus fresh-but-small range is not misreported as too small", () =
     msg("c", "gamma"),
     msg("d", "delta"),
   ];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const { state: after } = core.applyCompression({
     ranges: [{ startRef: "m00002", endRef: "m00003", summary: "intro recap" }],
@@ -368,7 +414,13 @@ test("consumed plus fresh-but-small range is not misreported as too small", () =
     ],
     messages: pruned,
     state: after,
-    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
   });
 
   assert.equal(retry.result.blocksCreated, 0);
@@ -388,7 +440,10 @@ test("all-unknown batch reports stale refs instead of too-small (billion-context
     msg("c", "gamma"),
     msg("d", "delta"),
   ];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const result = core.applyCompression({
     ranges: [
@@ -397,12 +452,21 @@ test("all-unknown batch reports stale refs instead of too-small (billion-context
     ],
     messages,
     state,
-    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
   });
 
   assert.equal(result.result.blocksCreated, 0);
   assert.equal(result.result.errors.length, 3);
-  assert.match(result.result.errors[0]!, /None of the 2 requested range\(s\) resolved/);
+  assert.match(
+    result.result.errors[0]!,
+    /None of the 2 requested range\(s\) resolved/,
+  );
   assert.match(result.result.errors[0]!, /renumbers the remaining refs/);
   assert.match(result.result.errors[0]!, /Run acp_status/);
   assert.doesNotMatch(result.result.errors[0]!, /too small/);
@@ -420,7 +484,10 @@ test("consumed plus unknown ranges keep the already-compressed message", () => {
     msg("c", "gamma"),
     msg("d", "delta"),
   ];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const { state: after } = core.applyCompression({
     ranges: [{ startRef: "m00002", endRef: "m00003", summary: "intro recap" }],
@@ -437,12 +504,21 @@ test("consumed plus unknown ranges keep the already-compressed message", () => {
     ],
     messages: pruned,
     state: after,
-    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
   });
 
   assert.equal(retry.result.blocksCreated, 0);
   assert.match(retry.result.errors[0]!, /already compressed/);
-  assert.doesNotMatch(retry.result.errors[0]!, /None of the 2 requested range\(s\) resolved/);
+  assert.doesNotMatch(
+    retry.result.errors[0]!,
+    /None of the 2 requested range\(s\) resolved/,
+  );
   assert.match(
     retry.result.errors.find((e) => e.startsWith("range m00050..m00060")) ?? "",
     /does not exist in this session/,
@@ -453,17 +529,29 @@ test("fresh small content without consumed ranges keeps the too-small message", 
   const core = createCore();
   const state = createInitialState();
   const messages = [msg("a", "alpha"), msg("b", "beta")];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const result = core.applyCompression({
     ranges: [{ startRef: "m00001", endRef: "m00002", summary: "a and b" }],
     messages,
     state,
-    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
   });
 
   assert.equal(result.result.blocksCreated, 0);
-  assert.match(result.result.errors[0]!, /^Total compressible content too small \(\d+ chars across 1 range\(s\), min 5000\)/);
+  assert.match(
+    result.result.errors[0]!,
+    /^Total compressible content too small \(\d+ chars across 1 range\(s\), min 5000\)/,
+  );
 });
 
 test("consumed plus fresh content above threshold proceeds with a warning", () => {
@@ -477,7 +565,10 @@ test("consumed plus fresh content above threshold proceeds with a warning", () =
     msg("c", big),
     msg("d", "delta"),
   ];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const { state: after } = core.applyCompression({
     ranges: [{ startRef: "m00002", endRef: "m00003", summary: "intro recap" }],
@@ -494,13 +585,21 @@ test("consumed plus fresh content above threshold proceeds with a warning", () =
     ],
     messages: pruned,
     state: after,
-    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
   });
 
   assert.equal(retry.result.blocksCreated, 1);
   assert.equal(retry.result.errors.length, 0);
   assert.ok(
-    retry.result.warnings.some((w) => /Skipped range \(m00002\.\.m00003\) — already compressed/.test(w)),
+    retry.result.warnings.some((w) =>
+      /Skipped range \(m00002\.\.m00003\) — already compressed/.test(w),
+    ),
     `expected consumed warning in: ${JSON.stringify(retry.result.warnings)}`,
   );
 });
@@ -509,7 +608,10 @@ test("empty summary is attributed to its range", () => {
   const core = createCore();
   const state = createInitialState();
   const messages = [msg("a", "alpha"), msg("b", "beta")];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const result = core.applyCompression({
     ranges: [{ startRef: "m00001", endRef: "m00002", summary: "" }],
@@ -520,14 +622,20 @@ test("empty summary is attributed to its range", () => {
 
   assert.equal(result.result.blocksCreated, 0);
   assert.equal(result.result.errors.length, 1);
-  assert.match(result.result.errors[0]!, /^range m00001\.\.m00002: Summary is empty/);
+  assert.match(
+    result.result.errors[0]!,
+    /^range m00001\.\.m00002: Summary is empty/,
+  );
 });
 
 test("invalid refs are reported per-range without failing the batch", () => {
   const core = createCore();
   const state = createInitialState();
   const messages = [msg("a", "alpha"), msg("b", "beta")];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const result = core.applyCompression({
     ranges: [
@@ -541,14 +649,20 @@ test("invalid refs are reported per-range without failing the batch", () => {
 
   assert.equal(result.result.blocksCreated, 1, "valid range still compresses");
   assert.equal(result.result.errors.length, 1);
-  assert.match(result.result.errors[0]!, /^range m999999\.\.m00002: Invalid boundary ref/);
+  assert.match(
+    result.result.errors[0]!,
+    /^range m999999\.\.m00002: Invalid boundary ref/,
+  );
 });
 
 test("unknown ref (valid format, never allocated) names the ref and suggests acp_status", () => {
   const core = createCore();
   const state = createInitialState();
   const messages = [msg("a", "alpha")];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const result = core.applyCompression({
     ranges: [{ startRef: "m00099", endRef: "m00100", summary: "nope" }],
@@ -572,7 +686,10 @@ test("consumed ranges warn+skip when minCompressRange is 0", () => {
     msg("b", "beta"),
     msg("c", "gamma"),
   ];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   const { state: after } = core.applyCompression({
     ranges: [{ startRef: "m00002", endRef: "m00003", summary: "intro recap" }],
@@ -592,20 +709,38 @@ test("consumed ranges warn+skip when minCompressRange is 0", () => {
   assert.equal(retry.result.blocksCreated, 0);
   assert.equal(retry.result.errors.length, 0);
   assert.ok(
-    retry.result.warnings.some((w) => /Skipped range \(m00002\.\.m00003\) — already compressed/.test(w)),
+    retry.result.warnings.some((w) =>
+      /Skipped range \(m00002\.\.m00003\) — already compressed/.test(w),
+    ),
     `expected consumed warning in: ${JSON.stringify(retry.result.warnings)}`,
   );
 });
 
 test("resolveBoundaries throws typed BoundaryNotFoundError with kind and endpoint", () => {
   const state = createInitialState();
-  const messages = [msg("u", "the task"), msg("a", "alpha"), msg("b", "beta"), msg("c", "gamma")];
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+  const messages = [
+    msg("u", "the task"),
+    msg("a", "alpha"),
+    msg("b", "beta"),
+    msg("c", "gamma"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
 
   assert.throws(
-    () => resolveBoundaries({ startRef: "m00099", endRef: "m00001", messages, state }),
+    () =>
+      resolveBoundaries({
+        startRef: "m00099",
+        endRef: "m00001",
+        messages,
+        state,
+      }),
     (e: unknown) =>
-      e instanceof BoundaryNotFoundError && e.kind === "unknown" && e.endpoint === "start",
+      e instanceof BoundaryNotFoundError &&
+      e.kind === "unknown" &&
+      e.endpoint === "start",
   );
 
   const core = createCore();
@@ -617,9 +752,17 @@ test("resolveBoundaries throws typed BoundaryNotFoundError with kind and endpoin
   });
   const pruned = prune(messages, after);
   assert.throws(
-    () => resolveBoundaries({ startRef: "m00002", endRef: "m00003", messages: pruned, state: after }),
+    () =>
+      resolveBoundaries({
+        startRef: "m00002",
+        endRef: "m00003",
+        messages: pruned,
+        state: after,
+      }),
     (e: unknown) =>
-      e instanceof BoundaryNotFoundError && e.kind === "consumed" && e.endpoint === "start",
+      e instanceof BoundaryNotFoundError &&
+      e.kind === "consumed" &&
+      e.endpoint === "start",
   );
 });
 
@@ -691,7 +834,9 @@ test("consumed block anchor snaps to the active owning block instead of failing 
   state.nextBlockId = 111;
 
   const result = core.applyCompression({
-    ranges: [{ startRef: "b2", endRef: "b110", summary: "distilled span", topic: "t" }],
+    ranges: [
+      { startRef: "b2", endRef: "b110", summary: "distilled span", topic: "t" },
+    ],
     messages,
     state,
     config: config(),
@@ -709,8 +854,14 @@ test("consumed block anchor snaps to the active owning block instead of failing 
   assert.ok(created, "new block allocated after b110");
   assert.equal(created!.tier, 2);
   assert.deepEqual(created!.directBlockIds, ["b110"]);
-  assert.equal(result.state.blocks.find((b) => b.blockId === "b110")!.active, false);
-  assert.equal(result.state.blocks.find((b) => b.blockId === "b50")!.active, true);
+  assert.equal(
+    result.state.blocks.find((b) => b.blockId === "b110")!.active,
+    false,
+  );
+  assert.equal(
+    result.state.blocks.find((b) => b.blockId === "b50")!.active,
+    true,
+  );
 });
 
 test("consumed message anchor snaps to the active block covering it", () => {
@@ -735,6 +886,22 @@ test("consumed message anchor snaps to the active block covering it", () => {
     nextIndex: 1,
   }).map;
   state.blocks.push(
+    {
+      // Consumed child kept in state (kernel invariant: applySingleRange
+      // deactivates but never deletes) so b50's inheritance is resolvable.
+      blockId: "b2",
+      runId: "r1",
+      tier: 1,
+      topic: "t",
+      summary: "s2",
+      directMessageIds: ["a", "b"],
+      effectiveMessageIds: ["a", "b"],
+      directBlockIds: [],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: false,
+    },
     {
       blockId: "b50",
       runId: "r1",
@@ -767,7 +934,14 @@ test("consumed message anchor snaps to the active block covering it", () => {
   const visible = full.slice(2);
 
   const result = core.applyCompression({
-    ranges: [{ startRef: "m00001", endRef: "b110", summary: "distilled span", topic: "t" }],
+    ranges: [
+      {
+        startRef: "m00001",
+        endRef: "b110",
+        summary: "distilled span",
+        topic: "t",
+      },
+    ],
     messages: visible,
     state,
     config: config(),
@@ -823,10 +997,18 @@ test("gate error names the current active block span when anchors stay consumed"
   );
 
   const result = core.applyCompression({
-    ranges: [{ startRef: "b2", endRef: "b110", summary: "distilled span", topic: "t" }],
+    ranges: [
+      { startRef: "b2", endRef: "b110", summary: "distilled span", topic: "t" },
+    ],
     messages,
     state,
-    config: config({ compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 } }),
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
   });
 
   assert.equal(result.result.blocksCreated, 0);

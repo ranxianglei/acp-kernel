@@ -1,18 +1,14 @@
 import { assignRefs, highestUsedIndex } from "./refs.js";
-import { prune } from "./prune.js";
+import { prune, isSummaryMessageId } from "./prune.js";
 import { syncBlocks } from "./sync.js";
 import { advanceSurvival, activeBlocks, blockById } from "./state.js";
-import {
-  allocateBlockId,
-  allocateRunId,
-  createInitialState,
-} from "./state.js";
+import { allocateBlockId, allocateRunId, createInitialState } from "./state.js";
 import { defaultCountTokens } from "./tokenize.js";
 import { validateConfig } from "./config.js";
 import {
   BoundaryNotFoundError,
   resolveBoundaries,
-  earliestIndexOfIds,
+  visibleBlockAnchor,
 } from "./boundaries.js";
 import type { ResolvedRange } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
@@ -147,7 +143,12 @@ export function createCore(ports: Ports = {}): CompressionCore {
     // default; applySingleRange enforces it as a hard backstop.
     const protectedMessageIds =
       input.protectedMessageIds ??
-      computeProtectedRefs(input.messages, input.state, input.config, countTokens);
+      computeProtectedRefs(
+        input.messages,
+        input.state,
+        input.config,
+        countTokens,
+      );
 
     const preExistingCoverage = collectCoverage(state);
 
@@ -155,7 +156,10 @@ export function createCore(ports: Ports = {}): CompressionCore {
     // skipSpecs, the minCompressRange pre-check, and the per-range loop —
     // previously each re-resolved and silently swallowed failures, so
     // consumed/unknown ranges produced misleading "too small" errors.
-    const classifications = new Map<typeof input.ranges[number], RangeResolution>();
+    const classifications = new Map<
+      (typeof input.ranges)[number],
+      RangeResolution
+    >();
     const classificationErrors: string[] = [];
     const consumedRanges: typeof input.ranges = [];
     for (const spec of input.ranges) {
@@ -186,7 +190,10 @@ export function createCore(ports: Ports = {}): CompressionCore {
             error: error instanceof Error ? error : new Error(String(error)),
           });
           classificationErrors.push(
-            rangeError(spec, error instanceof Error ? error.message : String(error)),
+            rangeError(
+              spec,
+              error instanceof Error ? error.message : String(error),
+            ),
           );
         }
       }
@@ -199,34 +206,37 @@ export function createCore(ports: Ports = {}): CompressionCore {
       else if (resolution.status === "unknown") unknownCount++;
     }
 
-    const rangeIndexSets: { spec: typeof input.ranges[number]; indices: number[] }[] = [];
+    // Overlap detection uses resolved boundary indices, not messageIds: a
+    // summary-only range (block refs over a pruned view) has empty
+    // messageIds after synthetic-id filtering but still occupies its
+    // [startIndex, endIndex] span.
+    const rangeSpans: {
+      spec: (typeof input.ranges)[number];
+      start: number;
+      end: number;
+    }[] = [];
     for (const [spec, resolution] of classifications) {
       if (resolution.status !== "ok") continue;
-      const indices = resolution.resolved.messageIds.map((id) =>
-        input.messages.findIndex((m) => m.id === id),
-      ).filter((i) => i >= 0);
-      rangeIndexSets.push({ spec, indices });
+      rangeSpans.push({
+        spec,
+        start: resolution.resolved.startIndex,
+        end: resolution.resolved.endIndex,
+      });
     }
-    const sortedRanges = [...rangeIndexSets].sort((a, b) => {
-      const aMin = a.indices.length > 0 ? Math.min(...a.indices) : Infinity;
-      const bMin = b.indices.length > 0 ? Math.min(...b.indices) : Infinity;
-      return aMin - bMin;
-    });
+    const sortedRanges = [...rangeSpans].sort((a, b) => a.start - b.start);
     // Overlapping ranges warn+skip (earliest wins) rather than aborting the
     // whole batch — see ISSUE-42 / dog/billion-context-pi#21.
-    const skipSpecs = new Set<typeof input.ranges[number]>();
+    const skipSpecs = new Set<(typeof input.ranges)[number]>();
     let acceptedMaxIndex = -1;
     for (const entry of sortedRanges) {
-      const entryMax = entry.indices.length > 0 ? Math.max(...entry.indices) : -1;
-      const entryMin = entry.indices.length > 0 ? Math.min(...entry.indices) : -1;
-      if (entryMin >= 0 && entryMin <= acceptedMaxIndex) {
+      if (entry.start <= acceptedMaxIndex) {
         skipSpecs.add(entry.spec);
         warnings.push(
           `Skipped range (${entry.spec.startRef}..${entry.spec.endRef}) — overlaps an earlier range in the batch; the earlier range takes precedence. Keep ranges disjoint.`,
         );
         continue;
       }
-      if (entryMax > acceptedMaxIndex) acceptedMaxIndex = entryMax;
+      if (entry.end > acceptedMaxIndex) acceptedMaxIndex = entry.end;
     }
 
     if (input.config.compress.minCompressRange > 0 && input.ranges.length > 0) {
@@ -245,7 +255,10 @@ export function createCore(ports: Ports = {}): CompressionCore {
           totalRangeChars += msg?.text?.length ?? 0;
         }
       }
-      if (!hasBlockBoundaryRange && totalRangeChars < input.config.compress.minCompressRange) {
+      if (
+        !hasBlockBoundaryRange &&
+        totalRangeChars < input.config.compress.minCompressRange
+      ) {
         const live = activeBlocks(state)
           .map((b) => b.blockId)
           .sort((x, y) => numericBlockId(x) - numericBlockId(y));
@@ -254,11 +267,13 @@ export function createCore(ports: Ports = {}): CompressionCore {
             ? ` Current active blocks span ${live[0]}..${live[live.length - 1]} — retry with startId/endId set to active block IDs in that span.`
             : "";
         const gateMessage =
-          resolvableCount === 0 && consumedRanges.length === 0 && unknownCount > 0
+          resolvableCount === 0 &&
+          consumedRanges.length === 0 &&
+          unknownCount > 0
             ? `None of the ${input.ranges.length} requested range(s) resolved — every ref failed with "does not exist in this session". Refs recorded before an earlier compress are stale: each successful compress renumbers the remaining refs. Run acp_status, then re-issue the compress in the same turn using only the refs it reports.`
             : consumedRanges.length > 0
-            ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}); remaining compressible content ${totalRangeChars} chars < min ${input.config.compress.minCompressRange}. Nothing to do.${liveHint}`
-            : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
+              ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}); remaining compressible content ${totalRangeChars} chars < min ${input.config.compress.minCompressRange}. Nothing to do.${liveHint}`
+              : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
         return {
           state: input.state,
           result: {
@@ -301,7 +316,12 @@ export function createCore(ports: Ports = {}): CompressionCore {
         tokensCompressed += outcome.tokens;
         warnings.push(...outcome.warnings);
       } catch (error) {
-        errors.push(rangeError(spec, error instanceof Error ? error.message : String(error)));
+        errors.push(
+          rangeError(
+            spec,
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
       }
     }
 
@@ -320,13 +340,18 @@ export function createCore(ports: Ports = {}): CompressionCore {
       state.nudge.lastShownByTier = {};
     }
 
-    return { state, result: { blocksCreated, tokensCompressed, errors, warnings } };
+    return {
+      state,
+      result: { blocksCreated, tokensCompressed, errors, warnings },
+    };
   }
 
   function processTurn(input: ProcessTurnInput): ProcessTurnResult {
     const configErrors = validateConfig(input.config);
     if (configErrors.length > 0) {
-      console.warn(`[acp-kernel] Config validation warnings: ${configErrors.join("; ")}. Thresholds may not fire correctly.`);
+      console.warn(
+        `[acp-kernel] Config validation warnings: ${configErrors.join("; ")}. Thresholds may not fire correctly.`,
+      );
     }
     const ctx: PipelineContext = {
       config: input.config,
@@ -409,7 +434,14 @@ export function createCore(ports: Ports = {}): CompressionCore {
     return [...base, createRenderRefsNode(strategy)];
   }
 
-  return { processTurn, applyCompression, defaultNodes, decompress, search, status };
+  return {
+    processTurn,
+    applyCompression,
+    defaultNodes,
+    decompress,
+    search,
+    status,
+  };
 }
 
 // --- Pipeline nodes -------------------------------------------------------
@@ -518,10 +550,7 @@ const nudgeNode: PipelineNode = {
 
     let stamped = { ...io.state.nudge };
 
-    if (
-      baseline > 0 &&
-      ctx.tokenCount < baseline - nudgeGrowthTokens
-    ) {
+    if (baseline > 0 && ctx.tokenCount < baseline - nudgeGrowthTokens) {
       stamped.lastPerMessageNudgeTokens = ctx.tokenCount;
       stamped.lastNudgeShownTokens = 0;
       // The context shrank dramatically — host compaction, or a tokenCount
@@ -545,7 +574,10 @@ const nudgeNode: PipelineNode = {
       // (lastNudgeShownTokens) suppresses lower-priority tiers within this
       // turn; the per-tier entry throttles re-firing of the SAME tier.
       if (nudge.tier !== null) {
-        stamped.lastShownByTier = { ...stamped.lastShownByTier, [nudge.tier]: ctx.tokenCount };
+        stamped.lastShownByTier = {
+          ...stamped.lastShownByTier,
+          [nudge.tier]: ctx.tokenCount,
+        };
       }
     }
 
@@ -581,7 +613,14 @@ const emergencyTruncateNode: PipelineNode = {
 };
 
 interface SingleRangeInput {
-  spec: { startRef: string; endRef: string; summary: string; topic?: string; compressCallId?: string; summaryMaxChars?: number };
+  spec: {
+    startRef: string;
+    endRef: string;
+    summary: string;
+    topic?: string;
+    compressCallId?: string;
+    summaryMaxChars?: number;
+  };
   messages: CoreMessage[];
   state: CompressionState;
   runId: string;
@@ -608,19 +647,26 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   const rangeMessageIds = applyPairBoundaryAdjustments(
     resolved,
     input.messages,
-  );
+  ).filter((id) => !isSummaryMessageId(id));
 
   // Re-scan for nested blocks in the ADJUSTED range (tool-pair extension may
   // have pulled in messages that are anchors of existing blocks).
   if (rangeMessageIds.length > resolved.messageIds.length) {
-    const indexByRawId = new Map<string, number>();
-    input.messages.forEach((m, i) => indexByRawId.set(m.id, i));
-    const adjustedStart = indexByRawId.get(rangeMessageIds[0]!) ?? resolved.startIndex;
-    const adjustedEnd = indexByRawId.get(rangeMessageIds[rangeMessageIds.length - 1]!) ?? resolved.endIndex;
+    const indexByMessageId = new Map<string, number>();
+    input.messages.forEach((m, i) => indexByMessageId.set(m.id, i));
+    const adjustedStart =
+      rangeMessageIds.length > 0
+        ? (indexByMessageId.get(rangeMessageIds[0]!) ?? resolved.startIndex)
+        : resolved.startIndex;
+    const adjustedEnd =
+      rangeMessageIds.length > 0
+        ? (indexByMessageId.get(rangeMessageIds[rangeMessageIds.length - 1]!) ??
+          resolved.endIndex)
+        : resolved.endIndex;
     const nestedSeen = new Set(resolved.nestedBlockIds);
     for (const block of activeBlocks(input.state)) {
       if (nestedSeen.has(block.blockId)) continue;
-      const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+      const anchor = visibleBlockAnchor(block, indexByMessageId);
       if (anchor !== null && anchor >= adjustedStart && anchor <= adjustedEnd) {
         nestedSeen.add(block.blockId);
         resolved.nestedBlockIds.push(block.blockId);
@@ -759,7 +805,12 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
 }
 
 function applyPairBoundaryAdjustments(
-  resolved: { startIndex: number; endIndex: number; messageIds: string[]; boundaryKind: string },
+  resolved: {
+    startIndex: number;
+    endIndex: number;
+    messageIds: string[];
+    boundaryKind: string;
+  },
   messages: CoreMessage[],
 ): string[] {
   if (resolved.boundaryKind === "block") {
@@ -789,10 +840,7 @@ function applyPairBoundaryAdjustments(
     endIndex = toolAdjusted.endIndex;
     if (!changed) break;
   }
-  if (
-    startIndex === resolved.startIndex &&
-    endIndex === resolved.endIndex
-  ) {
+  if (startIndex === resolved.startIndex && endIndex === resolved.endIndex) {
     return resolved.messageIds;
   }
   const ids: string[] = [];
@@ -824,10 +872,7 @@ function validateCompressionRange(
   }
 
   const effectiveMax = input.spec.summaryMaxChars ?? cfg.maxSummaryLength;
-  if (
-    effectiveMax > 0 &&
-    summary.length > effectiveMax
-  ) {
+  if (effectiveMax > 0 && summary.length > effectiveMax) {
     throw new Error(
       `Summary too long (${summary.length} chars, max ${effectiveMax}). Strip noise — keep critical paths, decisions, errors, and code references. Or pass summaryMaxChars to increase the limit — don't lose critical info just to fit.`,
     );
@@ -941,18 +986,30 @@ function pendingByTier(
   countTokens: (t: string) => number,
   minCompressRange: number,
 ): Record<number, { pending: number; targetBlocks: CompressionBlock[] }> {
-  const out: Record<number, { pending: number; targetBlocks: CompressionBlock[] }> = {};
+  const out: Record<
+    number,
+    { pending: number; targetBlocks: CompressionBlock[] }
+  > = {};
   const merged = recommendation?.recommendedRanges ?? [];
   const effective =
     minCompressRange > 0
       ? merged.filter((r) => (r.chars ?? r.tokens * 4) >= minCompressRange)
       : merged;
-  out[1] = { pending: effective.reduce((s, r) => s + r.tokens, 0), targetBlocks: [] };
+  out[1] = {
+    pending: effective.reduce((s, r) => s + r.tokens, 0),
+    targetBlocks: [],
+  };
   const active = activeBlocks(state);
   const t1 = active.filter((b) => b.tier === 1);
   const t2 = active.filter((b) => b.tier === 2);
-  out[2] = { pending: t1.reduce((s, b) => s + countTokens(b.summary), 0), targetBlocks: t1 };
-  out[3] = { pending: t2.reduce((s, b) => s + countTokens(b.summary), 0), targetBlocks: t2 };
+  out[2] = {
+    pending: t1.reduce((s, b) => s + countTokens(b.summary), 0),
+    targetBlocks: t1,
+  };
+  out[3] = {
+    pending: t2.reduce((s, b) => s + countTokens(b.summary), 0),
+    targetBlocks: t2,
+  };
   return out;
 }
 
@@ -1090,10 +1147,19 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       .map((t) => `T${t} ${tiers[t]!.pending}`);
     const readyHint = ready.length > 0 ? `, ready: ${ready.join(", ")}` : "";
     const blocked = eligible
-      .filter((t) => (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens && (state.nudge.lastShownByTier[t] ?? 0) > 0 && tokenCount - (state.nudge.lastShownByTier[t] ?? 0) < growthFloor)
+      .filter(
+        (t) =>
+          (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens &&
+          (state.nudge.lastShownByTier[t] ?? 0) > 0 &&
+          tokenCount - (state.nudge.lastShownByTier[t] ?? 0) < growthFloor,
+      )
       .map((t) => `T${t} (cadence)`);
-    const blockedHint = blocked.length > 0 ? `, blocked: ${blocked.join(", ")}` : "";
-    const maxPending = Math.max(0, ...Object.values(tiers).map((t) => t.pending));
+    const blockedHint =
+      blocked.length > 0 ? `, blocked: ${blocked.join(", ")}` : "";
+    const maxPending = Math.max(
+      0,
+      ...Object.values(tiers).map((t) => t.pending),
+    );
     // Report the ACTUAL blocking condition, not a fixed template. A session
     // can have plenty to compress (pending >= threshold) but still not
     // inject because growth/floor/cadence isn't met — the old fixed
@@ -1101,13 +1167,25 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     const pendingShort = maxPending < nudgeGrowthTokens;
     const growthShort = growthSinceReference < growthFloor;
     const parts: string[] = [];
-    if (pendingShort) parts.push(`max compressible ${maxPending} < threshold ${nudgeGrowthTokens}`);
-    if (growthShort) parts.push(`growth ${growthSinceReference} < floor ${growthFloor}`);
-    if (parts.length === 0) parts.push(`max compressible ${maxPending}, growth ${growthSinceReference}`);
+    if (pendingShort)
+      parts.push(
+        `max compressible ${maxPending} < threshold ${nudgeGrowthTokens}`,
+      );
+    if (growthShort)
+      parts.push(`growth ${growthSinceReference} < floor ${growthFloor}`);
+    if (parts.length === 0)
+      parts.push(
+        `max compressible ${maxPending}, growth ${growthSinceReference}`,
+      );
     reason = `${parts.join("; ")}${readyHint}${blockedHint}`;
   }
 
-  const ctxBreakdown = computeContextBreakdown(input.messages, tokenCount, growthSinceReference, countTokens);
+  const ctxBreakdown = computeContextBreakdown(
+    input.messages,
+    tokenCount,
+    growthSinceReference,
+    countTokens,
+  );
 
   return {
     shouldInject,
@@ -1135,14 +1213,26 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   };
 }
 
-function computeContextBreakdown(messages: CoreMessage[], total: number, growth: number, countTokens: (t: string) => number): ContextBreakdown {
+function computeContextBreakdown(
+  messages: CoreMessage[],
+  total: number,
+  growth: number,
+  countTokens: (t: string) => number,
+): ContextBreakdown {
   const count = countTokens ?? ((t: string) => Math.ceil(t.length / 4));
-  let system = 0, tool = 0, summaries = 0, code = 0, text = 0;
+  let system = 0,
+    tool = 0,
+    summaries = 0,
+    code = 0,
+    text = 0;
   for (const msg of messages) {
     const tokens = count(msg.text ?? "");
     if (msg.text?.startsWith("[Compressed conversation section]")) {
       summaries += tokens;
-    } else if (msg.contentType === "tool-call" || msg.contentType === "tool-result") {
+    } else if (
+      msg.contentType === "tool-call" ||
+      msg.contentType === "tool-result"
+    ) {
       tool += tokens;
     } else if (msg.role === "system") {
       system += tokens;

@@ -92,24 +92,38 @@ test("anthropic: tool_result without is_error stays clean", () => {
     assert.equal(tr.is_error, undefined, "no spurious is_error");
 });
 
-// 4. OpenAI developer role round-trips (was collapsed to system).
-test("openai: developer role is restored", () => {
-    const body: OpenAIRequestBody = { messages: [{ role: "developer", content: "you are a dev" }] };
-    const { msgs } = openaiToCore(body);
-    assert.equal(msgs[0]?.role, "system", "kernel sees system");
-    assert.equal(msgs[0]?.originalRole, "developer", "originalRole sidecar stored");
-    const rebuilt = coreToOpenai(msgs);
-    assert.equal(rebuilt[0]?.role, "developer", "developer role reconstructed");
-    assert.equal(rebuilt[0]?.content, "you are a dev");
+// 4. OpenAI leading system/developer prefix is hoisted OUT of the fold space
+// (restart-regression fix: host system content is runtime-unstable, so it must
+// never enter the id/fingerprint space); originalRole still round-trips for
+// mid-conversation system traffic.
+test("openai: leading developer/system prefix is hoisted, not folded", () => {
+    const body: OpenAIRequestBody = {
+        messages: [
+            { role: "developer", content: "you are a dev" },
+            { role: "system", content: "sys" },
+            { role: "user", content: "hi" },
+        ],
+    };
+    const { msgs, systemText } = openaiToCore(body);
+    assert.equal(systemText, "you are a dev\n\nsys", "prefix returned separately");
+    assert.ok(msgs.every((m) => m.role !== "system"), "no system piece in the fold space");
+    assert.equal(msgs[0]?.role, "user");
 });
 
-// 4b. Sanity: a plain system role is NOT promoted to developer.
-test("openai: system role stays system", () => {
-    const body: OpenAIRequestBody = { messages: [{ role: "system", content: "sys" }] };
+// 4b. Mid-conversation system traffic keeps the role sidecar round-trip.
+test("openai: mid-conversation developer role is restored", () => {
+    const body: OpenAIRequestBody = {
+        messages: [
+            { role: "user", content: "hi" },
+            { role: "developer", content: "you are a dev" },
+        ],
+    };
     const { msgs } = openaiToCore(body);
-    assert.equal(msgs[0]?.originalRole, "system");
+    const dev = msgs.find((m) => m.role === "system")!;
+    assert.equal(dev.originalRole, "developer", "originalRole sidecar stored");
     const rebuilt = coreToOpenai(msgs);
-    assert.equal(rebuilt[0]?.role, "system");
+    assert.equal(rebuilt[1]?.role, "developer", "developer role reconstructed");
+    assert.equal(rebuilt[1]?.content, "you are a dev");
 });
 
 // 5. OpenAI image_url round-trips (image was previously dropped entirely).

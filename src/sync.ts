@@ -1,3 +1,4 @@
+import { summaryMessageId } from "./prune.js";
 import type { CompressionState, CoreMessage } from "./types.js";
 
 export interface SyncResult {
@@ -63,9 +64,13 @@ export function syncBlocks(
       continue;
     }
     block.active = true;
-    const stillPresent = block.effectiveMessageIds.some((id) =>
-      presentIds.has(id),
-    );
+    // A block whose raw messages were replaced by its rendered summary
+    // (pruned view) is still present — the summary IS the block's visible
+    // representation. Without this, hosts passing pruned views would lose
+    // block activity every turn.
+    const stillPresent =
+      block.effectiveMessageIds.some((id) => presentIds.has(id)) ||
+      presentIds.has(summaryMessageId(block.blockId));
     if (!stillPresent) {
       block.active = false;
       deactivated.push(block.blockId);

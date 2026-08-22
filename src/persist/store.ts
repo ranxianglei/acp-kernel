@@ -18,6 +18,15 @@ export interface PersistedEnvelope<T> {
     payload: T;
 }
 
+/** A legacy (pre-envelope) record adopted on load. `version`/`savedAt`
+ * preserve the source record's own stamps when present. */
+export interface LegacyAdoption<T> {
+    id: string;
+    payload: T;
+    version?: number;
+    savedAt?: number;
+}
+
 export interface StateStoreOptions<T> {
     /**
      * Storage root. The kernel deliberately has NO default location: the
@@ -51,6 +60,15 @@ export interface StateStoreOptions<T> {
      */
     relPath?: (id: string, payload: T) => string;
     /**
+     * Adopt records written by an older, pre-envelope schema. Receives the
+     * parsed JSON of any file that failed the envelope-shape check; return
+     * an adoption to load it as an envelope, or null to skip it. Adopted
+     * records are re-persisted in the current envelope format on the next
+     * dirty write — files migrate organically, and old files keep loading
+     * (same policy billion-context's proxy used for its v1→v3 migration).
+     */
+    legacy?: (parsed: unknown) => LegacyAdoption<T> | null;
+    /**
      * Payload validation on load. Return false to skip a record (foreign
      * schema, corrupt content). Default: envelope-shape check only
      * (string id, non-null payload).
@@ -82,6 +100,7 @@ export class StateStore<T> {
     private readonly version: number;
     private readonly debounceMs: number;
     private readonly log: PersistLogger;
+    private readonly legacyFn?: (parsed: unknown) => LegacyAdoption<T> | null;
     private readonly relPathFn?: (id: string, payload: T) => string;
     private readonly validateFn: (envelope: PersistedEnvelope<T>) => boolean;
     private readonly timers = new Map<string, NodeJS.Timeout>();
@@ -99,6 +118,7 @@ export class StateStore<T> {
         this.enabled = opts.enabled ?? true;
         this.log = opts.log ?? ((_level, _msg) => {});
         this.relPathFn = opts.relPath;
+        this.legacyFn = opts.legacy;
         this.validateFn = opts.validate ?? defaultValidate;
     }
 
@@ -190,7 +210,6 @@ export class StateStore<T> {
                 }
             }
             if (lastErr) throw lastErr;
-            this.discovered.set(id, file);
             return true;
         } catch (e) {
             this.log("error", `[persist] flushSync failed for ${id}: ${errText(e)}`);
@@ -204,11 +223,19 @@ export class StateStore<T> {
     }
 
     /** Load one record. Checks the discovered path (from a prior
-     *  write/loadAll) and the flat default name. Returns null when absent,
-     *  disabled, corrupt, or rejected by validate. */
-    loadSync(id: string): PersistedEnvelope<T> | null {
+     *  write/loadAll), an optional relative-path hint, and the flat default
+     *  name. Returns null when absent, disabled, corrupt, or rejected by
+     *  validate. The hint covers namespaced records the store has not
+     *  discovered (e.g. an evicted session re-requested with its meta,
+     *  where the path depends on data the store cannot reconstruct from
+     *  the id alone). */
+    loadSync(id: string, hint?: string): PersistedEnvelope<T> | null {
         if (!this.enabled) return null;
-        const candidates = [this.discovered.get(id), path.join(this.dir, flatFileNameFor(id))];
+        const candidates = [
+            this.discovered.get(id),
+            hint ? path.join(this.dir, hint) : undefined,
+            path.join(this.dir, flatFileNameFor(id)),
+        ];
         for (const file of candidates) {
             if (!file) continue;
             const envelope = this.readEnvelope(file);
@@ -351,11 +378,35 @@ export class StateStore<T> {
             }
             return null;
         }
-        if (!isEnvelopeLike(parsed) || !this.validateFn(parsed as PersistedEnvelope<T>)) {
-            this.log("warn", `[persist] skipping invalid record ${rel(file, this.dir)}`);
+        if (isEnvelopeLike(parsed)) {
+            if (!this.validateFn(parsed as PersistedEnvelope<T>)) {
+                this.log("warn", `[persist] skipping invalid record ${rel(file, this.dir)}`);
+                return null;
+            }
+            return parsed as PersistedEnvelope<T>;
+        }
+        const adopted = this.adoptLegacy(parsed);
+        if (adopted) return adopted;
+        this.log("warn", `[persist] skipping invalid record ${rel(file, this.dir)}`);
+        return null;
+    }
+
+    /** Wrap a legacy (pre-envelope) record as an envelope via the `legacy`
+     *  hook, then validate the adopted payload like any other. */
+    private adoptLegacy(parsed: unknown): PersistedEnvelope<T> | null {
+        const adoption = this.legacyFn ? this.legacyFn(parsed) : null;
+        if (!adoption || typeof adoption.id !== "string" || adoption.id.length === 0 || adoption.payload == null) {
             return null;
         }
-        return parsed as PersistedEnvelope<T>;
+        const source = parsed as Partial<PersistedEnvelope<T>>;
+        const envelope: PersistedEnvelope<T> = {
+            version: adoption.version ?? source.version ?? this.version,
+            savedAt: adoption.savedAt ?? source.savedAt ?? 0,
+            id: adoption.id,
+            payload: adoption.payload,
+        };
+        if (!this.validateFn(envelope)) return null;
+        return envelope;
     }
 
     /** Iterative recursive walk (no readdir-recursive dependency), skipping

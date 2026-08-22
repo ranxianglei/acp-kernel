@@ -545,3 +545,106 @@ test("promote-after-prune: compressing a consumed block's bN ref snaps to its ac
     false,
   );
 });
+
+test("promote-after-prune: m-ref range consumes a block that covers the first user message (summary anchor precedes the surviving raw)", () => {
+  const core = createCore();
+  const cfg = config({ preserveRecentMessages: 0 });
+  const messages = [
+    msg("raw-1", "u1 ".repeat(200)),
+    msg("raw-2", "a2 ".repeat(200), "assistant"),
+    msg("raw-3", "u3 ".repeat(200)),
+    msg("raw-4", "a4 ".repeat(200), "assistant"),
+    msg("raw-5", "u5 ".repeat(200)),
+    msg("raw-6", "a6 ".repeat(200), "assistant"),
+    msg("raw-7", "u7 ".repeat(200)),
+    msg("raw-8", "a8 ".repeat(200), "assistant"),
+    msg("raw-9", "u9 ".repeat(200)),
+    msg("raw-10", "a10 ".repeat(200), "assistant"),
+    msg("raw-11", "u11 ".repeat(200)),
+    msg("raw-12", "a12 ".repeat(200), "assistant"),
+    msg("raw-13", "u13 ".repeat(200)),
+  ];
+  const state = makeState(
+    [
+      {
+        blockId: "b1",
+        effectiveMessageIds: ["raw-1", "raw-2", "raw-3", "raw-4", "raw-5"],
+      },
+    ],
+    2,
+  );
+
+  const turn = core.processTurn({
+    messages,
+    state,
+    config: cfg,
+    tokenCount: 5000,
+  });
+  const visibleIds = turn.messages.map((m) => m.id);
+  // Prune keeps the first user message and inserts the summary at the block's
+  // earliest raw position — BEFORE the surviving raw, so the summary index
+  // differs from the raw's index.
+  assert.ok(visibleIds.includes(summaryMessageId("b1")));
+  assert.ok(visibleIds.includes("raw-1"), "first user message survives prune");
+  assert.ok(!visibleIds.includes("raw-5"), "covered raws are hidden");
+  assert.ok(
+    visibleIds.indexOf(summaryMessageId("b1")) < visibleIds.indexOf("raw-1"),
+    "summary precedes the surviving raw",
+  );
+
+  const startRef = turn.state.messageRefs.byRaw["raw-1"]!;
+  const endRef = turn.state.messageRefs.byRaw["raw-13"]!;
+
+  const applied = core.applyCompression({
+    ranges: [{ startRef, endRef, summary: "S".repeat(80) }],
+    messages: turn.messages,
+    state: turn.state,
+    config: cfg,
+  });
+  assert.deepEqual(
+    applied.result.errors,
+    [],
+    `unexpected errors: ${applied.result.errors.join("; ")}`,
+  );
+  assert.equal(applied.result.blocksCreated, 1);
+
+  const newBlock = applied.state.blocks[applied.state.blocks.length - 1]!;
+  // b1 must be consumed via its surviving raw even though its summary anchor
+  // sits outside the resolved range.
+  assert.deepEqual(newBlock.directBlockIds, ["b1"]);
+  assert.deepEqual(newBlock.effectiveMessageIds.sort(), [
+    "raw-1",
+    "raw-10",
+    "raw-11",
+    "raw-12",
+    "raw-13",
+    "raw-2",
+    "raw-3",
+    "raw-4",
+    "raw-5",
+    "raw-6",
+    "raw-7",
+    "raw-8",
+    "raw-9",
+  ]);
+  assert.deepEqual(newBlock.directMessageIds.sort(), [
+    "raw-10",
+    "raw-11",
+    "raw-12",
+    "raw-13",
+    "raw-6",
+    "raw-7",
+    "raw-8",
+    "raw-9",
+  ]);
+  for (const id of [
+    ...newBlock.effectiveMessageIds,
+    ...newBlock.directMessageIds,
+  ]) {
+    assert.ok(!isSummaryMessageId(id), `synthetic id leaked into block: ${id}`);
+  }
+  assert.equal(
+    applied.state.blocks.find((b) => b.blockId === "b1")!.active,
+    false,
+  );
+});

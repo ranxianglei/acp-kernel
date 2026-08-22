@@ -40,6 +40,7 @@ export {
   parseBoundary,
   BoundaryNotFoundError,
   visibleBlockAnchor,
+  blockVisibleInRange,
 } from "./boundaries.js";
 export {
   defaultCountTokens,

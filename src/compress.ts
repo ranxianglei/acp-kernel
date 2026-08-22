@@ -8,7 +8,7 @@ import { validateConfig } from "./config.js";
 import {
   BoundaryNotFoundError,
   resolveBoundaries,
-  visibleBlockAnchor,
+  blockVisibleInRange,
 } from "./boundaries.js";
 import type { ResolvedRange } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
@@ -666,8 +666,9 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     const nestedSeen = new Set(resolved.nestedBlockIds);
     for (const block of activeBlocks(input.state)) {
       if (nestedSeen.has(block.blockId)) continue;
-      const anchor = visibleBlockAnchor(block, indexByMessageId);
-      if (anchor !== null && anchor >= adjustedStart && anchor <= adjustedEnd) {
+      if (
+        blockVisibleInRange(block, indexByMessageId, adjustedStart, adjustedEnd)
+      ) {
         nestedSeen.add(block.blockId);
         resolved.nestedBlockIds.push(block.blockId);
       }

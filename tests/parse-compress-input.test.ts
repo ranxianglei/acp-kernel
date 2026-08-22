@@ -384,3 +384,51 @@ test("parseCompressArgs returns ranges typed as CompressRangeSpec", () => {
     assert.ok(spec);
     assert.equal(typeof spec.startRef, "string");
 });
+
+// --- top-level shapes the adapters observe (single range, topic, summaryMaxChars) ---
+
+test("parseCompressArgs accepts a single range at the top level (no content array)", () => {
+    const { ranges, diagnostics } = parseCompressArgs({ startRef: "m00001", endRef: "m00002", summary: "single" });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]!.startRef, "m00001");
+    assert.equal(ranges[0]!.endRef, "m00002");
+    assert.equal(ranges[0]!.summary, "single");
+});
+
+test("parseCompressArgs accepts a top-level single range with startId/endId variants", () => {
+    const { ranges, diagnostics } = parseCompressArgs({ startId: "m00001", endId: "m00002", summary: "single" });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]!.startRef, "m00001");
+});
+
+test("parseCompressArgs reports missing-content when there is no content and no valid single range", () => {
+    const { ranges, diagnostics } = parseCompressArgs({ foo: "bar" });
+    assert.equal(diagnostics.kind, "missing-content");
+    assert.equal(ranges.length, 0);
+});
+
+test("parseCompressArgs applies a top-level topic to ranges without their own", () => {
+    const { ranges } = parseCompressArgs({
+        topic: "Top",
+        content: [
+            { startRef: "m00001", endRef: "m00002", summary: "a" },
+            { startRef: "m00003", endRef: "m00004", summary: "b", topic: "Own" },
+        ],
+    });
+    assert.equal(ranges[0]!.topic, "Top");
+    assert.equal(ranges[1]!.topic, "Own");
+});
+
+test("parseCompressArgs applies a top-level summaryMaxChars to ranges without their own", () => {
+    const { ranges } = parseCompressArgs({
+        summaryMaxChars: 5000,
+        content: [
+            { startRef: "m00001", endRef: "m00002", summary: "a" },
+            { startRef: "m00003", endRef: "m00004", summary: "b", summaryMaxChars: 999 },
+        ],
+    });
+    assert.equal(ranges[0]!.summaryMaxChars, 5000);
+    assert.equal(ranges[1]!.summaryMaxChars, 999);
+});

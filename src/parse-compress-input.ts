@@ -116,6 +116,13 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
     diag.keys = Object.keys(value);
     const content = value["content"];
     if (content === undefined) {
+        // Model drift: a single range at the top level (no content array).
+        // The proxy defends against this shape; the kernel now owns it.
+        const single = validateEntry(value, callId);
+        if (single) {
+            diag.kind = "ok";
+            return finish([single], diag);
+        }
         diag.kind = "missing-content";
         return finish([], diag);
     }
@@ -141,6 +148,18 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
     }
 
     const { ranges, invalid } = validateEntries(entries, callId);
+    // Top-level fallbacks: topic and summaryMaxChars apply to every range
+    // that does not specify its own (omp/pi schemas define both at the top
+    // level; per-entry values win).
+    const topTopic = stringOr(value["topic"]);
+    const topMaxChars = value["summaryMaxChars"];
+    const hasTopMaxChars = typeof topMaxChars === "number" && Number.isFinite(topMaxChars);
+    if (topTopic !== undefined || hasTopMaxChars) {
+        for (const r of ranges) {
+            if (r.topic === undefined && topTopic !== undefined) r.topic = topTopic;
+            if (r.summaryMaxChars === undefined && hasTopMaxChars) r.summaryMaxChars = topMaxChars;
+        }
+    }
     diag.invalidItems = invalid;
     diag.kind = salvaged ? "truncated" : ranges.length > 0 ? "ok" : "no-valid-ranges";
     return finish(ranges, diag);

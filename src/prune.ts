@@ -3,6 +3,22 @@ import type { CompressionState, CoreMessage } from "./types.js";
 
 export const SUMMARY_HEADER = "[Compressed conversation section]";
 
+const SUMMARY_ID_PREFIX = "acp_summary_";
+
+/**
+ * The transient visible id of an active block's rendered summary message.
+ * This is a VIEW-ONLY representation: it must never be persisted into
+ * `effectiveMessageIds`/`directMessageIds` (the durable coverage is the
+ * block's raw message ids).
+ */
+export function summaryMessageId(blockId: string): string {
+  return `${SUMMARY_ID_PREFIX}${blockId}`;
+}
+
+export function isSummaryMessageId(id: string): boolean {
+  return id.startsWith(SUMMARY_ID_PREFIX);
+}
+
 export interface PruneOptions {
   injectSummaries?: boolean;
 }
@@ -47,6 +63,19 @@ function collectSummaryAnchors(
 ): SummaryAnchor[] {
   const anchors: SummaryAnchor[] = [];
   for (const block of activeBlocks(state)) {
+    // Prefer the position of an already-rendered summary (hosts may pass a
+    // previously-pruned view): keeps the summary stable in place instead of
+    // jumping to index 0 when the raw ids are no longer in the input.
+    const existingIndex = indexById.get(summaryMessageId(block.blockId));
+    if (existingIndex !== undefined) {
+      anchors.push({
+        blockId: block.blockId,
+        summary: block.summary,
+        topic: block.topic,
+        insertAt: existingIndex,
+      });
+      continue;
+    }
     let earliest: number | null = null;
     for (const id of block.effectiveMessageIds) {
       const index = indexById.get(id);
@@ -73,6 +102,9 @@ function rebuildMessages(
 ): CoreMessage[] {
   const result: CoreMessage[] = [];
   const pending = [...anchors];
+  const anchoredSummaryIds = new Set(
+    anchors.map((anchor) => summaryMessageId(anchor.blockId)),
+  );
 
   for (let index = 0; index < messages.length; index++) {
     while (pending.length > 0 && pending[0]!.insertAt === index) {
@@ -83,6 +115,9 @@ function rebuildMessages(
       continue;
     }
     if (covered.has(messages[index]!.id)) continue;
+    // A stale copy of this block's summary from a previously-pruned view:
+    // the freshly rendered one above replaces it.
+    if (anchoredSummaryIds.has(messages[index]!.id)) continue;
     result.push(messages[index]!);
   }
 
@@ -100,7 +135,7 @@ function renderSummary(anchor: SummaryAnchor): CoreMessage {
     : SUMMARY_HEADER;
   const text = body.length === 0 ? topicLine : `${topicLine}\n${body}`;
   return {
-    id: `acp_summary_${anchor.blockId}`,
+    id: summaryMessageId(anchor.blockId),
     role: "system",
     contentType: "text",
     text,

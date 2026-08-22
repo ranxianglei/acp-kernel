@@ -1,5 +1,7 @@
 import { activeBlocks, blockById } from "./state.js";
+import { isSummaryMessageId, summaryMessageId } from "./prune.js";
 import type {
+  CompressionBlock,
   CompressionState,
   CoreMessage,
   ResolvedBoundary,
@@ -106,7 +108,10 @@ export function resolveBoundaries(
   const messageIds: string[] = [];
   for (let index = startIndex; index <= endIndex; index++) {
     const message = input.messages[index];
-    if (message) messageIds.push(message.id);
+    // Synthetic summary messages are transient view representations, not
+    // compressible content: exclude them so they never leak into a new
+    // block's effectiveMessageIds/directMessageIds.
+    if (message && !isSummaryMessageId(message.id)) messageIds.push(message.id);
   }
 
   const boundaryKind: BoundaryKind =
@@ -115,7 +120,7 @@ export function resolveBoundaries(
   const nestedBlockIds: string[] = [];
   const nestedSeen = new Set<string>();
   for (const block of activeBlocks(input.state)) {
-    const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+    const anchor = visibleBlockAnchor(block, indexByRawId);
     if (anchor !== null && anchor >= startIndex && anchor <= endIndex) {
       if (!nestedSeen.has(block.blockId)) {
         nestedSeen.add(block.blockId);
@@ -187,7 +192,7 @@ function resolveAnchorIndex(
     );
   }
   if (block.active) {
-    const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+    const anchor = visibleBlockAnchor(block, indexByRawId);
     if (anchor !== null) {
       return { index: anchor, snapped: null };
     }
@@ -209,7 +214,7 @@ function resolveAnchorIndex(
   throw new BoundaryNotFoundError(
     "consumed",
     endpoint,
-    `${label}="b${boundary.numericId}" not found in visible context (block messages consumed by a higher-tier block).`,
+    `${label}="b${boundary.numericId}" is an active block but none of its content (raw messages or rendered summary) is visible in the current context — run acp_status to verify.`,
   );
 }
 
@@ -217,6 +222,12 @@ function resolveAnchorIndex(
  * Snap a consumed anchor to the active block that now owns its content.
  * Throwing instead dead-ends compress calls that follow nudge instructions
  * with older (already-distilled) refs — the livelock in dog/billion-context-pi#32.
+ *
+ * Only TRUE ANCESTORS qualify: an active block that INHERITED the content by
+ * consuming another block. If the active block DIRECTLY compressed the
+ * message itself, callers must get the "already compressed — retry with the
+ * block's bN ref" guidance instead of a silent snap (which would turn a
+ * message-range retry into a same-tier duplicate block).
  */
 function activeOwnerAnchor(
   state: CompressionState,
@@ -228,10 +239,14 @@ function activeOwnerAnchor(
   let best: number | null = null;
   for (const block of state.blocks) {
     if (!block.active) continue;
-    const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+    const direct = new Set(block.directMessageIds);
+    const ownsInherited = block.effectiveMessageIds.some(
+      (id) => owned.has(id) && !direct.has(id),
+    );
+    if (!ownsInherited) continue;
+    const anchor = visibleBlockAnchor(block, indexByRawId);
     if (anchor === null) continue;
-    const ownsContent = block.effectiveMessageIds.some((id) => owned.has(id));
-    if (ownsContent && (best === null || anchor < best)) {
+    if (best === null || anchor < best) {
       best = anchor;
     }
   }
@@ -240,6 +255,22 @@ function activeOwnerAnchor(
 
 function formatPaddedRef(index: number): string {
   return `m${String(index).padStart(5, "0")}`;
+}
+
+/**
+ * Visible anchor index for a block: its rendered summary message if present
+ * (post-prune views replace raw messages with `acp_summary_bN`), else the
+ * earliest visible raw message it covers. Without the summary fallback an
+ * active block whose raws were pruned becomes unresolvable and cannot be
+ * promoted (dog/billion-context-pi#195).
+ */
+export function visibleBlockAnchor(
+  block: CompressionBlock,
+  indexByMessageId: Map<string, number>,
+): number | null {
+  const summaryIndex = indexByMessageId.get(summaryMessageId(block.blockId));
+  if (summaryIndex !== undefined) return summaryIndex;
+  return earliestIndexOfIds(block.effectiveMessageIds, indexByMessageId);
 }
 
 export function earliestIndexOfIds(

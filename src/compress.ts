@@ -1,5 +1,5 @@
 import { assignRefs, highestUsedIndex } from "./refs.js";
-import { prune } from "./prune.js";
+import { prune, isSummaryMessageId } from "./prune.js";
 import { syncBlocks } from "./sync.js";
 import { advanceSurvival, activeBlocks, blockById } from "./state.js";
 import {
@@ -12,7 +12,7 @@ import { validateConfig } from "./config.js";
 import {
   BoundaryNotFoundError,
   resolveBoundaries,
-  earliestIndexOfIds,
+  visibleBlockAnchor,
 } from "./boundaries.js";
 import type { ResolvedRange } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
@@ -608,19 +608,19 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   const rangeMessageIds = applyPairBoundaryAdjustments(
     resolved,
     input.messages,
-  );
+  ).filter((id) => !isSummaryMessageId(id));
 
   // Re-scan for nested blocks in the ADJUSTED range (tool-pair extension may
   // have pulled in messages that are anchors of existing blocks).
   if (rangeMessageIds.length > resolved.messageIds.length) {
     const indexByRawId = new Map<string, number>();
     input.messages.forEach((m, i) => indexByRawId.set(m.id, i));
-    const adjustedStart = indexByRawId.get(rangeMessageIds[0]!) ?? resolved.startIndex;
-    const adjustedEnd = indexByRawId.get(rangeMessageIds[rangeMessageIds.length - 1]!) ?? resolved.endIndex;
+    const adjustedStart = rangeMessageIds.length > 0 ? (indexByRawId.get(rangeMessageIds[0]!) ?? resolved.startIndex) : resolved.startIndex;
+    const adjustedEnd = rangeMessageIds.length > 0 ? (indexByRawId.get(rangeMessageIds[rangeMessageIds.length - 1]!) ?? resolved.endIndex) : resolved.endIndex;
     const nestedSeen = new Set(resolved.nestedBlockIds);
     for (const block of activeBlocks(input.state)) {
       if (nestedSeen.has(block.blockId)) continue;
-      const anchor = earliestIndexOfIds(block.effectiveMessageIds, indexByRawId);
+      const anchor = visibleBlockAnchor(block, indexByRawId);
       if (anchor !== null && anchor >= adjustedStart && anchor <= adjustedEnd) {
         nestedSeen.add(block.blockId);
         resolved.nestedBlockIds.push(block.blockId);

@@ -80,6 +80,8 @@ export { hideConsumedCompressCalls } from "./hide-consumed.js";
 export type { HideConsumedResult } from "./hide-consumed.js";
 export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
+export { parseCompressArgs } from "./parse-compress-input.js";
+export type { CompressParseDiagnostics, CompressParseKind, ParsedCompressInput } from "./parse-compress-input.js";
 export {
   renderVisibleRefs,
   renderRefsNode,

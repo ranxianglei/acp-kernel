@@ -201,6 +201,7 @@ A default `countTokens` ships with the core (word-level + unicode CJK tokenizer,
 | prune (range → summary block) | **core** `processTurn` (pure) |
 | boundary resolution / search | **core** `resolveBoundaries` (pure) |
 | block allocation / state mutation / tiers | **core** `applyCompression` (pure) |
+| compress **argument parsing** (lenient: fences, trailing commas, truncated-array salvage; field-name variants) | **core** `parseCompressArgs` (pure; diagnostics are data — adapters emit them) |
 | young→old promotion / batch merge | **core** `sync-blocks` node (`advanceSurvival`) + `merge-blocks` node (pure) |
 | emergency truncation (context near full) | **core** `emergency-truncate` node — the LAST safety valve; no age-based GC |
 | protected-tools filtering logic | **core** (pure: message + config → bool) |

@@ -105,6 +105,27 @@ function messageContent(content: string | ResponseContentPart[]): string {
     return typeof content === "string" ? content : content.map(partText).join("\n");
 }
 
+/** Extract the reasoning text from a responses reasoning item. The host
+ *  carries it in `content` (reasoning_text parts); the primeFold mirror
+ *  carries it in `summary` (summary_text parts). Both must yield the same
+ *  text so the kernel derives the same core id (issue #64, responses). */
+function reasoningText(item: ResponseInputItem): string {
+    const fromParts = (parts: unknown, type: string): string => {
+        if (!Array.isArray(parts)) return "";
+        const texts: string[] = [];
+        for (const part of parts) {
+            if (part && typeof part === "object" && "type" in part && "text" in part) {
+                const rec = part as { type: unknown; text: unknown };
+                if (rec.type === type && typeof rec.text === "string") texts.push(rec.text);
+            }
+        }
+        return texts.join("\n");
+    };
+    const content = "content" in item ? item.content : undefined;
+    const summary = "summary" in item ? item.summary : undefined;
+    return fromParts(content, "reasoning_text") || fromParts(summary, "summary_text");
+}
+
 export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection {
     const msgs: BiliMessage[] = [];
     const systemParts: string[] = [];
@@ -129,10 +150,19 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
                     droppedReasoning++;
                     continue;
                 }
+                // Key the reasoning piece on its TEXT (deterministic), consistent
+                // with the anthropic/openai codecs. The host mints a per-request
+                // item id that the primeFold mirror cannot reproduce; keying on it
+                // put the mirror in a different ref/fingerprint space, so restart
+                // replay rejected every in-stream compress call (issue #64,
+                // responses variant).
+                const text = reasoningText(item);
                 const rid =
-                    typeof (item as { id?: unknown }).id === "string"
-                        ? String((item as { id?: string }).id)
-                        : hashId(JSON.stringify(item));
+                    text.length > 0
+                        ? text
+                        : "id" in item && typeof item.id === "string"
+                            ? item.id
+                            : hashId(JSON.stringify(item));
                 coreId = clusters.next(deriveMessageId("assistant", "reasoning", rid));
                 msgs.push({
                     id: coreId,

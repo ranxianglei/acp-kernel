@@ -1,6 +1,14 @@
 import type { CompressionState, CoreMessage } from "./types.js";
 
-const KEEP_LAST_ORPHANED = 0;
+// Orphaned compress calls (no matching block — failed attempts, or historical
+// calls whose blocks predate compressCallId recording) keep their NEWEST two
+// call+result pairs visible: failures must stay observable or a deterministic
+// model re-issues the same no-op compress forever, pinned at a fixed point
+// (billion-context-pi issue #9: 3,849 identical calls over 5h13m under
+// KEEP_LAST_ORPHANED=0). Older orphans are hidden, so the residue is bounded
+// at two pairs regardless of session length — PR #18's unbounded accumulation
+// does not return (its own live check showed the cap: 10 in → 6 out).
+const KEEP_LAST_ORPHANED = 2;
 
 export interface HideConsumedResult {
     messages: CoreMessage[];

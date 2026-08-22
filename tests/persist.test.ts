@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateStore, flatFileNameFor } from "../src/persist/store.js";
@@ -368,4 +368,110 @@ test("mergeCompressionState keeps parsed values over defaults", () => {
     const merged = mergeCompressionState(parsed);
     assert.equal(merged.nextBlockId, 41);
     assert.deepEqual(merged.stats, { tokensCompressed: 1234, compressionCount: 7 });
+});
+
+test("legacy hook adopts pre-envelope records on loadAll and loadSync", async () => {
+    const dir = tmpDir();
+    try {
+        // A proxy-style flat record: no `payload` wrapper, id at top level.
+        const flat = {
+            version: 3,
+            savedAt: 12345,
+            id: "flat-1",
+            label: "adopted",
+            count: 9,
+        };
+        const flatFile = path.join(dir, flatFileNameFor("flat-1"));
+        writeFileSync(flatFile, JSON.stringify(flat), "utf8");
+        const s = store(dir, {
+            legacy: (parsed) => {
+                const p = parsed as { id?: unknown; label?: unknown; count?: unknown };
+                if (typeof p.id !== "string" || typeof p.label !== "string" || typeof p.count !== "number") return null;
+                return { id: p.id, payload: { label: p.label, count: p.count } };
+            },
+        });
+        const all = await s.loadAll();
+        assert.equal(all.size, 1);
+        const env = all.get("flat-1");
+        assert.ok(env);
+        assert.equal(env.id, "flat-1");
+        assert.deepEqual(env.payload, { label: "adopted", count: 9 });
+        // The source record's own stamps are preserved, not stamped fresh.
+        assert.equal(env.version, 3);
+        assert.equal(env.savedAt, 12345);
+        // loadSync finds it too (discovered by loadAll).
+        const direct = s.loadSync("flat-1");
+        assert.ok(direct);
+        assert.deepEqual(direct.payload, { label: "adopted", count: 9 });
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("legacy adoption is skipped when the hook returns null", async () => {
+    const dir = tmpDir();
+    try {
+        writeFileSync(
+            path.join(dir, flatFileNameFor("foreign-1")),
+            JSON.stringify({ totally: "unrelated", shape: true }),
+            "utf8",
+        );
+        const s = store(dir, { legacy: () => null });
+        assert.equal((await s.loadAll()).size, 0);
+        assert.equal(s.loadSync("foreign-1"), null);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("adopted legacy record re-persists as an envelope on the next write", async () => {
+    const dir = tmpDir();
+    try {
+        writeFileSync(
+            path.join(dir, flatFileNameFor("migrate-1")),
+            JSON.stringify({ version: 3, savedAt: 1, id: "migrate-1", label: "old", count: 0 }),
+            "utf8",
+        );
+        const s = store(dir, {
+            version: 4,
+            legacy: (parsed) => {
+                const p = parsed as { id?: string; label?: string; count?: number };
+                if (typeof p.id !== "string" || typeof p.label !== "string" || typeof p.count !== "number") return null;
+                return { id: p.id, payload: { label: p.label, count: p.count } };
+            },
+        });
+        await s.loadAll();
+        // Dirty write after adoption: the file on disk becomes an envelope
+        // stamped with the store's current version.
+        await s.writeNow("migrate-1", () => ({ label: "new", count: 5 }));
+        const raw = JSON.parse(readFileSync(path.join(dir, flatFileNameFor("migrate-1")), "utf8")) as {
+            version: number;
+            payload: { label: string };
+        };
+        assert.equal(raw.version, 4);
+        assert.deepEqual(raw.payload, { label: "new", count: 5 });
+        // And a FRESH store (no legacy hook) can read it — migration done.
+        const plain = store(dir);
+        assert.deepEqual(plain.loadSync("migrate-1")?.payload, { label: "new", count: 5 });
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("loadSync hint probes a namespaced path without loadAll", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { relPath: (id, payload) => path.join("proto", payload.label, `${id}.json`) });
+        await s.writeNow("hint-1", () => ({ label: "hostA", count: 1 }));
+        // A second store instance has NOT discovered the namespaced file —
+        // without the hint, loadSync misses (flat fallback only).
+        const s2 = store(dir, { relPath: (id, payload) => path.join("proto", payload.label, `${id}.json`) });
+        assert.equal(s2.loadSync("hint-1"), null);
+        // With the relative-path hint, the namespaced file resolves.
+        const hit = s2.loadSync("hint-1", path.join("proto", "hostA", "hint-1.json"));
+        assert.ok(hit);
+        assert.deepEqual(hit.payload, { label: "hostA", count: 1 });
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
 });

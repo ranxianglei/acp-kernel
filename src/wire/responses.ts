@@ -1,4 +1,5 @@
 import type { CoreMessage } from "../types.js";
+import { splitDemotedThinking } from "./demoted-thinking.js";
 import { ClusterCounter, deriveMessageId } from "./message-id.js";
 import type { ConversationIdentity } from "./util.js";
 import { hashId } from "./util.js";
@@ -182,19 +183,41 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
                     continue;
                 } else if (message.role === "user" || (message.role === "assistant" && text)) {
                     const role = message.role;
-                    coreId = clusters.next(deriveMessageId(role, "text", text));
-                    const imageUrl = Array.isArray(message.content)
-                        ? message.content.find((part) => part.type === "input_image" && typeof part.image_url === "string")?.image_url
-                        : undefined;
-                    const image = typeof imageUrl === "string" ? parseDataUrl(imageUrl) : undefined;
-                    msgs.push({
-                        id: coreId,
-                        role,
-                        contentType: "text",
-                        text,
-                        rawResponsesItem: item,
-                        ...(image ? { imageMediaType: image.mediaType, imageBase64: image.base64 } : {}),
-                    });
+                    let effText = text;
+                    if (role === "assistant") {
+                        // Same normalization as openaiToCore: hosts that demote
+                        // prior-turn reasoning inline it as a dialect tag at the
+                        // head of the message text. Split it out before identity
+                        // derivation so the inline form and the separate
+                        // reasoning-item form of one turn share a single
+                        // core-id/fingerprint space.
+                        const split = splitDemotedThinking(text);
+                        if (split) {
+                            msgs.push({
+                                id: clusters.next(deriveMessageId("assistant", "reasoning", split.reasoning)),
+                                role: "assistant",
+                                contentType: "reasoning",
+                                text: split.reasoning,
+                                rawResponsesItem: item,
+                            });
+                            effText = split.text;
+                        }
+                    }
+                    if (effText) {
+                        coreId = clusters.next(deriveMessageId(role, "text", effText));
+                        const imageUrl = Array.isArray(message.content)
+                            ? message.content.find((part) => part.type === "input_image" && typeof part.image_url === "string")?.image_url
+                            : undefined;
+                        const image = typeof imageUrl === "string" ? parseDataUrl(imageUrl) : undefined;
+                        msgs.push({
+                            id: coreId,
+                            role,
+                            contentType: "text",
+                            text: effText,
+                            rawResponsesItem: item,
+                            ...(image ? { imageMediaType: image.mediaType, imageBase64: image.base64 } : {}),
+                        });
+                    }
                 }
                 break;
             }

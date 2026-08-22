@@ -1,3 +1,4 @@
+import { splitDemotedThinking } from "./demoted-thinking.js";
 import { hashId } from "./util.js";
 import { ClusterCounter, deriveMessageId } from "./message-id.js";
 import { parseDataUrl, type BiliMessage } from "./bili-message.js";
@@ -69,7 +70,23 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                 break;
             }
             case "assistant": {
-                const reasoning = typeof m.reasoning_content === "string" ? m.reasoning_content : "";
+                const fieldReasoning = typeof m.reasoning_content === "string" ? m.reasoning_content : "";
+                let reasoning = fieldReasoning;
+                let text = stringContent(m.content);
+                if (!reasoning) {
+                    // Hosts that cannot replay prior-turn reasoning as a
+                    // structured field inline it into content wrapped in a
+                    // dialect tag (<think>, <thinking>, ```thinking). Split
+                    // it back out BEFORE identity derivation so the inline
+                    // form and the reasoning_content field form of one turn
+                    // land in a single core-id/fingerprint space (issue #64
+                    // demoted variant).
+                    const split = splitDemotedThinking(text);
+                    if (split) {
+                        reasoning = split.reasoning;
+                        text = split.text;
+                    }
+                }
                 if (reasoning) {
                     const base = deriveMessageId("assistant", "reasoning", reasoning);
                     msgs.push({
@@ -80,7 +97,6 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                         reasoningContent: reasoning,
                     });
                 }
-                const text = stringContent(m.content);
                 if (text) {
                     const base = deriveMessageId("assistant", "text", text);
                     msgs.push({ id: clusters.next(base), role: "assistant", contentType: "text", text });

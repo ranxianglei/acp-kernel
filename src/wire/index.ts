@@ -4,4 +4,5 @@ export * from "./responses.js";
 export * from "./formats.js";
 export * from "./bili-message.js";
 export * from "./message-id.js";
+export * from "./demoted-thinking.js";
 export * from "./util.js";

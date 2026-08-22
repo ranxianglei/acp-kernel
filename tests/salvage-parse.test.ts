@@ -125,3 +125,16 @@ describe("extractRanges", () => {
     assert.equal(r.length, 1);
   });
 });
+
+describe("salvageParseRanges — double-encoded content", () => {
+  it("salvages a JSON-string content truncated mid-array", () => {
+    const raw = JSON.stringify({
+      content: '[{"startId":"m00005","endId":"m00006","summary":"ok"},{"startId":"m0',
+    });
+    const res = salvageParseRanges(raw);
+    assert.equal(res.layer, "array-prefix");
+    assert.equal(res.ranges.length, 1);
+    assert.equal(res.ranges[0]?.startRef, "m00005");
+    assert.equal(res.ranges[0]?.summary, "ok");
+  });
+});

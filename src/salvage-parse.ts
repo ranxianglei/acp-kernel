@@ -187,6 +187,7 @@ export function salvageParseRanges(raw: string): SalvageResult {
 
   // Layer 1-3: whole-payload JSON (with repairs). Also accepts the
   // JSON-stringified-content double-encoding some providers emit.
+  let parsedObj: Record<string, unknown> | undefined;
   const attempts: Array<{ s: string; layer: SalvageLayer; desc: string }> = [
     { s: trimmed, layer: "json", desc: "strict JSON" },
     { s: stripFences(trimmed), layer: "json-fenced", desc: "fenced JSON" },
@@ -207,6 +208,27 @@ export function salvageParseRanges(raw: string): SalvageResult {
     const ranges = extractRanges(parsed);
     if (ranges.length > 0) {
       return { ranges, layer: a.layer, note: `parsed as ${a.desc}` };
+    }
+    if (!parsedObj && parsed && typeof parsed === "object") {
+      parsedObj = parsed as Record<string, unknown>;
+    }
+  }
+
+  // Double-encoded + truncated: the wrapper parses as JSON but its `content`
+  // string does not (cut mid-way). Salvage inside the inner string — the brace
+  // scanner on the raw payload can't see through the escaped quotes.
+  // Recursion is bounded: each level strips one encoding layer.
+  if (parsedObj) {
+    const inner = parsedObj.content ?? parsedObj.ranges;
+    if (typeof inner === "string" && inner.trim().startsWith("[")) {
+      const innerRes = salvageParseRanges(inner);
+      if (innerRes.ranges.length > 0) {
+        return {
+          ranges: innerRes.ranges,
+          layer: "array-prefix",
+          note: `double-encoded content; inner: ${innerRes.note}`,
+        };
+      }
     }
   }
 

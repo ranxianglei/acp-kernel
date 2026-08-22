@@ -23,7 +23,7 @@ function block(overrides: Partial<CompressionBlock>): CompressionBlock {
     };
 }
 
-test("hideConsumedCompressCalls keeps active-block compress calls, hides all orphaned", () => {
+test("hideConsumedCompressCalls keeps active-block calls, hides consumed, keeps newest two orphans", () => {
     const state: CompressionState = {
         ...createInitialState(),
         blocks: [block({ blockId: "b1", compressCallId: "call-active", active: true })],
@@ -36,14 +36,52 @@ test("hideConsumedCompressCalls keeps active-block compress calls, hides all orp
         { id: "m5", role: "user", contentType: "text", text: "hello" },
     ];
     const result = hideConsumedCompressCalls(state, messages);
-    // active-block call kept; consumed + all orphaned hidden (KEEP_LAST_ORPHANED=0).
-    assert.equal(result.hidden, 3);
+    // active-block call kept; consumed hidden; newest KEEP_LAST_ORPHANED=2
+    // orphans kept visible (failure observability — billion-context-pi #9).
+    assert.equal(result.hidden, 1);
     const remainingCallIds = result.messages.filter((m) => m.toolName === "compress").map((m) => m.toolCallId);
     assert.ok(remainingCallIds.includes("call-active"));
     assert.ok(!remainingCallIds.includes("call-consumed"));
-    assert.ok(!remainingCallIds.includes("call-orphan1"));
-    assert.ok(!remainingCallIds.includes("call-orphan2"));
+    assert.ok(remainingCallIds.includes("call-orphan1"));
+    assert.ok(remainingCallIds.includes("call-orphan2"));
     assert.ok(result.messages.some((m) => m.text === "hello"));
+});
+
+test("orphaned compress residue is bounded: only the newest two pairs survive any session length", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [block({ blockId: "b1", compressCallId: "call-active", active: true })],
+    };
+    const messages: CoreMessage[] = [
+        { id: "m1", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-active", text: "{}" },
+    ];
+    for (let i = 1; i <= 12; i++) {
+        messages.push({ id: `c${i}`, role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: `call-fail${i}`, text: "{}" });
+        messages.push({ id: `r${i}`, role: "user", contentType: "tool-result", toolName: "compress", toolCallId: `call-fail${i}`, text: "nothing to compress" });
+    }
+    messages.push({ id: "mend", role: "user", contentType: "text", text: "tail" });
+
+    const result = hideConsumedCompressCalls(state, messages);
+    // 12 failed pairs in → only the newest 2 pairs + the active call remain:
+    // PR #18's unbounded accumulation cannot recur under KEEP_LAST_ORPHANED=2.
+    assert.equal(result.hidden, 20);
+    const remainingCallIds = result.messages.filter((m) => m.toolName === "compress" && m.contentType === "tool-call").map((m) => m.toolCallId);
+    assert.deepEqual(remainingCallIds, ["call-active", "call-fail11", "call-fail12"]);
+    const remainingResultIds = result.messages.filter((m) => m.contentType === "tool-result").map((m) => m.toolCallId);
+    assert.deepEqual(remainingResultIds, ["call-fail11", "call-fail12"]);
+});
+
+test("a failed compress call and its result stay visible (issue #9 fixed-point precondition removed)", () => {
+    const state: CompressionState = { ...createInitialState(), blocks: [] };
+    const messages: CoreMessage[] = [
+        { id: "m1", role: "user", contentType: "text", text: "q" },
+        { id: "m2", role: "assistant", contentType: "tool-call", toolName: "compress", toolCallId: "call-fail", text: "{}" },
+        { id: "m3", role: "user", contentType: "tool-result", toolName: "compress", toolCallId: "call-fail", text: "Requested range(s) already compressed; nothing to do" },
+    ];
+    const result = hideConsumedCompressCalls(state, messages);
+    assert.equal(result.hidden, 0);
+    assert.ok(result.messages.some((m) => m.toolCallId === "call-fail" && m.contentType === "tool-call"));
+    assert.ok(result.messages.some((m) => m.toolCallId === "call-fail" && m.contentType === "tool-result"));
 });
 
 test("rebuildCompressionState replays historical compress tool calls", () => {

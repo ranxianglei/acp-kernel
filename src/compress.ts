@@ -762,6 +762,28 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     );
   }
 
+  // Livelock guard (billion-context-pi#199): a message-ref range whose entire
+  // content is already owned by active block(s) — its raw ids are all covered
+  // or dropped as protected tool pairs — resolves with zero NEW direct
+  // messages. Creating a block here would be an empty same-tier rewrite
+  // (directMessageIds: []) that still reports blocksCreated>0: fake success.
+  // The caller's view does not change, so a model driven by that report
+  // repeats the identical call forever. Promote/merge must go through
+  // explicit block-boundary refs (bN..bM) instead.
+  if (
+    !isBlockBoundary &&
+    filteredIds.length === 0 &&
+    consumedBlockIds.length > 0
+  ) {
+    const first = consumedBlockIds[0]!;
+    const last = consumedBlockIds[consumedBlockIds.length - 1]!;
+    throw new Error(
+      `Range ${input.spec.startRef}..${input.spec.endRef} contains no new compressible messages — every message in it is already covered by active block(s) ${consumedBlockIds.join(
+        ", ",
+      )}. Nothing was compressed. To rewrite or merge those blocks, reference them by block ID (${first}..${last}); otherwise run acp_status and compress a range it reports as compressible.`,
+    );
+  }
+
   validateCompressionRange(input, filteredIds, consumedBlockIds.length);
 
   let compressedTokens = 0;

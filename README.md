@@ -93,6 +93,32 @@ describes what the model originally saw. Nudge/pressure *decisions* are
 unaffected: they recount live text every turn. If you need the legacy
 live-recomputed tags, use `renderVisibleRefs` directly.
 
+#### `buildStatusReport` drilldown — reaching the newest rows
+
+The per-message drilldown (`scope:"uncompressed"` + `view:"messages"`) sorts
+`time` ascending by default and shows only the first `limit` rows, so the
+newest messages are unreachable once the conversation outgrows the limit.
+Two optional navigation options fix that: `reverse` (default `false`) flips
+the sorted order after sorting — `sort:"time"` + `reverse:true` lists
+newest-first, `sort:"size"` + `reverse:true` lists smallest-first — and
+`offset` (default `0`) skips the first N rows, paginating with `limit`.
+
+```ts
+buildStatusReport(state, messages, countTokens, {
+  scope: "uncompressed",
+  view: "messages",
+  sort: "time",
+  reverse: true,   // newest message first — reach the tail without a ref tag
+  limit: 30,
+});
+// pagination: offset: 30 → the next page
+```
+
+`reverse` and `offset` are optional, so existing call sites keep working
+unchanged. The "N of M shown." footer stays for `offset: 0`; when
+`offset > 0` it reads "Showing A–B of M.", and an offset past the end reports
+"Offset N past end" instead of a silent empty page.
+
 ### Standalone modules
 
 | Module | Purpose |

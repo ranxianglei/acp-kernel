@@ -17,6 +17,8 @@ export {
   advanceSurvival,
 } from "./state.js";
 export { defaultConfig, validateConfig } from "./config.js";
+export { salvageParseRanges, extractRanges } from "./salvage-parse.js";
+export type { SalvageResult, SalvageLayer } from "./salvage-parse.js";
 export {
   assignRefs,
   highestUsedIndex,

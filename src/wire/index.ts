@@ -5,4 +5,5 @@ export * from "./formats.js";
 export * from "./bili-message.js";
 export * from "./message-id.js";
 export * from "./demoted-thinking.js";
+export * from "./mirror.js";
 export * from "./util.js";

@@ -37,6 +37,10 @@
         "./panel": {
             "types": "./dist/panel/index.d.ts",
             "import": "./dist/panel/index.js"
+        },
+        "./persist": {
+            "types": "./dist/persist/index.d.ts",
+            "import": "./dist/persist/index.js"
         }
     },
     "files": [

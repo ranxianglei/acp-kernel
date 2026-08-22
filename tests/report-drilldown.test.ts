@@ -129,8 +129,9 @@ test("drilldown offset past the end reports the miss instead of an empty page", 
         offset: 10,
     });
     assert.ok(report.includes("Offset 10 past end (10 total)."));
-    const body = report.replace(/^\s*$/gm, "");
-    assert.ok(!body.includes("m0000"), "no message rows rendered past the end");
+    // line-level check: no message row (two-space indent + ref) may be rendered
+    const rowLines = report.split("\n").filter((line) => /^  m\d/.test(line));
+    assert.deepEqual(rowLines, [], "no message rows rendered past the end");
 });
 
 test("drilldown sort:size reverse flips largest-first to smallest-first", () => {

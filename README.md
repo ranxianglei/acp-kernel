@@ -95,17 +95,15 @@ live-recomputed tags, use `renderVisibleRefs` directly.
 
 #### `buildStatusReport` drilldown — reaching the newest rows
 
-`buildStatusReport` accepts optional `scope`/`view`/`tool`/`sort`/`limit`
-plus two navigation options:
-
-| Option | Default | Effect |
-|--------|---------|--------|
-| `reverse: boolean` | `false` | Flip the sorted order after sorting — `sort:"time"` + `reverse:true` lists newest-first, `sort:"size"` + `reverse:true` lists smallest-first |
-| `offset: number` | `0` | Skip the first N rows of the sorted order (pagination with `limit`) |
+The per-message drilldown (`scope:"uncompressed"` + `view:"messages"`) sorts
+`time` ascending by default and shows only the first `limit` rows, so the
+newest messages are unreachable once the conversation outgrows the limit.
+Two optional navigation options fix that: `reverse` (default `false`) flips
+the sorted order after sorting — `sort:"time"` + `reverse:true` lists
+newest-first, `sort:"size"` + `reverse:true` lists smallest-first — and
+`offset` (default `0`) skips the first N rows, paginating with `limit`.
 
 ```ts
-import { buildStatusReport } from "acp-kernel";
-
 buildStatusReport(state, messages, countTokens, {
   scope: "uncompressed",
   view: "messages",
@@ -116,11 +114,10 @@ buildStatusReport(state, messages, countTokens, {
 // pagination: offset: 30 → the next page
 ```
 
-Sort orders are otherwise unchanged (`time` ascending, `size` largest-first,
-`tool` grouped, `age` most-survived-first for `scope:"compressed"`), so existing
-callers keep working. The "N of M shown." footer becomes
-"Showing A–B of M." when `offset > 0`, and reports "Offset N past end" when the
-window starts beyond the list — no silent empty page.
+`reverse` and `offset` are optional, so existing call sites keep working
+unchanged. The "N of M shown." footer stays for `offset: 0`; when
+`offset > 0` it reads "Showing A–B of M.", and an offset past the end reports
+"Offset N past end" instead of a silent empty page.
 
 ### Standalone modules
 

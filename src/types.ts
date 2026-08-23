@@ -58,6 +58,33 @@ export interface NudgeState {
 export interface CompressionStats {
   tokensCompressed: number;
   compressionCount: number;
+  /** Cumulative tokens reclaimed by absorb (instant tool-result hiding). Optional for pre-absorb persisted states. */
+  absorbedTokens?: number;
+}
+
+/** One instant tool-result absorption: the original tool-call + tool-result
+ *  pair is hidden from view once recorded; the model's absorb call (carrying
+ *  the distilled summary) remains as the durable record. */
+export interface AbsorbRecord {
+  toolCallId: string;
+  callMessageId: string;
+  resultMessageId: string;
+  absorbCallId?: string;
+  summary: string;
+  tokensReclaimed: number;
+  createdAt: number;
+}
+
+export interface AbsorbConfig {
+  enabled: boolean;
+  /** Model-facing absorb tool name (adapters may rename, e.g. acp_absorb). */
+  toolName: string;
+  /** Only tool results >= this many tokens get the forced absorb prompt. 0 = all. */
+  minToolTokens: number;
+  /** Only prompt when context usage >= this fraction of modelContextLimit. 0 = size gate alone. */
+  contextThresholdPct: number;
+  /** Tool-name patterns (glob suffix allowed) never absorbable, independent of protectedTools. */
+  excludeTools: string[];
 }
 
 export interface CompressionState {
@@ -71,6 +98,8 @@ export interface CompressionState {
   tokenSnapshot: Record<string, number>;
   nudge: NudgeState;
   stats: CompressionStats;
+  /** Instant tool-result absorption records. Optional: pre-absorb persisted states lack it. */
+  absorbed?: AbsorbRecord[];
   nextBlockId: number;
   nextRunId: number;
 }
@@ -134,6 +163,8 @@ export interface Config {
   preserveRecentMessages: number;
   preserveRecentTokens: number;
   modelContextLimit: number;
+  /** Instant tool-result absorption (see absorb.ts). Absent/disabled = feature off. */
+  absorb?: AbsorbConfig;
   messageFilters?: import("./filter/types.js").MessageFiltersConfig;
 }
 

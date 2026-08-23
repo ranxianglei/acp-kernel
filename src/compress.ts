@@ -13,6 +13,7 @@ import {
 import type { ResolvedRange } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
+import { appendAbsorbPrompts, hideAbsorbedMessages } from "./absorb.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
 import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
@@ -424,6 +425,8 @@ export function createCore(ports: Ports = {}): CompressionCore {
       assignRefsNode,
       syncBlocksNode,
       pruneNode,
+      absorbHideNode,
+      absorbPromptNode,
       filterNode,
       hideCompressCallsNode,
       recommendNode,
@@ -480,6 +483,33 @@ const pruneNode: PipelineNode = {
   name: "prune",
   run(io) {
     return { ...io, messages: prune(io.messages, io.state) };
+  },
+};
+
+const absorbHideNode: PipelineNode = {
+  name: "absorb-hide",
+  enabled: (io) => (io.state.absorbed?.length ?? 0) > 0,
+  run(io) {
+    return { ...io, messages: hideAbsorbedMessages(io.messages, io.state) };
+  },
+};
+
+const absorbPromptNode: PipelineNode = {
+  name: "absorb-prompt",
+  enabled: (_io, ctx) => ctx.config.absorb?.enabled === true,
+  run(io, ctx) {
+    const applied = appendAbsorbPrompts(
+      io.messages,
+      io.state,
+      ctx.config,
+      ctx.tokenCount,
+      ctx.countTokens,
+    );
+    return {
+      ...io,
+      messages: applied.messages,
+      effects: { ...io.effects, absorbPromptedCount: applied.promptedCount },
+    };
   },
 };
 
@@ -1283,6 +1313,7 @@ function cloneState(state: CompressionState): CompressionState {
     tokenSnapshot: { ...(state.tokenSnapshot ?? {}) },
     nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
     stats: { ...state.stats },
+    absorbed: (state.absorbed ?? []).map((record) => ({ ...record })),
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
   };

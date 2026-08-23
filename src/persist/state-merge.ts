@@ -19,5 +19,6 @@ export function mergeCompressionState(parsed: CompressionState): CompressionStat
     nextBlockId: parsed.nextBlockId ?? fresh.nextBlockId,
     nextRunId: parsed.nextRunId ?? fresh.nextRunId,
     tokenSnapshot: parsed.tokenSnapshot ?? fresh.tokenSnapshot,
+    absorbed: parsed.absorbed ?? fresh.absorbed,
   };
 }

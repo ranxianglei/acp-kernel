@@ -367,7 +367,7 @@ test("mergeCompressionState keeps parsed values over defaults", () => {
     };
     const merged = mergeCompressionState(parsed);
     assert.equal(merged.nextBlockId, 41);
-    assert.deepEqual(merged.stats, { tokensCompressed: 1234, compressionCount: 7 });
+    assert.deepEqual(merged.stats, { tokensCompressed: 1234, compressionCount: 7, absorbedTokens: 0 });
 });
 
 test("legacy hook adopts pre-envelope records on loadAll and loadSync", async () => {

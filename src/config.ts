@@ -31,6 +31,13 @@ export function defaultConfig(
     preserveRecentMessages: 5,
     preserveRecentTokens: 5000,
     modelContextLimit,
+    absorb: {
+      enabled: false,
+      toolName: "absorb",
+      minToolTokens: 1000,
+      contextThresholdPct: 0,
+      excludeTools: [],
+    },
   };
   return {
     ...base,
@@ -39,6 +46,9 @@ export function defaultConfig(
     nudge: { ...base.nudge, ...overrides.nudge },
     truncate: { ...base.truncate, ...overrides.truncate },
     compress: { ...base.compress, ...overrides.compress },
+    absorb: overrides.absorb
+      ? { ...base.absorb, ...overrides.absorb }
+      : base.absorb,
   };
 }
 
@@ -71,6 +81,23 @@ export function validateConfig(config: Config): string[] {
   }
   if (config.tiers.tier3Trigger <= config.tiers.tier2Trigger) {
     errors.push("tiers.tier3Trigger must be greater than tiers.tier2Trigger");
+  }
+  if (config.absorb) {
+    if (config.absorb.enabled && !config.absorb.toolName) {
+      errors.push("absorb.toolName must be a non-empty string when enabled");
+    }
+    if (
+      !Number.isFinite(config.absorb.minToolTokens) ||
+      config.absorb.minToolTokens < 0
+    ) {
+      errors.push("absorb.minToolTokens must be >= 0");
+    }
+    if (
+      config.absorb.contextThresholdPct < 0 ||
+      config.absorb.contextThresholdPct > 1
+    ) {
+      errors.push("absorb.contextThresholdPct must be in [0, 1]");
+    }
   }
   return errors;
 }

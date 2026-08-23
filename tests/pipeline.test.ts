@@ -28,6 +28,8 @@ test("defaultNodes exposes the canonical ordered pipeline", () => {
     "assign-refs",
     "sync-blocks",
     "prune",
+    "absorb-hide",
+    "absorb-prompt",
     "filter",
     "hide-compress-calls",
     "recommend",
@@ -58,8 +60,14 @@ test("renderVisibleRefs derives tags from the ref map (single source of truth)",
   const messages = [msg("a", "alpha"), msg("b", "beta")];
   const state = stateWithRefs(messages);
   const rendered = renderVisibleRefs(messages, state);
-  assert.match(rendered[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
-  assert.match(rendered[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\nbeta$/);
+  assert.match(
+    rendered[0]!.text!,
+    /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/,
+  );
+  assert.match(
+    rendered[1]!.text!,
+    /^<acp tokens="\d+" type="text">m00002<\/acp>\nbeta$/,
+  );
 });
 
 test("renderVisibleRefs is idempotent: running twice yields the same result", () => {
@@ -67,7 +75,10 @@ test("renderVisibleRefs is idempotent: running twice yields the same result", ()
   const state = stateWithRefs(messages);
   const once = renderVisibleRefs(messages, state);
   const twice = renderVisibleRefs(once, state);
-  assert.deepEqual(twice.map((m) => m.text), once.map((m) => m.text));
+  assert.deepEqual(
+    twice.map((m) => m.text),
+    once.map((m) => m.text),
+  );
 });
 
 test("renderVisibleRefs preserves non-own ref-like content and re-derives the own tag", () => {
@@ -76,7 +87,10 @@ test("renderVisibleRefs preserves non-own ref-like content and re-derives the ow
   const messages = [msg("a", "[m00009] alpha")];
   const state = stateWithRefs(messages); // authoritative ref for "a" is m00001
   const rendered = renderVisibleRefs(messages, state);
-  assert.match(rendered[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\n\[m00009\] alpha$/);
+  assert.match(
+    rendered[0]!.text!,
+    /^<acp tokens="\d+" type="text">m00001<\/acp>\n\[m00009\] alpha$/,
+  );
 });
 
 test("renderVisibleRefs peels the message's own stale tag before re-deriving", () => {
@@ -85,7 +99,10 @@ test("renderVisibleRefs peels the message's own stale tag before re-deriving", (
   const messages = [msg("a", staleTag)];
   const state = stateWithRefs(messages); // own ref for "a" is m00001
   const rendered = renderVisibleRefs(messages, state);
-  assert.match(rendered[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
+  assert.match(
+    rendered[0]!.text!,
+    /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/,
+  );
 });
 
 test("renderVisibleRefs leaves messages without a ref (BLOCKED/unmapped) untagged", () => {
@@ -127,9 +144,28 @@ test("runPipeline threads messages, state, and effects through nodes in order", 
 test("runPipeline skips nodes whose enabled predicate returns false", () => {
   const seen: string[] = [];
   const nodes: PipelineNode[] = [
-    { name: "a", run: (io) => { seen.push("a"); return io; } },
-    { name: "b", enabled: () => false, run: (io) => { seen.push("b"); return io; } },
-    { name: "c", run: (io) => { seen.push("c"); return io; } },
+    {
+      name: "a",
+      run: (io) => {
+        seen.push("a");
+        return io;
+      },
+    },
+    {
+      name: "b",
+      enabled: () => false,
+      run: (io) => {
+        seen.push("b");
+        return io;
+      },
+    },
+    {
+      name: "c",
+      run: (io) => {
+        seen.push("c");
+        return io;
+      },
+    },
   ];
   runPipeline(nodes, makeIO([], createInitialState()), {
     config: defaultConfig(100000),
@@ -149,15 +185,28 @@ test("processTurn tags every mapped message with a derived ref (end-to-end)", ()
     config: defaultConfig(100000),
     tokenCount: 100,
   });
-  assert.match(result.messages[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
-  assert.match(result.messages[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\nbeta$/);
+  assert.match(
+    result.messages[0]!.text!,
+    /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/,
+  );
+  assert.match(
+    result.messages[1]!.text!,
+    /^<acp tokens="\d+" type="text">m00002<\/acp>\nbeta$/,
+  );
 });
 
-test("processTurn renderTags:\"all\" (default) injects tags into every message", () => {
+test('processTurn renderTags:"all" (default) injects tags into every message', () => {
   const core = createCore();
   const messages: CoreMessage[] = [
     { id: "u1", role: "user", contentType: "text", text: "run echo" },
-    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
+    {
+      id: "a1",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "tc1",
+      text: '{"command":"echo hello"}',
+    },
     { id: "a2", role: "assistant", contentType: "text", text: "Done." },
   ];
   const state = createInitialState();
@@ -172,16 +221,38 @@ test("processTurn renderTags:\"all\" (default) injects tags into every message",
   });
 
   assert.match(result.messages[0]!.text!, /m00001<\/acp>/, "user text tagged");
-  assert.match(result.messages[1]!.text!, /m00002<\/acp>/, "tool-call tagged (all strategy)");
-  assert.match(result.messages[2]!.text!, /m00003<\/acp>/, "assistant text tagged");
+  assert.match(
+    result.messages[1]!.text!,
+    /m00002<\/acp>/,
+    "tool-call tagged (all strategy)",
+  );
+  assert.match(
+    result.messages[2]!.text!,
+    /m00003<\/acp>/,
+    "assistant text tagged",
+  );
 });
 
-test("processTurn renderTags:\"text-only\" tags text but leaves tool messages pristine (proxy mode)", () => {
+test('processTurn renderTags:"text-only" tags text but leaves tool messages pristine (proxy mode)', () => {
   const core = createCore();
   const messages: CoreMessage[] = [
     { id: "u1", role: "user", contentType: "text", text: "run echo" },
-    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
-    { id: "t1", role: "tool", contentType: "tool-result", toolName: "bash", toolCallId: "tc1", text: "hello" },
+    {
+      id: "a1",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "tc1",
+      text: '{"command":"echo hello"}',
+    },
+    {
+      id: "t1",
+      role: "tool",
+      contentType: "tool-result",
+      toolName: "bash",
+      toolCallId: "tc1",
+      text: "hello",
+    },
     { id: "a2", role: "assistant", contentType: "text", text: "Done." },
   ];
   const state = createInitialState();
@@ -197,11 +268,23 @@ test("processTurn renderTags:\"text-only\" tags text but leaves tool messages pr
 
   // Text messages get tags (LLM can reference them for compress ranges).
   assert.match(result.messages[0]!.text!, /m00001<\/acp>/, "user text tagged");
-  assert.match(result.messages[3]!.text!, /m00004<\/acp>/, "assistant text tagged");
+  assert.match(
+    result.messages[3]!.text!,
+    /m00004<\/acp>/,
+    "assistant text tagged",
+  );
 
   // Tool messages are pristine — structured content not polluted by a tag.
-  assert.equal(result.messages[1]!.text, '{"command":"echo hello"}', "tool-call args unmodified");
-  assert.equal(result.messages[2]!.text, "hello", "tool-result content unmodified");
+  assert.equal(
+    result.messages[1]!.text,
+    '{"command":"echo hello"}',
+    "tool-call args unmodified",
+  );
+  assert.equal(
+    result.messages[2]!.text,
+    "hello",
+    "tool-result content unmodified",
+  );
 
   // But refs ARE assigned — tool messages are in the map too.
   const refs = result.state.messageRefs;
@@ -211,11 +294,18 @@ test("processTurn renderTags:\"text-only\" tags text but leaves tool messages pr
   assert.equal(refs.byRaw["a2"], "m00004");
 });
 
-test("processTurn renderTags:\"none\" assigns refs but leaves all text untouched", () => {
+test('processTurn renderTags:"none" assigns refs but leaves all text untouched', () => {
   const core = createCore();
   const messages: CoreMessage[] = [
     { id: "u1", role: "user", contentType: "text", text: "run echo" },
-    { id: "a1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "tc1", text: '{"command":"echo hello"}' },
+    {
+      id: "a1",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "tc1",
+      text: '{"command":"echo hello"}',
+    },
     { id: "a2", role: "assistant", contentType: "text", text: "Done." },
   ];
   const state = createInitialState();

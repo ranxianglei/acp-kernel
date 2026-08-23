@@ -57,8 +57,8 @@ export {
   TIER2_DISTILL_RULES,
   TIER3_CONDENSE_RULES,
 } from "./compression-rules.js";
-export { defaultPrompts, resolvePrompts } from "./prompts.js";
-export type { Prompts, ResolvePromptsOptions } from "./prompts.js";
+export { defaultPrompts, resolvePrompts, withToolNames } from "./prompts.js";
+export type { Prompts, ResolvePromptsOptions, ToolNameAliases } from "./prompts.js";
 export { truncateLargeToolOutputs } from "./truncate-tools.js";
 export type { TruncateOptions, TruncateResult } from "./truncate-tools.js";
 export {

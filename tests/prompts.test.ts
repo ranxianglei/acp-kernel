@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { defaultPrompts, resolvePrompts } from "../src/prompts.js";
+import { defaultPrompts, resolvePrompts, withToolNames } from "../src/prompts.js";
 import { renderNudgeText } from "../src/nudge-text.js";
 import {
   COMPRESS_PHILOSOPHY,
@@ -180,4 +180,38 @@ test("renderNudgeText default output embeds the full rule text verbatim (byte-st
   );
   assert.ok(emergency.text.includes(COMPRESS_PHILOSOPHY));
   assert.ok(emergency.text.includes(HOW_TO_COMPRESS_RULES));
+});
+
+test("withToolNames is a no-op for default names (returns the same object)", () => {
+  const p = withToolNames(defaultPrompts);
+  assert.equal(p, defaultPrompts);
+  const p2 = withToolNames(defaultPrompts, { compress: "compress", decompress: "decompress" });
+  assert.equal(p2, defaultPrompts);
+});
+
+test("withToolNames replaces `compress` in howToCompressRules", () => {
+  const p = withToolNames(defaultPrompts, { compress: "bili_compress" });
+  assert.ok(p.howToCompressRules.includes("`bili_compress`"));
+  assert.ok(!p.howToCompressRules.includes("`compress`"));
+});
+
+test("withToolNames replaces `via decompress` in howToCompressRules", () => {
+  const p = withToolNames(defaultPrompts, { decompress: "bili_decompress" });
+  assert.ok(p.howToCompressRules.includes("via bili_decompress "));
+  assert.ok(!p.howToCompressRules.includes("via decompress "));
+});
+
+test("withToolNames replaces both tool names", () => {
+  const p = withToolNames(defaultPrompts, { compress: "bili_compress", decompress: "bili_decompress" });
+  assert.ok(p.howToCompressRules.includes("`bili_compress`"));
+  assert.ok(p.howToCompressRules.includes("via bili_decompress "));
+  assert.ok(!p.howToCompressRules.includes("`compress`"));
+  assert.ok(!p.howToCompressRules.includes("via decompress "));
+});
+
+test("withToolNames does not touch the other three prompt fields", () => {
+  const p = withToolNames(defaultPrompts, { compress: "bili_compress", decompress: "bili_decompress" });
+  assert.equal(p.compressPhilosophy, COMPRESS_PHILOSOPHY);
+  assert.equal(p.tier2DistillRules, TIER2_DISTILL_RULES);
+  assert.equal(p.tier3CondenseRules, TIER3_CONDENSE_RULES);
 });

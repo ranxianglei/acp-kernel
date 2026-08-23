@@ -209,9 +209,14 @@ test("withToolNames replaces both tool names", () => {
   assert.ok(!p.howToCompressRules.includes("via decompress "));
 });
 
-test("withToolNames does not touch the other three prompt fields", () => {
+test("withToolNames replaces `compress consumed` in tier3CondenseRules", () => {
+  const p = withToolNames(defaultPrompts, { compress: "bili_compress" });
+  assert.ok(p.tier3CondenseRules.includes("— bili_compress consumed all user messages"));
+  assert.ok(!p.tier3CondenseRules.includes("— compress consumed all user messages"));
+});
+
+test("withToolNames does not touch compressPhilosophy or tier2DistillRules", () => {
   const p = withToolNames(defaultPrompts, { compress: "bili_compress", decompress: "bili_decompress" });
   assert.equal(p.compressPhilosophy, COMPRESS_PHILOSOPHY);
   assert.equal(p.tier2DistillRules, TIER2_DISTILL_RULES);
-  assert.equal(p.tier3CondenseRules, TIER3_CONDENSE_RULES);
 });

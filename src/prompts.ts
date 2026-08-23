@@ -85,10 +85,13 @@ export function resolvePrompts(
 /**
  * Tool-name aliases for hosts that register the ACP tools under a different
  * name (e.g. billion-context uses `bili_compress` to avoid clashing with
- * billion-context-pi's `compress`). Only the two names that appear in the
- * load-bearing rule text are parameterized: `compress` (backticked, "When you
- * call `compress`") and `decompress` ("jump back via decompress"). The other
- * two tools (`search_context`, `acp_status`) never appear in the rule text.
+ * billion-context-pi's `compress`). The tool names that appear in the
+ * load-bearing rule text are parameterized:
+ *   - `compress` (backticked, "When you call `compress`")
+ *   - `decompress` ("jump back via decompress", "a later decompress target")
+ *   - `compress` ("compress consumed all user messages" in the Tier-3 example)
+ * The other two tools (`search_context`, `acp_status`) never appear in the
+ * rule text.
  *
  * Passing the default names (or omitting the argument) returns the prompts
  * unchanged — this is a no-op for hosts that keep the canonical names.
@@ -109,6 +112,11 @@ export function withToolNames(
     ...prompts,
     howToCompressRules: prompts.howToCompressRules
       .replace(/`compress`/g, `\`${compress}\``)
-      .replace(/via decompress /g, `via ${decompress} `),
+      .replace(/via decompress /g, `via ${decompress} `)
+      .replace(/a later decompress target/g, `a later ${decompress} target`),
+    tier3CondenseRules: prompts.tier3CondenseRules.replace(
+      /compress consumed/g,
+      `${compress} consumed`,
+    ),
   };
 }

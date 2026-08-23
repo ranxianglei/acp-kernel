@@ -272,7 +272,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
           unknownCount > 0
             ? `None of the ${input.ranges.length} requested range(s) resolved — every ref failed with "does not exist in this session". Refs recorded before an earlier compress are stale: each successful compress renumbers the remaining refs. Run acp_status, then re-issue the compress in the same turn using only the refs it reports.`
             : consumedRanges.length > 0
-              ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}); remaining compressible content ${totalRangeChars} chars < min ${input.config.compress.minCompressRange}. Nothing to do.${liveHint}`
+              ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — your refs are stale: a prior compress renumbered the remaining refs, so this range now falls inside an active block. Run acp_status and re-issue the compress in the same turn using only the CURRENT compressible ranges it reports.${liveHint}`
               : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
         return {
           state: input.state,

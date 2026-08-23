@@ -34,11 +34,17 @@ export function truncateLargeToolOutputs(
     const threshold = config.truncate.threshold * config.modelContextLimit;
     if (tokenCount < threshold) return { messages, truncatedCount: 0, savedTokens: 0 };
 
-    const protectedIndex = messages.length - opts.protectRecentMessages;
+    // Collect ALL tool-result messages as candidates — including the most recent
+    // ones. The old hard protection of the last N messages was counterproductive
+    // when the most recent messages were the largest (e.g. decompress inline
+    // results): it prevented truncating the very messages causing the overflow.
+    // Instead, the size-based sort below naturally preserves small recent
+    // messages and truncates large ones regardless of recency. `protectRecentMessages`
+    // is kept in the API for backward compatibility but no longer hard-excludes
+    // recent messages from candidacy.
     const candidates: Array<{ index: number; tokens: number }> = [];
 
     for (let index = 0; index < messages.length; index++) {
-        if (index >= protectedIndex) break;
         const message = messages[index]!;
         if (message.contentType !== "tool-result") continue;
         const text = message.text ?? "";

@@ -45,7 +45,7 @@ test("truncateLargeToolOutputs truncates large tool outputs over threshold", () 
     assert.ok(result.messages[0]!.text!.includes("[truncated for context space"));
 });
 
-test("truncateLargeToolOutputs protects recent messages", () => {
+test("truncateLargeToolOutputs truncates large recent messages (size-aware, no hard recency protection)", () => {
     const cfg = defaultConfig(100000, { truncate: { threshold: 0.1 } });
     const big = "L".repeat(10000);
     const messages = [msg("only", big, "tool-result")];
@@ -53,7 +53,12 @@ test("truncateLargeToolOutputs protects recent messages", () => {
         minOutputTokens: 100,
         protectRecentMessages: 3,
     });
-    assert.equal(result.truncatedCount, 0);
+    // Size-aware: a large recent message IS truncated (recency no longer hard-protects).
+    // This is the fix for the decompress-inline overflow: the most recent tool-results
+    // (the inlined blocks) were the largest, and the old hard protection prevented
+    // truncating them.
+    assert.equal(result.truncatedCount, 1);
+    assert.ok(result.messages[0]!.text!.includes("[truncated for context space]"));
 });
 
 test("applyMessageFilters is a no-op when disabled", () => {

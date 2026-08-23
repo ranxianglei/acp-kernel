@@ -7,3 +7,4 @@ export * from "./message-id.js";
 export * from "./demoted-thinking.js";
 export * from "./mirror.js";
 export * from "./util.js";
+export * from "./compress-detect.js";

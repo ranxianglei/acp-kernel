@@ -252,6 +252,16 @@ export function applyAbsorb(input: AbsorbInput): AbsorbOutcome {
       resultText: `absorb failed: ref ${input.ref} does not exist in this session (it may be hidden, already compressed, or stale).`,
     };
   }
+  const existing = (input.state.absorbed ?? []).find(
+    (record) => record.resultMessageId === rawId,
+  );
+  if (existing) {
+    return {
+      state: input.state,
+      ok: true,
+      resultText: `already absorbed (${input.ref}) — no change.`,
+    };
+  }
   const target = input.messages.find((m) => m.id === rawId);
   if (!target) {
     return {
@@ -286,19 +296,6 @@ export function applyAbsorb(input: AbsorbInput): AbsorbOutcome {
       state: input.state,
       ok: false,
       resultText: `absorb failed: ref ${input.ref} has no tool-call id — cannot pair it for hiding.`,
-    };
-  }
-
-  const existing = (input.state.absorbed ?? []).find(
-    (record) =>
-      record.resultMessageId === target.id ||
-      record.toolCallId === target.toolCallId,
-  );
-  if (existing) {
-    return {
-      state: input.state,
-      ok: true,
-      resultText: `already absorbed (${input.ref}) — no change.`,
     };
   }
 

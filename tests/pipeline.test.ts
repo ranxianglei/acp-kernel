@@ -30,11 +30,21 @@ test("defaultNodes exposes the canonical ordered pipeline", () => {
     "prune",
     "filter",
     "hide-compress-calls",
+    "tool-result-cap",
     "recommend",
     "nudge-inject",
     "emergency-truncate",
     "render-refs",
   ]);
+});
+
+test("tool-result-cap runs after prune and before recommend/emergency-truncate", () => {
+  const core = createCore();
+  const nodes = core.defaultNodes();
+  const idx = (name: string) => nodes.findIndex((n) => n.name === name);
+  assert.ok(idx("tool-result-cap") > idx("prune"));
+  assert.ok(idx("tool-result-cap") < idx("recommend"));
+  assert.ok(idx("tool-result-cap") < idx("emergency-truncate"));
 });
 
 test("emergency-truncate is the last token-reducing node; render-refs is final", () => {

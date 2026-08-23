@@ -110,6 +110,12 @@ export interface TruncateConfig {
   // context limit. Removed GC age-deactivation/summary-truncation are gone;
   // this is the only "context near full" fallback that remains.
   threshold: number;
+  /** Hard per-tool-result token cap. A single tool-result may never exceed
+   *  this many tokens in the outgoing context, regardless of total usage or
+   *  recency (the 2026-08-23 incident: one 31K-token minified-JS tool-result
+   *  entered whole while total usage read 51.8%, so no usage-gated valve
+   *  fired). null = auto: min(10% of modelContextLimit, 16384). 0 disables. */
+  maxToolResultTokens?: number | null;
 }
 
 export interface CompressValidationConfig {

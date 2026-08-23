@@ -58,8 +58,16 @@ export {
 } from "./compression-rules.js";
 export { defaultPrompts, resolvePrompts } from "./prompts.js";
 export type { Prompts, ResolvePromptsOptions } from "./prompts.js";
-export { truncateLargeToolOutputs } from "./truncate-tools.js";
-export type { TruncateOptions, TruncateResult } from "./truncate-tools.js";
+export {
+  truncateLargeToolOutputs,
+  capLargeToolResults,
+  resolveToolResultCap,
+} from "./truncate-tools.js";
+export type {
+  TruncateOptions,
+  TruncateResult,
+  ToolResultCapResult,
+} from "./truncate-tools.js";
 export {
   parseBlockIdArg,
   findBlocksOverlappingMessages,

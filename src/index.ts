@@ -17,6 +17,7 @@ export {
   advanceSurvival,
 } from "./state.js";
 export { defaultConfig, validateConfig } from "./config.js";
+export * from "./compress-tools.js";
 export {
   assignRefs,
   highestUsedIndex,

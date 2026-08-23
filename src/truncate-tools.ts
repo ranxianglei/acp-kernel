@@ -23,6 +23,14 @@ const TRUNCATION_MARKER = "[truncated for context space]";
 const CAP_MARKER_PREFIX = "[acp: tool-result truncated";
 const MAX_TOOL_RESULT_CAP = 16384;
 const AUTO_CAP_LIMIT_RATIO = 0.1;
+/** Auto-cap quantization step (power of two): learning the context limit only
+ *  moves the cap across power-of-two boundaries, not on every limit change. */
+const AUTO_CAP_QUANT_STEP = 1024;
+/** A stored capped view may re-estimate slightly above the cap across turns
+ *  (tokenizer drift); still count as already-capped below this margin. */
+const ALREADY_CAPPED_MARGIN = 1.25;
+/** Char prefilter: no tokenizer plausibly exceeds 4 tokens per char. */
+const MAX_TOKENS_PER_CHAR = 4;
 const MIN_KEEP_CHARS = 64;
 const DEFAULTS = {
     minOutputTokens: 1000,
@@ -32,18 +40,35 @@ const DEFAULTS = {
 } as const;
 
 /** Effective per-tool-result token cap. `maxToolResultTokens` null (default)
- *  means auto: min(10% of the model context limit, 16384). 0 disables. When
- *  the context limit is unknown (<= 0), auto falls back to the absolute
- *  ceiling — the cap is the one valve that must still fire. */
+ *  means auto: min(10% of the model context limit, 16384), quantized down to
+ *  a power of two. 0 disables. When the context limit is unknown (<= 0 or
+ *  non-finite), auto falls back to the absolute ceiling — the cap is the one
+ *  valve that must still fire. Non-finite config values also fall through to
+ *  auto: a NaN cap compares false against every bound and would replace
+ *  EVERY tool-result with the bare marker. */
 export function resolveToolResultCap(config: Config): number {
     const configured = config.truncate.maxToolResultTokens;
-    if (configured != null) {
-        return configured <= 0 ? 0 : Math.floor(configured);
+    if (configured != null && Number.isFinite(configured)) {
+        return configured <= 0 ? 0 : Math.max(1, Math.floor(configured));
     }
-    if (config.modelContextLimit <= 0) return MAX_TOOL_RESULT_CAP;
-    return Math.min(
+    const limit = config.modelContextLimit;
+    if (!Number.isFinite(limit) || limit <= 0) return MAX_TOOL_RESULT_CAP;
+    const raw = Math.min(
         MAX_TOOL_RESULT_CAP,
-        Math.floor(config.modelContextLimit * AUTO_CAP_LIMIT_RATIO),
+        Math.floor(limit * AUTO_CAP_LIMIT_RATIO),
+    );
+    if (raw <= 0) return 1;
+    // Quantize down to a power of two (>= AUTO_CAP_QUANT_STEP) so the cap —
+    // and with it the truncation point of already-sent messages — moves only
+    // when the learned limit crosses a power-of-two boundary. Hosts that
+    // re-derive modelContextLimit per request would otherwise shift the cap
+    // every turn and break the provider prefix cache each time.
+    return Math.min(
+        raw,
+        Math.max(
+            AUTO_CAP_QUANT_STEP,
+            2 ** Math.floor(Math.log2(raw)),
+        ),
     );
 }
 
@@ -65,7 +90,19 @@ export function capLargeToolResults(
         const message = messages[index]!;
         if (message.contentType !== "tool-result") continue;
         const text = message.text ?? "";
-        if (text.length === 0 || text.includes(CAP_MARKER_PREFIX)) continue;
+        if (text.length === 0) continue;
+        if (text.includes(CAP_MARKER_PREFIX)) {
+            // Host stored the capped view back into the session: skip while
+            // the stored form still fits. A legitimate oversized result that
+            // merely QUOTES the marker string must still be capped — the bare
+            // substring test let marker-quoting results escape the cap
+            // entirely (review finding #1, 2026-08-23).
+            if (countTokens(text) <= cap * ALREADY_CAPPED_MARGIN) continue;
+        } else if (text.length * MAX_TOKENS_PER_CHAR <= cap) {
+            // Cheap prefilter: skips re-tokenizing every small tool-result on
+            // every turn (matters for host-provided BPE tokenizers).
+            continue;
+        }
         const tokens = countTokens(text);
         if (tokens <= cap) continue;
         edits.set(index, capToTokens(text, tokens, cap, countTokens));
@@ -131,10 +168,15 @@ export function truncateLargeToolOutputs(
         const text = message.text ?? "";
         if (
             text.length === 0 ||
-            text.includes(TRUNCATION_MARKER) ||
-            text.includes(CAP_MARKER_PREFIX)
+            text.includes(TRUNCATION_MARKER)
         )
             continue;
+        // NOTE: cap-marked messages ("[acp: tool-result truncated") are NOT
+        // skipped here. At >=95% usage the prefix is already being broken by
+        // design; letting emergency shrink capped-but-still-large messages is
+        // the last valve (review finding #4, 2026-08-23). Stacked markers are
+        // acceptable — this path runs at most until usage drops below the
+        // threshold.
         const tokens = countTokens(text);
         if (tokens < opts.minOutputTokens) continue;
         candidates.push({ index, tokens });

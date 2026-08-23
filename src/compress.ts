@@ -376,6 +376,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
       messages: result.messages,
       state: result.state,
       nudge: result.effects.nudge,
+      toolResultCappedCount: result.effects.toolResultCappedCount,
     };
   }
 

@@ -19,14 +19,25 @@ function msg(
   return { id, role: "user", contentType: type, text };
 }
 
-test("resolveToolResultCap: auto = min(10% of limit, 16384)", () => {
-  assert.equal(resolveToolResultCap(defaultConfig(100000)), 10000);
-  assert.equal(resolveToolResultCap(defaultConfig(131072)), 13107);
+test("resolveToolResultCap: auto = 10% of limit quantized down to a power of two, ceiling 16384", () => {
+  // 10% of 100000 = 10000 -> quantized down to 8192.
+  assert.equal(resolveToolResultCap(defaultConfig(100000)), 8192);
+  assert.equal(resolveToolResultCap(defaultConfig(131072)), 8192);
   // 10% of 500000 is 50000 — clamped by the absolute ceiling.
   assert.equal(resolveToolResultCap(defaultConfig(500000)), 16384);
   assert.equal(resolveToolResultCap(defaultConfig(163840)), 16384);
+  // Exactly on a power-of-two boundary stays put.
+  assert.equal(resolveToolResultCap(defaultConfig(81920)), 8192);
+  assert.equal(resolveToolResultCap(defaultConfig(65536)), 4096);
+  // Below the quantization step the raw 10% is kept (tiny-limit models).
+  assert.equal(resolveToolResultCap(defaultConfig(8192)), 819);
   // Unknown limit: auto still fires at the ceiling.
   assert.equal(resolveToolResultCap(defaultConfig(0)), 16384);
+  // Non-finite limit falls back to the ceiling, never NaN.
+  assert.equal(
+    resolveToolResultCap(defaultConfig(Number.NaN)),
+    16384,
+  );
 });
 
 test("resolveToolResultCap: explicit values and disable", () => {
@@ -57,7 +68,7 @@ test("capLargeToolResults rewrites an oversized tool-result over the cap", () =>
   const messages = [msg("a", "small text"), msg("t1", original, "tool-result")];
   const result = capLargeToolResults(messages, cfg, defaultCountTokens);
   assert.equal(result.cappedCount, 1);
-  assert.equal(result.capTokens, 10000);
+  assert.equal(result.capTokens, 8192);
   const rewritten = result.messages[1]!.text!;
   assert.ok(rewritten.includes("[acp: tool-result truncated"));
   assert.ok(rewritten.includes("original ~15000 tokens"));
@@ -65,7 +76,7 @@ test("capLargeToolResults rewrites an oversized tool-result over the cap", () =>
   assert.ok(rewritten.startsWith(original.slice(0, 100)));
   assert.ok(rewritten.endsWith(original.slice(-100)));
   // The rewrite itself fits the cap under the CJK-aware tokenizer.
-  assert.ok(defaultCountTokens(rewritten) <= 10000);
+  assert.ok(defaultCountTokens(rewritten) <= 8192);
   // Untouched messages keep their text verbatim.
   assert.equal(result.messages[0]!.text, "small text");
 });
@@ -94,8 +105,8 @@ test("capLargeToolResults uses the CJK-aware tokenizer (chars/4 would pass it)",
   // 30000 CJK chars: ~30000 real tokens, but a naive chars/4 estimate is
   // only 7500 — under the cap. The CJK-aware estimate must catch it.
   const cjk = "汉".repeat(30000);
-  assert.ok(defaultCountTokens(cjk) > 10000);
-  assert.ok(Math.ceil(cjk.length / 4) <= 10000);
+  assert.ok(defaultCountTokens(cjk) > 8192);
+  assert.ok(Math.ceil(cjk.length / 4) <= 8192);
   const result = capLargeToolResults(
     [msg("t", cjk, "tool-result")],
     cfg,
@@ -104,7 +115,7 @@ test("capLargeToolResults uses the CJK-aware tokenizer (chars/4 would pass it)",
   assert.equal(result.cappedCount, 1);
   const rewritten = result.messages[0]!.text!;
   assert.ok(rewritten.includes("original ~30000 tokens"));
-  assert.ok(defaultCountTokens(rewritten) <= 10000);
+  assert.ok(defaultCountTokens(rewritten) <= 8192);
 });
 
 test("capLargeToolResults disabled with maxToolResultTokens: 0", () => {
@@ -159,7 +170,9 @@ test("processTurn caps a fresh oversized tool-result below the emergency thresho
   // after the cap node (renderMessage strips the own tag before counting —
   // same convention here).
   const content = rewritten.replace(/^<acp [^>]*>m\d+<\/acp>\n?/, "");
-  assert.ok(defaultCountTokens(content) <= 10000);
+  assert.ok(defaultCountTokens(content) <= 8192);
+  // The cap is observable on the turn result (host logging/alerting).
+  assert.equal(result.toolResultCappedCount, 1);
 });
 
 test("processTurn leaves the whole session untouched when under the cap", () => {
@@ -176,9 +189,72 @@ test("processTurn leaves the whole session untouched when under the cap", () => 
     tokenCount: 3000,
   });
   assert.ok(!result.messages[1]!.text!.includes("[acp: tool-result truncated"));
+  assert.equal(result.toolResultCappedCount, undefined);
 });
 
-test("truncateLargeToolOutputs skips already-capped tool-results", () => {
+test("capLargeToolResults: a legitimate oversized result QUOTING the marker is still capped (marker-bypass regression)", () => {
+  const cfg = defaultConfig(100000); // cap 8192
+  // e.g. a grep/read of this repo's own source, a git diff, a log dump.
+  const quoting =
+    "[acp: tool-result truncated, original ~99999 tokens]" + "x".repeat(60000);
+  assert.ok(defaultCountTokens(quoting) > 8192);
+  const result = capLargeToolResults(
+    [msg("t", quoting, "tool-result")],
+    cfg,
+    defaultCountTokens,
+  );
+  assert.equal(result.cappedCount, 1);
+  assert.ok(
+    result.messages[0]!.text!.startsWith("[acp: tool-result truncated"),
+  );
+});
+
+test("capLargeToolResults: marker text within the cap (stored outbound view) stays skipped", () => {
+  const cfg = defaultConfig(100000); // cap 8192
+  const stored = capLargeToolResults(
+    [msg("t", "x".repeat(60000), "tool-result")],
+    cfg,
+    defaultCountTokens,
+  ).messages[0]!.text!;
+  assert.ok(stored.includes("[acp: tool-result truncated"));
+  // Re-run with the same cap: idempotent skip (within ALREADY_CAPPED_MARGIN).
+  const again = capLargeToolResults(
+    [msg("t", stored, "tool-result")],
+    cfg,
+    defaultCountTokens,
+  );
+  assert.equal(again.cappedCount, 0);
+});
+
+test("capLargeToolResults: non-finite maxToolResultTokens falls back to auto instead of truncating everything", () => {
+  // NaN compares false against every bound; pre-fix this replaced EVERY
+  // tool-result (even "hello world") with the bare marker.
+  const cfg = defaultConfig(100000, {
+    truncate: { maxToolResultTokens: Number.NaN },
+  });
+  assert.equal(resolveToolResultCap(cfg), 8192); // auto, not NaN
+  const result = capLargeToolResults(
+    [msg("t", "hello world", "tool-result")],
+    cfg,
+    defaultCountTokens,
+  );
+  assert.equal(result.cappedCount, 0);
+  assert.equal(result.messages[0]!.text, "hello world");
+});
+
+test("resolveToolResultCap: fractional explicit caps clamp to >= 1 token (never silently disable)", () => {
+  assert.equal(
+    resolveToolResultCap(
+      defaultConfig(100000, { truncate: { maxToolResultTokens: 0.5 } }),
+    ),
+    1,
+  );
+});
+
+test("truncateLargeToolOutputs re-truncates capped tool-results at emergency (stacked markers allowed)", () => {
+  // Review finding #4: at >=95%/threshold usage the prefix is already broken
+  // by design — emergency must still be able to shrink capped-but-large
+  // messages. Pre-fix, the marker skip made them permanently untouchable.
   const cfg = defaultConfig(100000, { truncate: { threshold: 0.5 } });
   const capped = capLargeToolResults(
     [msg("t", "x".repeat(60000), "tool-result")],
@@ -192,8 +268,29 @@ test("truncateLargeToolOutputs skips already-capped tool-results", () => {
     defaultCountTokens,
     { minOutputTokens: 100, keepPrefixChars: 100, keepSuffixChars: 100 },
   );
+  assert.equal(result.truncatedCount, 1);
+  const text = result.messages[0]!.text!;
+  assert.ok(text.includes("[truncated for context space"));
+  assert.ok(defaultCountTokens(text) < 1000);
+});
+
+test("truncateLargeToolOutputs leaves capped tool-results alone when usage is already below target", () => {
+  const cfg = defaultConfig(100000, { truncate: { threshold: 0.5 } });
+  const capped = capLargeToolResults(
+    [msg("t", "x".repeat(60000), "tool-result")],
+    cfg,
+    defaultCountTokens,
+  );
+  // 44000 < threshold 50000: early return — capped messages are only
+  // re-touched when usage actually crosses the emergency threshold.
+  const result = truncateLargeToolOutputs(
+    capped.messages,
+    44000,
+    cfg,
+    defaultCountTokens,
+    { minOutputTokens: 100, keepPrefixChars: 100, keepSuffixChars: 100 },
+  );
   assert.equal(result.truncatedCount, 0);
-  // No double-truncation marker stacking.
   assert.equal(result.messages[0]!.text, capped.messages[0]!.text);
 });
 

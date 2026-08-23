@@ -265,6 +265,10 @@ export interface ProcessTurnResult {
   messages: CoreMessage[];
   state: CompressionState;
   nudge?: NudgeDecision;
+  /** Tool-results rewritten by the hard per-message cap this turn. Hosts
+   *  should log/alert on this — a recurrence of the 31K-token incident
+   *  would otherwise be invisible. */
+  toolResultCappedCount?: number;
 }
 
 export interface StatusReport {

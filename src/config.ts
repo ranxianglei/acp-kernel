@@ -21,7 +21,7 @@ export function defaultConfig(
       tier2GrowthMultiplier: 1.5,
     },
     promotionThreshold: 5,
-    truncate: { threshold: 0.95 },
+    truncate: { threshold: 0.95, maxToolResultTokens: null },
     compress: {
       minCompressRange: 5000,
       maxSummaryLength: 20000,
@@ -65,6 +65,15 @@ export function validateConfig(config: Config): string[] {
   }
   if (config.truncate.threshold <= 0 || config.truncate.threshold > 1) {
     errors.push("truncate.threshold must be in (0, 1]");
+  }
+  if (
+    config.truncate.maxToolResultTokens != null &&
+    (!Number.isFinite(config.truncate.maxToolResultTokens) ||
+      config.truncate.maxToolResultTokens < 0)
+  ) {
+    errors.push(
+      "truncate.maxToolResultTokens must be null (auto), 0 (disabled), or a positive number",
+    );
   }
   for (const tier of [config.tiers.tier2Trigger, config.tiers.tier3Trigger]) {
     if (tier < 1) errors.push("tier triggers must be >= 1");

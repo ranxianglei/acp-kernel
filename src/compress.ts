@@ -11,7 +11,10 @@ import {
   blockVisibleInRange,
 } from "./boundaries.js";
 import type { ResolvedRange } from "./boundaries.js";
-import { truncateLargeToolOutputs } from "./truncate-tools.js";
+import {
+  truncateLargeToolOutputs,
+  capLargeToolResults,
+} from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
 import { createRenderRefsNode } from "./render-refs.js";
@@ -373,6 +376,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
       messages: result.messages,
       state: result.state,
       nudge: result.effects.nudge,
+      toolResultCappedCount: result.effects.toolResultCappedCount,
     };
   }
 
@@ -426,6 +430,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
       pruneNode,
       filterNode,
       hideCompressCallsNode,
+      toolResultCapNode,
       recommendNode,
       nudgeNode,
       emergencyTruncateNode,
@@ -585,6 +590,29 @@ const nudgeNode: PipelineNode = {
       ...io,
       state: { ...io.state, nudge: stamped },
       effects: { ...io.effects, nudge },
+    };
+  },
+};
+
+// Hard per-tool-result token cap. Runs on EVERY turn (no usage gate) and
+// ignores recency protection: a single oversized tool-result can consume a
+// double-digit share of the window while total usage still reads low, so no
+// percentage-gated valve can catch it. Placed after prune (no point rewriting
+// messages about to disappear) and before recommend/nudge (so downstream
+// token estimates reflect the capped sent view).
+const toolResultCapNode: PipelineNode = {
+  name: "tool-result-cap",
+  run(io, ctx) {
+    const capped = capLargeToolResults(
+      io.messages,
+      ctx.config,
+      ctx.countTokens,
+    );
+    if (capped.cappedCount === 0) return io;
+    return {
+      ...io,
+      messages: capped.messages,
+      effects: { ...io.effects, toolResultCappedCount: capped.cappedCount },
     };
   },
 };

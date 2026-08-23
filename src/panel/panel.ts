@@ -4,6 +4,7 @@ import type { CompressionState, NudgeDecision } from "../types.js";
 import { formatCompactTokens } from "./format.js";
 import { topicFallback } from "./topic.js";
 import { viableRanges } from "../viable.js";
+import { cacheHitStats, formatHitRate, type CacheUsageSample } from "./cache.js";
 
 export interface StatusPanelInput {
   /** Adapter identifier for the header, e.g. "billion-context-omp@0.1.6".
@@ -30,6 +31,11 @@ export interface StatusPanelInput {
    *  from an estimate-scale number invents a third, meaningless scale
    *  (issue #18 "看板统计的和拆分的有差异"). */
   unprunedTokens?: number;
+  /** Per-request prompt-cache usage (from assistant messages' provider-
+   *  reported `usage`). Requests without cache reporting are excluded by
+   *  cacheHitStats; when no counted request remains, the section is
+   *  omitted entirely. Omit the field to hide the section. */
+  cacheUsages?: ReadonlyArray<CacheUsageSample>;
   /** Token formatter override (defaults to formatCompactTokens). */
   fmtTokens?: (n: number) => string;
 }
@@ -106,6 +112,16 @@ export function buildStatusPanel(input: StatusPanelInput): string {
       const pct = sentTotal > 0 ? Math.round((cat.value / sentTotal) * 100) : 0;
       const b = bar(cat.value, sentTotal);
       lines.push(`  ${cat.label.padEnd(10)} ${b} ${String(pct).padStart(3)}%  ${fmt(cat.value)}`);
+    }
+  }
+
+  if (input.cacheUsages) {
+    const cache = cacheHitStats(input.cacheUsages);
+    if (cache.requests > 0 && cache.session !== undefined && cache.last !== undefined) {
+      lines.push("");
+      lines.push(
+        `Prompt cache (provider-reported): ${formatHitRate(cache.last)} last · ${formatHitRate(cache.session)} session avg — ${fmt(cache.cacheRead)} of ${fmt(cache.billedPrompt)} billed prompt tokens served from cache (${cache.requests} req)`,
+      );
     }
   }
 

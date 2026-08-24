@@ -131,8 +131,7 @@ export function resolveBoundaries(
   const nestedBlockIds: string[] = [];
   const nestedSeen = new Set<string>();
   for (const block of activeBlocks(input.state)) {
-    const anchor = visibleBlockAnchor(block, indexByMessageId);
-    if (anchor !== null && anchor >= startIndex && anchor <= endIndex) {
+    if (blockVisibleInRange(block, indexByMessageId, startIndex, endIndex)) {
       if (!nestedSeen.has(block.blockId)) {
         nestedSeen.add(block.blockId);
         nestedBlockIds.push(block.blockId);
@@ -309,6 +308,32 @@ export function visibleBlockAnchor(
   const summaryIndex = indexByMessageId.get(summaryMessageId(block.blockId));
   if (summaryIndex !== undefined) return summaryIndex;
   return earliestIndexOfIds(block.effectiveMessageIds, indexByMessageId);
+}
+
+// A block participates in a range when ANY of its visible representations
+// (rendered summary or earliest surviving raw) falls inside it. The summary
+// alone is not sufficient: when a block covers the session's first user
+// message, prune keeps that one raw and inserts the summary BEFORE it, so the
+// summary index can sit outside a range that still contains the raw.
+export function blockVisibleInRange(
+  block: CompressionBlock,
+  indexByMessageId: Map<string, number>,
+  startIndex: number,
+  endIndex: number,
+): boolean {
+  const summaryIndex = indexByMessageId.get(summaryMessageId(block.blockId));
+  if (
+    summaryIndex !== undefined &&
+    summaryIndex >= startIndex &&
+    summaryIndex <= endIndex
+  ) {
+    return true;
+  }
+  const rawIndex = earliestIndexOfIds(
+    block.effectiveMessageIds,
+    indexByMessageId,
+  );
+  return rawIndex !== null && rawIndex >= startIndex && rawIndex <= endIndex;
 }
 
 export function earliestIndexOfIds(

@@ -12,7 +12,8 @@ export function createInitialState(): CompressionState {
       anchors: {},
       lastShownByTier: {},
     },
-    stats: { tokensCompressed: 0, compressionCount: 0 },
+    stats: { tokensCompressed: 0, compressionCount: 0, absorbedTokens: 0 },
+    absorbed: [],
     nextBlockId: 1,
     nextRunId: 1,
   };

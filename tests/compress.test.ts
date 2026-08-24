@@ -426,7 +426,8 @@ test("consumed plus fresh-but-small range is not misreported as too small", () =
   assert.equal(retry.result.blocksCreated, 0);
   assert.equal(retry.result.errors.length, 1);
   assert.match(retry.result.errors[0]!, /already compressed/);
-  assert.match(retry.result.errors[0]!, /remaining compressible content/);
+  assert.match(retry.result.errors[0]!, /your refs are stale/);
+  assert.match(retry.result.errors[0]!, /Run acp_status/);
   assert.doesNotMatch(retry.result.errors[0]!, /Combine more messages/);
 });
 

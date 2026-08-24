@@ -8,11 +8,12 @@ import { validateConfig } from "./config.js";
 import {
   BoundaryNotFoundError,
   resolveBoundaries,
-  visibleBlockAnchor,
+  blockVisibleInRange,
 } from "./boundaries.js";
 import type { ResolvedRange } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
+import { appendAbsorbPrompts, hideAbsorbedMessages } from "./absorb.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
 import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
@@ -270,9 +271,9 @@ export function createCore(ports: Ports = {}): CompressionCore {
           resolvableCount === 0 &&
           consumedRanges.length === 0 &&
           unknownCount > 0
-            ? `None of the ${input.ranges.length} requested range(s) resolved — every ref failed with "does not exist in this session". Refs recorded before an earlier compress are stale: each successful compress renumbers the remaining refs. Run acp_status, then re-issue the compress in the same turn using only the refs it reports.`
+            ? `None of the ${input.ranges.length} requested range(s) resolved — every ref failed with "does not exist in this session". Refs recorded before an earlier compress are stale: each successful compress renumbers the remaining refs. Run acp_status, then call the compress tool again using only the refs it reports.`
             : consumedRanges.length > 0
-              ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}); remaining compressible content ${totalRangeChars} chars < min ${input.config.compress.minCompressRange}. Nothing to do.${liveHint}`
+              ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — your refs are stale: a prior compress renumbered the remaining refs, so this range now falls inside an active block. Run acp_status, then call the compress tool again using only the CURRENT compressible ranges it reports.${liveHint}`
               : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
         return {
           state: input.state,
@@ -424,6 +425,8 @@ export function createCore(ports: Ports = {}): CompressionCore {
       assignRefsNode,
       syncBlocksNode,
       pruneNode,
+      absorbHideNode,
+      absorbPromptNode,
       filterNode,
       hideCompressCallsNode,
       recommendNode,
@@ -480,6 +483,33 @@ const pruneNode: PipelineNode = {
   name: "prune",
   run(io) {
     return { ...io, messages: prune(io.messages, io.state) };
+  },
+};
+
+const absorbHideNode: PipelineNode = {
+  name: "absorb-hide",
+  enabled: (io) => (io.state.absorbed?.length ?? 0) > 0,
+  run(io) {
+    return { ...io, messages: hideAbsorbedMessages(io.messages, io.state) };
+  },
+};
+
+const absorbPromptNode: PipelineNode = {
+  name: "absorb-prompt",
+  enabled: (_io, ctx) => ctx.config.absorb?.enabled === true,
+  run(io, ctx) {
+    const applied = appendAbsorbPrompts(
+      io.messages,
+      io.state,
+      ctx.config,
+      ctx.tokenCount,
+      ctx.countTokens,
+    );
+    return {
+      ...io,
+      messages: applied.messages,
+      effects: { ...io.effects, absorbPromptedCount: applied.promptedCount },
+    };
   },
 };
 
@@ -666,8 +696,9 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     const nestedSeen = new Set(resolved.nestedBlockIds);
     for (const block of activeBlocks(input.state)) {
       if (nestedSeen.has(block.blockId)) continue;
-      const anchor = visibleBlockAnchor(block, indexByMessageId);
-      if (anchor !== null && anchor >= adjustedStart && anchor <= adjustedEnd) {
+      if (
+        blockVisibleInRange(block, indexByMessageId, adjustedStart, adjustedEnd)
+      ) {
         nestedSeen.add(block.blockId);
         resolved.nestedBlockIds.push(block.blockId);
       }
@@ -758,6 +789,28 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
       `Excluded ${hitProtectedRaw.length} protected message(s) ${hitRefs.join(
         ", ",
       )} from compression range (recent/last-user zone).`,
+    );
+  }
+
+  // Livelock guard (billion-context-pi#199): a message-ref range whose entire
+  // content is already owned by active block(s) — its raw ids are all covered
+  // or dropped as protected tool pairs — resolves with zero NEW direct
+  // messages. Creating a block here would be an empty same-tier rewrite
+  // (directMessageIds: []) that still reports blocksCreated>0: fake success.
+  // The caller's view does not change, so a model driven by that report
+  // repeats the identical call forever. Promote/merge must go through
+  // explicit block-boundary refs (bN..bM) instead.
+  if (
+    !isBlockBoundary &&
+    filteredIds.length === 0 &&
+    consumedBlockIds.length > 0
+  ) {
+    const first = consumedBlockIds[0]!;
+    const last = consumedBlockIds[consumedBlockIds.length - 1]!;
+    throw new Error(
+      `Range ${input.spec.startRef}..${input.spec.endRef} contains no new compressible messages — every message in it is already covered by active block(s) ${consumedBlockIds.join(
+        ", ",
+      )}. Nothing was compressed. To rewrite or merge those blocks, reference them by block ID (${first}..${last}); otherwise run acp_status and compress a range it reports as compressible.`,
     );
   }
 
@@ -1260,6 +1313,7 @@ function cloneState(state: CompressionState): CompressionState {
     tokenSnapshot: { ...(state.tokenSnapshot ?? {}) },
     nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
     stats: { ...state.stats },
+    absorbed: (state.absorbed ?? []).map((record) => ({ ...record })),
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
   };

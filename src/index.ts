@@ -17,6 +17,7 @@ export {
   advanceSurvival,
 } from "./state.js";
 export { defaultConfig, validateConfig } from "./config.js";
+export * from "./compress-tools.js";
 export {
   assignRefs,
   highestUsedIndex,
@@ -40,6 +41,7 @@ export {
   parseBoundary,
   BoundaryNotFoundError,
   visibleBlockAnchor,
+  blockVisibleInRange,
 } from "./boundaries.js";
 export {
   defaultCountTokens,
@@ -76,8 +78,33 @@ export { buildStatusReport, buildRecap } from "./report.js";
 export type { StatusReportOptions } from "./report.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";
 export type { HideConsumedResult } from "./hide-consumed.js";
+export {
+  ABSORB_TOOL_NAME,
+  ABSORB_TOOL,
+  ABSORB_TOOL_OPENAI,
+} from "./compress-tools.js";
+export {
+  ABSORB_PROMPT_MARKER,
+  DEFAULT_ABSORB_CONFIG,
+  resolveAbsorbConfig,
+  buildAbsorbPrompt,
+  buildAbsorbSystemPrompt,
+  isAbsorbCandidate,
+  hideAbsorbedMessages,
+  appendAbsorbPrompts,
+  parseAbsorbInput,
+  applyAbsorb,
+} from "./absorb.js";
+export type {
+  AbsorbInput,
+  AbsorbOutcome,
+  ParsedAbsorb,
+  AppendAbsorbPromptsResult,
+} from "./absorb.js";
 export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
+export { parseCompressArgs } from "./parse-compress-input.js";
+export type { CompressParseDiagnostics, CompressParseKind, ParsedCompressInput } from "./parse-compress-input.js";
 export {
   renderVisibleRefs,
   renderRefsNode,

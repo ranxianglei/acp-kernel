@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildStatusPanel, topicFallback, formatCompactTokens } from "../src/panel/index.js";
+import { buildStatusPanel, topicFallback, formatCompactTokens, cacheHitStats, formatHitRate } from "../src/panel/index.js";
 import { VIABLE_RANGE_MIN_TOKENS } from "../src/viable.js";
 
 test("panel separates session accounting from sent view", () => {
@@ -102,4 +102,55 @@ test("formatCompactTokens matches host footer thresholds", () => {
   assert.equal(formatCompactTokens(9_500), "9.5k");
   assert.equal(formatCompactTokens(430_000), "430k");
   assert.equal(formatCompactTokens(1_500_000), "1.5M");
+});
+
+test("cacheHitStats weights the session average by billed prompt tokens", () => {
+  const out = cacheHitStats([
+    { input: 1_000, cacheRead: 99_000, cacheWrite: 0 }, // 99% of 100k billed
+    { input: 10_000, cacheRead: 0, cacheWrite: 90_000 }, // cold write, 0% served
+  ]);
+  assert.equal(out.requests, 2);
+  assert.equal(out.cacheRead, 99_000);
+  assert.equal(out.billedPrompt, 200_000);
+  assert.equal(out.session, 99_000 / 200_000);
+  assert.equal(out.last, 0); // write-only request still counts as last
+});
+
+test("cacheHitStats excludes requests without provider cache reporting", () => {
+  const out = cacheHitStats([
+    { input: 5_000, cacheRead: 0, cacheWrite: 0 }, // no cache signal → excluded
+    { input: 0, cacheRead: 80_000, cacheWrite: 0 },
+  ]);
+  assert.equal(out.requests, 1);
+  assert.equal(out.session, 1);
+  assert.equal(out.last, 1);
+  const none = cacheHitStats([{ input: 5_000, cacheRead: 0, cacheWrite: 0 }]);
+  assert.equal(none.requests, 0);
+  assert.equal(none.session, undefined);
+  assert.equal(none.last, undefined);
+});
+
+test("formatHitRate clamps and formats one decimal", () => {
+  assert.equal(formatHitRate(0.923), "92.3%");
+  assert.equal(formatHitRate(1), "100.0%");
+  assert.equal(formatHitRate(1.2), "100.0%");
+  assert.equal(formatHitRate(0), "0.0%");
+});
+
+test("panel renders prompt cache line and omits it without cache signal", () => {
+  const state = { blocks: [], messageRefs: { byRaw: {}, byRef: {} }, nudge: {}, stats: { tokensCompressed: 0 }, nextBlockId: 1, nextRunId: 1 };
+  const base = { tokenCount: 430_000, systemPromptTokens: 0, state: state as never, nudge: undefined, modelContextLimit: 1_000_000 };
+  const withCache = buildStatusPanel({
+    ...base,
+    cacheUsages: [
+      { input: 1_000, cacheRead: 99_000, cacheWrite: 0 },
+      { input: 0, cacheRead: 180_000, cacheWrite: 20_000 },
+    ],
+  });
+  // session = (99k + 180k) / (100k + 200k) = 93.0%; last = 180k/200k = 90.0%
+  assert.match(withCache, /Prompt cache \(provider-reported\): 90\.0% last · 93\.0% session avg — 279k of 300k billed prompt tokens served from cache \(2 req\)/);
+  const noSignal = buildStatusPanel({ ...base, cacheUsages: [{ input: 5_000, cacheRead: 0, cacheWrite: 0 }] });
+  assert.doesNotMatch(noSignal, /Prompt cache/, "omitted when no request reported cache activity");
+  const omitted = buildStatusPanel(base);
+  assert.doesNotMatch(omitted, /Prompt cache/, "omitted without cacheUsages field");
 });

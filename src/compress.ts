@@ -1111,9 +1111,12 @@ function decideNudge(input: NudgeInput): NudgeDecision {
 
   // Tier arbitration. Emergency (usage >= emergencyThresholdPct) ignores tier
   // priority and picks the tier with the MAX pending. Non-emergency defaults to
-  // T1; T2 and T3 override when each crossed the shared 1.5x threshold AND
-  // exceeds the effective pending of every lower tier (T2 > T1 effective;
-  // T3 > T2 and > T1 effective).
+  // T1; T2/T3 override via either path: (a) COUNT — the number of active
+  // lower-tier blocks reached tiers.tier2Trigger/tier3Trigger (the documented
+  // block-count trigger; summaries are ~10:1 condensed so a token comparison
+  // against raw pending starves), or (b) TOKEN MASS — crossed the shared 1.5x
+  // threshold AND exceeds the effective pending of every lower tier (T2 > T1
+  // effective; T3 > T2 and > T1 effective).
   const tier2Threshold = Math.round(
     nudgeGrowthTokens * (config.nudge.tier2GrowthMultiplier ?? 1.5),
   );
@@ -1123,6 +1126,8 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const t1Eff = tiers[1]?.pending ?? 0;
   const t2Pen = tiers[2]?.pending ?? 0;
   const t3Pen = tiers[3]?.pending ?? 0;
+  const t2Count = tiers[2]?.targetBlocks.length ?? 0;
+  const t3Count = tiers[3]?.targetBlocks.length ?? 0;
 
   if (pressure) {
     // High pressure: pick the tier with the MAX pending so pressure can route
@@ -1158,28 +1163,33 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       injectedReason = `T1 effective ${t1Eff} >= ${nudgeGrowthTokens}, growth ${growthSinceReference}, usage ${Math.round(usage * 100)}%`;
     } else if (
       config.tiers.enabled &&
-      t2Pen >= tier2Threshold &&
-      t2Pen > t1Eff
+      (t2Count >= config.tiers.tier2Trigger ||
+        (t2Pen >= tier2Threshold && t2Pen > t1Eff))
     ) {
       const lastShown = state.nudge.lastShownByTier[2] ?? 0;
       const cadenceMet =
         lastShown === 0 || tokenCount - lastShown >= growthFloor;
       if (cadenceMet) {
         injectedTier = 2;
-        injectedReason = `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+        injectedReason =
+          t2Count >= config.tiers.tier2Trigger
+            ? `T2 distill ready: ${t2Count} tier-1 blocks >= tier2Trigger ${config.tiers.tier2Trigger} (${t2Pen} tokens), usage ${Math.round(usage * 100)}%`
+            : `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
       }
     } else if (
       config.tiers.enabled &&
-      t3Pen >= tier2Threshold &&
-      t3Pen > t2Pen &&
-      t3Pen > t1Eff
+      (t3Count >= config.tiers.tier3Trigger ||
+        (t3Pen >= tier2Threshold && t3Pen > t2Pen && t3Pen > t1Eff))
     ) {
       const lastShown = state.nudge.lastShownByTier[3] ?? 0;
       const cadenceMet =
         lastShown === 0 || tokenCount - lastShown >= growthFloor;
       if (cadenceMet) {
         injectedTier = 3;
-        injectedReason = `T3 condense ready: ${tiers[3]!.targetBlocks.length} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+        injectedReason =
+          t3Count >= config.tiers.tier3Trigger
+            ? `T3 condense ready: ${t3Count} tier-2 blocks >= tier3Trigger ${config.tiers.tier3Trigger} (${t3Pen} tokens), usage ${Math.round(usage * 100)}%`
+            : `T3 condense ready: ${tiers[3]!.targetBlocks.length} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
       }
     }
   }
@@ -1192,23 +1202,33 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   } else if (pressure) {
     const label = emergencyOverride ? "EMERGENCY" : "OVER-LIMIT";
     reason = `${label}: usage ${Math.round(usage * 100)}% but no tier has effective compressible content (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — nudge suppressed to avoid offering ranges below minCompressRange`;
-  } else {
-    const tiersList = [1, 2, 3] as const;
-    const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
-    const ready = eligible
-      .filter((t) => (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens)
-      .map((t) => `T${t} ${tiers[t]!.pending}`);
-    const readyHint = ready.length > 0 ? `, ready: ${ready.join(", ")}` : "";
-    const blocked = eligible
-      .filter(
-        (t) =>
-          (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens &&
-          (state.nudge.lastShownByTier[t] ?? 0) > 0 &&
-          tokenCount - (state.nudge.lastShownByTier[t] ?? 0) < growthFloor,
-      )
-      .map((t) => `T${t} (cadence)`);
-    const blockedHint =
-      blocked.length > 0 ? `, blocked: ${blocked.join(", ")}` : "";
+   } else {
+     const tiersList = [1, 2, 3] as const;
+     const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
+     const countReady = (t: 1 | 2 | 3) =>
+       t === 2
+         ? t2Count >= config.tiers.tier2Trigger
+         : t === 3
+           ? t3Count >= config.tiers.tier3Trigger
+           : false;
+     const ready = eligible
+       .filter((t) => (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens)
+       .map((t) => `T${t} ${tiers[t]!.pending}`);
+     const readyCount = eligible
+       .filter((t) => (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReady(t))
+       .map((t) => `T${t} ${t === 2 ? t2Count : t3Count} blocks (count)`);
+     const readyAll = [...ready, ...readyCount];
+     const readyHint = readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";
+     const blocked = eligible
+       .filter(
+         (t) =>
+           ((tiers[t]?.pending ?? 0) >= nudgeGrowthTokens || countReady(t)) &&
+           (state.nudge.lastShownByTier[t] ?? 0) > 0 &&
+           tokenCount - (state.nudge.lastShownByTier[t] ?? 0) < growthFloor,
+       )
+       .map((t) => `T${t} (cadence)`);
+     const blockedHint =
+       blocked.length > 0 ? `, blocked: ${blocked.join(", ")}` : "";
     const maxPending = Math.max(
       0,
       ...Object.values(tiers).map((t) => t.pending),

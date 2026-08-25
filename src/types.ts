@@ -106,7 +106,12 @@ export interface CompressionState {
 
 export interface TierConfig {
   enabled: boolean;
+  /** Distill to tier 2 once the count of ACTIVE tier-1 blocks reaches this.
+   *  Default 5. Independent of raw-message pending: summaries are ~10:1
+   *  condensed, so a token-mass comparison against T1 pending would starve. */
   tier2Trigger: number;
+  /** Condense to tier 3 once the count of ACTIVE tier-2 blocks reaches this.
+   *  Default 10. */
   tier3Trigger: number;
 }
 

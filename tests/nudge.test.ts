@@ -635,3 +635,89 @@ test("re-baseline after a tokenCount scale drop also resets per-tier cadence sta
   assert.equal(stamped.lastNudgeShownTokens, 0, "shared cadence baseline cleared");
   assert.deepEqual(stamped.lastShownByTier, {}, "per-tier cadence stamps must not survive a scale drop");
 });
+
+test("arbitration: T2 fires on tier-1 block COUNT (tier2Trigger) even when summary tokens are small", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50000 }).state;
+  // 5 blocks x ~100-token summaries = ~500 pending tokens, far below the
+  // 9000 token gate — only the count path (5 >= tier2Trigger 5) can fire,
+  // and raw T1 is fully preserved so t1Eff cannot dominate.
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 400) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, true, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, 2);
+  assert.match(turn.nudge.reason ?? "", /5 tier-1 blocks >= tier2Trigger 5/);
+  assert.equal(turn.nudge.tierTargetBlocks?.length, 5);
+});
+
+test("arbitration: below tier2Trigger count and below token gate -> no T2 nudge", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50000 }).state;
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"]], 400) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, false, `reason: ${turn.nudge.reason}`);
+  assert.match(turn.nudge.reason ?? "", /max compressible 400 < threshold 6000/);
+  assert.doesNotMatch(turn.nudge.reason ?? "", /tier2Trigger/);
+});
+
+test("arbitration: count-triggered T2 does not preempt ready T1 raw compression", () => {
+  const core = createCore();
+  const config = buildConfig({
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 0,
+  });
+  const messages = makeMessages(10);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50000 }).state;
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 400) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, true, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, 1, "T1 raw pending still has priority over count-ready T2");
+  assert.match(turn.nudge.reason ?? "", /T1 effective/);
+});
+
+test("arbitration: count-triggered T2 still respects the growthFloor cadence", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50000 }).state;
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 400) };
+  const first = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(first.nudge.tier, 2, `reason: ${first.nudge.reason}`);
+  const second = core.processTurn({ messages, state: first.state, config, tokenCount: 61000 });
+  assert.equal(second.nudge.shouldInject, false, `reason: ${second.nudge.reason}`);
+  assert.match(second.nudge.reason ?? "", /T2 \(cadence\)/);
+});
+
+test("arbitration: T3 fires on tier-2 block COUNT (tier3Trigger) even when summary tokens are small", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50000 }).state;
+  // 2 tier-1 blocks (below tier2Trigger) + 10 tier-2 blocks with ~100-token
+  // summaries: t3Pen ~1000 << 9000 token gate — only the count path fires.
+  state = {
+    ...state,
+    blocks: [...t1Blocks([["m1"], ["m2"]], 400), ...t2Blocks(10, 400, ["m3"])],
+  };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, true, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, 3);
+  assert.match(turn.nudge.reason ?? "", /10 tier-2 blocks >= tier3Trigger 10/);
+  assert.equal(turn.nudge.tierTargetBlocks?.length, 10);
+});
+
+test("arbitration: tiers disabled -> count trigger cannot fire T2", () => {
+  const core = createCore();
+  const config = buildConfig({ tiers: { enabled: false, tier2Trigger: 5, tier3Trigger: 10 }, preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50000 }).state;
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"], ["m6"], ["m7"]], 400) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, false, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, null);
+  assert.doesNotMatch(turn.nudge.reason ?? "", /tier2Trigger/);
+});

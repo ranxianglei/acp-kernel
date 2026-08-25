@@ -33,8 +33,10 @@ test("panel separates session accounting from sent view", () => {
     modelContextLimit: 1_000_000,
   });
 
-  assert.match(text, /Context \(session accounting, host footer scale\): 43% \(430k \/ 1\.0M\) — never shrinks/);
-  assert.match(text, /Sent to LLM \(after compression, est\.\): 24k \(2% of limit\)/);
+  assert.match(text, /Sent to LLM \(after compression, est\.\): 24k \/ 1\.0M/);
+  assert.match(text, /Cumulative \(session accounting, host footer scale\): 430k — never shrinks/);
+  assert.doesNotMatch(text, /% of limit/, "no window-relative percentage on the sent line");
+  assert.doesNotMatch(text, /\d+% \(/, "no window-relative percentage on the cumulative line");
   assert.doesNotMatch(text, /Session-only/, "omitted without unprunedTokens — no cross-scale subtraction");
   assert.match(text, /Token Breakdown \(sent view\):/);
   assert.doesNotMatch(text, /Framework/, "no fake Framework bucket");

@@ -1203,32 +1203,32 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     const label = emergencyOverride ? "EMERGENCY" : "OVER-LIMIT";
     reason = `${label}: usage ${Math.round(usage * 100)}% but no tier has effective compressible content (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — nudge suppressed to avoid offering ranges below minCompressRange`;
    } else {
-     const tiersList = [1, 2, 3] as const;
-     const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
-     const countReady = (t: 1 | 2 | 3) =>
-       t === 2
-         ? t2Count >= config.tiers.tier2Trigger
-         : t === 3
-           ? t3Count >= config.tiers.tier3Trigger
-           : false;
-     const ready = eligible
-       .filter((t) => (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens)
-       .map((t) => `T${t} ${tiers[t]!.pending}`);
-     const readyCount = eligible
-       .filter((t) => (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReady(t))
-       .map((t) => `T${t} ${t === 2 ? t2Count : t3Count} blocks (count)`);
-     const readyAll = [...ready, ...readyCount];
-     const readyHint = readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";
-     const blocked = eligible
-       .filter(
-         (t) =>
-           ((tiers[t]?.pending ?? 0) >= nudgeGrowthTokens || countReady(t)) &&
-           (state.nudge.lastShownByTier[t] ?? 0) > 0 &&
-           tokenCount - (state.nudge.lastShownByTier[t] ?? 0) < growthFloor,
-       )
-       .map((t) => `T${t} (cadence)`);
-     const blockedHint =
-       blocked.length > 0 ? `, blocked: ${blocked.join(", ")}` : "";
+    const tiersList = [1, 2, 3] as const;
+    const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
+    const countReady = (t: 1 | 2 | 3) =>
+      t === 2
+        ? t2Count >= config.tiers.tier2Trigger
+        : t === 3
+          ? t3Count >= config.tiers.tier3Trigger
+          : false;
+    const ready = eligible
+      .filter((t) => (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens)
+      .map((t) => `T${t} ${tiers[t]!.pending}`);
+    const readyCount = eligible
+      .filter((t) => (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReady(t))
+      .map((t) => `T${t} ${t === 2 ? t2Count : t3Count} blocks (count)`);
+    const readyAll = [...ready, ...readyCount];
+    const readyHint = readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";
+    const blocked = eligible
+      .filter(
+        (t) =>
+          ((tiers[t]?.pending ?? 0) >= nudgeGrowthTokens || countReady(t)) &&
+          (state.nudge.lastShownByTier[t] ?? 0) > 0 &&
+          tokenCount - (state.nudge.lastShownByTier[t] ?? 0) < growthFloor,
+      )
+      .map((t) => `T${t} (cadence)`);
+    const blockedHint =
+      blocked.length > 0 ? `, blocked: ${blocked.join(", ")}` : "";
     const maxPending = Math.max(
       0,
       ...Object.values(tiers).map((t) => t.pending),

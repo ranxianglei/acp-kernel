@@ -709,3 +709,15 @@ test("arbitration: T3 fires on tier-2 block COUNT (tier3Trigger) even when summa
   assert.match(turn.nudge.reason ?? "", /10 tier-2 blocks >= tier3Trigger 10/);
   assert.equal(turn.nudge.tierTargetBlocks?.length, 10);
 });
+
+test("arbitration: tiers disabled -> count trigger cannot fire T2", () => {
+  const core = createCore();
+  const config = buildConfig({ tiers: { enabled: false, tier2Trigger: 5, tier3Trigger: 10 }, preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50000 }).state;
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"], ["m6"], ["m7"]], 400) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
+  assert.equal(turn.nudge.shouldInject, false, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, null);
+  assert.doesNotMatch(turn.nudge.reason ?? "", /tier2Trigger/);
+});

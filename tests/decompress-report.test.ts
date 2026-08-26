@@ -134,6 +134,67 @@ test("buildStatusReport compressed scope lists blocks with details", () => {
     assert.ok(report.includes('"deploy"'));
 });
 
+function turnState(): CompressionState {
+    const byRaw: Record<string, string> = {};
+    for (let i = 1; i <= 8; i++) byRaw[`r${i}`] = `m0000${i}`;
+    return {
+        ...createInitialState(),
+        blocks: [],
+        messageRefs: { byRaw, byRef: {} },
+    };
+}
+
+function turnMessages(): CoreMessage[] {
+    const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
+    return [
+        { id: "r1", role: "user", contentType: "text", text: "start turn one" },
+        { id: "r2", role: "assistant", contentType: "tool-result", toolName: "bash", text: words(4) },
+        { id: "r3", role: "assistant", contentType: "text", text: "done one" },
+        { id: "r4", role: "user", contentType: "text", text: "start turn two" },
+        { id: "r5", role: "assistant", contentType: "tool-result", toolName: "bash", text: words(4) },
+        { id: "r6", role: "assistant", contentType: "text", text: "done two" },
+        { id: "r7", role: "user", contentType: "text", text: "start turn three" },
+        { id: "r8", role: "assistant", contentType: "text", text: words(20) },
+    ];
+}
+
+const wordCount = (t: string) => (t.trim() ? t.split(/\s+/).length : 0);
+
+test("buildStatusReport uncompressed ranges splits at user-message turn boundaries", () => {
+    const report = buildStatusReport(turnState(), turnMessages(), wordCount, { scope: "uncompressed" });
+    assert.ok(!report.includes("m00001–m00008"), "dense refs must not collapse into one giant range");
+    assert.ok(report.includes("m00001–m00003"));
+    assert.ok(report.includes("m00004–m00006"));
+    assert.ok(report.includes("m00007–m00008"));
+});
+
+test("buildStatusReport uncompressed ranges sorts by size by default", () => {
+    const report = buildStatusReport(turnState(), turnMessages(), wordCount, { scope: "uncompressed" });
+    assert.ok(report.includes("Sorted by size"));
+    const i3 = report.indexOf("m00007–m00008");
+    const i1 = report.indexOf("m00001–m00003");
+    const i2 = report.indexOf("m00004–m00006");
+    assert.ok(i3 !== -1 && i1 !== -1 && i2 !== -1);
+    assert.ok(i3 < i1, "largest turn (23 tokens) first");
+    assert.ok(i1 < i2, "tie broken by earlier start ref");
+});
+
+test("buildStatusReport uncompressed ranges sort=time keeps chronological order", () => {
+    const report = buildStatusReport(turnState(), turnMessages(), wordCount, { scope: "uncompressed", sort: "time" });
+    assert.ok(report.includes("Sorted by time"));
+    const i1 = report.indexOf("m00001–m00003");
+    const i3 = report.indexOf("m00007–m00008");
+    assert.ok(i1 < i3);
+});
+
+test("buildStatusReport uncompressed ranges respects limit", () => {
+    const report = buildStatusReport(turnState(), turnMessages(), wordCount, { scope: "uncompressed", limit: 2 });
+    assert.ok(report.includes("m00007–m00008"));
+    assert.ok(report.includes("m00001–m00003"));
+    assert.ok(!report.includes("m00004–m00006"));
+    assert.ok(report.includes("... and 1 more ranges"));
+});
+
 test("buildRecap lists all active blocks when no blockId", () => {
     const state: CompressionState = {
         ...createInitialState(),

@@ -124,11 +124,13 @@ test("prune removes covered messages and injects summary at anchor", () => {
   const messages = [msg("m1"), msg("m2"), msg("m3"), msg("m4")];
   const result = prune(messages, state);
 
+  // The anchor is clamped to the leading system prefix: the summary precedes
+  // the preserved first user message (m1) so no system message is mid-conversation.
   assert.equal(result.length, 3);
-  assert.equal(result[0]!.id, "m1");
-  assert.equal(result[1]!.id, "acp_summary_b1");
-  assert.ok(result[1]!.text!.startsWith(SUMMARY_HEADER));
-  assert.ok(result[1]!.text!.includes("the summary"));
+  assert.equal(result[0]!.id, "acp_summary_b1");
+  assert.ok(result[0]!.text!.startsWith(SUMMARY_HEADER));
+  assert.ok(result[0]!.text!.includes("the summary"));
+  assert.equal(result[1]!.id, "m1");
   assert.equal(result[2]!.id, "m4");
 });
 
@@ -170,10 +172,76 @@ test("prune orders multiple summaries by their anchor position", () => {
   const messages = [msg("u", "user"), msg("w"), msg("x"), msg("z")];
   const result = prune(messages, state);
 
-  assert.equal(result[0]!.id, "u");
-  assert.equal(result[1]!.id, "acp_summary_b2");
-  assert.ok(result[1]!.text!.includes("earlier"));
-  assert.equal(result[2]!.id, "acp_summary_b1");
-  assert.ok(result[2]!.text!.includes("later"));
+  // Both anchors clamp to the leading prefix; they keep their chronological
+  // order by original position (b2 covers w before b1 covers x).
+  assert.equal(result[0]!.id, "acp_summary_b2");
+  assert.ok(result[0]!.text!.includes("earlier"));
+  assert.equal(result[1]!.id, "acp_summary_b1");
+  assert.ok(result[1]!.text!.includes("later"));
+  assert.equal(result[2]!.id, "u");
   assert.equal(result[3]!.id, "z");
+});
+
+function assertNoMidConversationSystem(messages: CoreMessage[]): void {
+  let seenNonSystem = false;
+  for (const m of messages) {
+    if (m.role !== "system") seenNonSystem = true;
+    else if (seenNonSystem)
+      assert.fail(`system message ${m.id} appears after a non-system message`);
+  }
+}
+
+test("prune never emits a system message after a non-system message (OpenAI wire validity)", () => {
+  const state = createInitialState();
+  // A range that starts AFTER the head — the normal "fold the old stuff, keep
+  // the tail" pattern that used to strand a system summary mid-conversation.
+  state.blocks.push(
+    makeBlock({
+      blockId: "b1",
+      summary: "folded history",
+      effectiveMessageIds: ["a2", "u3", "a4"],
+    }),
+  );
+  const messages: CoreMessage[] = [
+    { id: "u1", role: "user", contentType: "text", text: "u1" },
+    { id: "a2", role: "assistant", contentType: "text", text: "a2" },
+    { id: "u3", role: "user", contentType: "text", text: "u3" },
+    { id: "a4", role: "assistant", contentType: "text", text: "a4" },
+    { id: "u5", role: "user", contentType: "text", text: "u5" },
+    { id: "a6", role: "assistant", contentType: "text", text: "a6" },
+  ];
+  const result = prune(messages, state);
+
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["acp_summary_b1", "u1", "u5", "a6"],
+  );
+  assertNoMidConversationSystem(result);
+});
+
+test("prune keeps the summary in the leading prefix after an existing system message", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({
+      blockId: "b1",
+      summary: "folded",
+      effectiveMessageIds: ["a2", "u3"],
+    }),
+  );
+  const messages: CoreMessage[] = [
+    { id: "sys0", role: "system", contentType: "text", text: "host system" },
+    { id: "u1", role: "user", contentType: "text", text: "u1" },
+    { id: "a2", role: "assistant", contentType: "text", text: "a2" },
+    { id: "u3", role: "user", contentType: "text", text: "u3" },
+    { id: "a4", role: "assistant", contentType: "text", text: "a4" },
+  ];
+  const result = prune(messages, state);
+
+  // The summary clamps to the first non-system message (u1): it lands after the
+  // leading host system message but still ahead of the conversation proper.
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["sys0", "acp_summary_b1", "u1", "a4"],
+  );
+  assertNoMidConversationSystem(result);
 });

@@ -106,11 +106,13 @@ test("prune after applyCompression removes covered messages and injects summary"
   });
 
   const pruned = prune(messages, after);
+  // Summary is clamped into the leading system prefix (before the preserved
+  // first user message) so no system message lands mid-conversation.
   assert.deepEqual(
     pruned.map((m) => m.id),
-    ["u", "acp_summary_b1", "c", "d"],
+    ["acp_summary_b1", "u", "c", "d"],
   );
-  assert.ok(pruned[1]!.text!.includes("intro recap"));
+  assert.ok(pruned[0]!.text!.includes("intro recap"));
 });
 
 test("applyCompression auto-swaps reversed boundaries", () => {

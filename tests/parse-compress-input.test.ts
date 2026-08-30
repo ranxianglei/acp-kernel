@@ -226,6 +226,41 @@ test("parseCompressArgs counts invalid entries and keeps the valid ones", () => 
     assert.equal(diagnostics.invalidItems, 5);
 });
 
+test("parseCompressArgs reports per-entry invalid reasons", () => {
+    const input = {
+        content: [
+            { startRef: "m00001", endRef: "m00002", summary: "good" },
+            { summary: "missing refs" },
+            { startRef: "m00003", endRef: "m00004" },
+            "garbage",
+        ],
+    };
+    const { diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(diagnostics.invalidItems, 3);
+    assert.deepEqual(diagnostics.invalidReasons, [
+        "entry 1: missing range bounds (need startRef/startId and endRef/endId)",
+        "entry 2: missing summary",
+        "entry 3: not an object",
+    ]);
+});
+
+test("parseCompressArgs reports invalid reasons for no-valid-ranges", () => {
+    const input = {
+        content: [
+            { startRef: "m00001", endRef: "m00002" },
+            { summary: "no bounds" },
+        ],
+    };
+    const { diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "no-valid-ranges");
+    assert.equal(diagnostics.invalidItems, 2);
+    assert.deepEqual(diagnostics.invalidReasons, [
+        "entry 0: missing summary",
+        "entry 1: missing range bounds (need startRef/startId and endRef/endId)",
+    ]);
+});
+
 test("parseCompressArgs reports no-valid-ranges for an empty content array", () => {
     const { ranges, diagnostics } = parseCompressArgs({ content: [] });
     assert.equal(diagnostics.kind, "no-valid-ranges");

@@ -45,6 +45,8 @@ export interface CompressParseDiagnostics {
     keys?: string[];
     /** Entries dropped because they were not valid ranges. */
     invalidItems: number;
+    /** One human-readable reason per dropped entry (index-prefixed). */
+    invalidReasons?: string[];
 }
 
 export interface ParsedCompressInput {
@@ -119,9 +121,9 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
         // Model drift: a single range at the top level (no content array).
         // The proxy defends against this shape; the kernel now owns it.
         const single = validateEntry(value, callId);
-        if (single) {
+        if ("range" in single) {
             diag.kind = "ok";
-            return finish([single], diag);
+            return finish([single.range], diag);
         }
         diag.kind = "missing-content";
         return finish([], diag);
@@ -147,7 +149,7 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
         return finish([], diag);
     }
 
-    const { ranges, invalid } = validateEntries(entries, callId);
+    const { ranges, invalid, reasons } = validateEntries(entries, callId);
     // Top-level fallbacks: topic and summaryMaxChars apply to every range
     // that does not specify its own (omp/pi schemas define both at the top
     // level; per-entry values win).
@@ -161,6 +163,7 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
         }
     }
     diag.invalidItems = invalid;
+    if (reasons.length > 0) diag.invalidReasons = reasons;
     diag.kind = salvaged ? "truncated" : ranges.length > 0 ? "ok" : "no-valid-ranges";
     return finish(ranges, diag);
 }
@@ -188,41 +191,50 @@ function finish(ranges: CompressRangeSpec[], diag: CompressParseDiagnostics): Pa
 }
 
 function finishSalvage(entries: unknown[], callId: string | undefined, diag: CompressParseDiagnostics, truncatedShape: boolean): ParsedCompressInput {
-    const { ranges, invalid } = validateEntries(entries, callId);
+    const { ranges, invalid, reasons } = validateEntries(entries, callId);
     diag.invalidItems = invalid;
+    if (reasons.length > 0) diag.invalidReasons = reasons;
     diag.kind = entries.length > 0 || truncatedShape ? "truncated" : "malformed-json";
     return finish(ranges, diag);
 }
 
-function validateEntries(entries: unknown[], callId: string | undefined): { ranges: CompressRangeSpec[]; invalid: number } {
+function validateEntries(entries: unknown[], callId: string | undefined): { ranges: CompressRangeSpec[]; invalid: number; reasons: string[] } {
     const ranges: CompressRangeSpec[] = [];
+    const reasons: string[] = [];
     let invalid = 0;
-    for (const entry of entries) {
-        const range = validateEntry(entry, callId);
-        if (range !== null) ranges.push(range);
-        else invalid++;
+    for (let i = 0; i < entries.length; i++) {
+        const outcome = validateEntry(entries[i], callId);
+        if ("range" in outcome) ranges.push(outcome.range);
+        else {
+            invalid++;
+            reasons.push(`entry ${i}: ${outcome.reason}`);
+        }
     }
-    return { ranges, invalid };
+    return { ranges, invalid, reasons };
 }
 
-function validateEntry(entry: unknown, callId: string | undefined): CompressRangeSpec | null {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
+type EntryOutcome = { range: CompressRangeSpec } | { reason: string };
+
+function validateEntry(entry: unknown, callId: string | undefined): EntryOutcome {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return { reason: "not an object" };
     const e = entry as Record<string, unknown>;
     // Field-name variants: startRef/endRef are canonical; startId/endId is
     // model drift (and the legacy rebuild.ts spelling); messageId is the
     // startId-less messageRef from the historical API.
     const start = stringOr(e["startRef"]) ?? stringOr(e["startId"]) ?? stringOr(e["messageId"]);
     const end = stringOr(e["endRef"]) ?? stringOr(e["endId"]) ?? stringOr(e["messageId"]);
-    if (start === undefined || end === undefined) return null;
+    if (start === undefined || end === undefined) {
+        return { reason: "missing range bounds (need startRef/startId and endRef/endId)" };
+    }
     const summary = stringOr(e["summary"]);
-    if (summary === undefined) return null;
+    if (summary === undefined) return { reason: "missing summary" };
     const range: CompressRangeSpec = { startRef: start, endRef: end, summary };
     const topic = stringOr(e["topic"]);
     if (topic !== undefined) range.topic = topic;
     const maxChars = e["summaryMaxChars"];
     if (typeof maxChars === "number" && Number.isFinite(maxChars)) range.summaryMaxChars = maxChars;
     if (callId !== undefined) range.compressCallId = callId;
-    return range;
+    return { range };
 }
 
 function stringOr(value: unknown): string | undefined {

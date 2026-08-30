@@ -74,6 +74,18 @@ export interface StateStoreOptions<T> {
      * (string id, non-null payload).
      */
     validate?: (envelope: PersistedEnvelope<T>) => boolean;
+    /**
+     * Rename-retry policy for Windows transient locks (EPERM/EBUSY/EACCES
+     * from AV scan, search indexer, SMB). Exponential backoff: the delay
+     * after attempt i is min(retryBaseMs * 2^i, retryMaxMs). Defaults
+     * (6 attempts, 50ms base, 1600ms cap) give a ~1.5s window — long enough
+     * for most AV locks to release, short enough not to stall a sync flush.
+     * When the window is exhausted the write spills to a side file (see
+     * spillPath) instead of dropping the data.
+     */
+    retryAttempts?: number;
+    retryBaseMs?: number;
+    retryMaxMs?: number;
 }
 
 /**
@@ -82,17 +94,22 @@ export interface StateStoreOptions<T> {
  *
  * - atomic writes: temp file + rename, so a crash mid-write never leaves a
  *   truncated record (readers see either the old or the new file)
- * - rename retries on Windows transient locks (EPERM/EBUSY/EACCES)
+ * - rename retries with exponential backoff on Windows transient locks
+ *   (EPERM/EBUSY/EACCES); when the window is exhausted the record spills to
+ *   a side file (`<name>.fb.json`) instead of being dropped, so a lock held
+ *   by AV/indexer/SMB never silently loses session data
  * - per-id serialization so concurrent writeNow calls never interleave
  *   temp-file names or reorders writes
  * - debounced scheduleSave coalesces bursts into one write; the record is
  *   built at WRITE time from a builder, so late mutations are picked up
  * - loadAll skips `.tmp-*` orphans, corrupt JSON, and records whose
- *   filename does not match their id — one bad file never blocks boot
+ *   filename does not match their id — one bad file never blocks boot; it
+ *   reconciles a canonical record against its spill by savedAt (freshest wins)
  *
- * The store never deletes files. Session cleanup is a downstream policy
- * decision (kernel position: persisted state should not be deleted
- * opportunistically).
+ * The store never deletes a record's data. On a successful canonical write it
+ * removes a now-stale spill of the SAME id (a duplicate, not distinct data).
+ * Session cleanup is a downstream policy decision (kernel position: persisted
+ * state should not be deleted opportunistically).
  */
 export class StateStore<T> {
     readonly enabled: boolean;
@@ -103,11 +120,16 @@ export class StateStore<T> {
     private readonly legacyFn?: (parsed: unknown) => LegacyAdoption<T> | null;
     private readonly relPathFn?: (id: string, payload: T) => string;
     private readonly validateFn: (envelope: PersistedEnvelope<T>) => boolean;
+    private readonly retryAttempts: number;
+    private readonly retryBaseMs: number;
+    private readonly retryMaxMs: number;
     private readonly timers = new Map<string, NodeJS.Timeout>();
     private readonly pending = new Map<string, () => T>();
     private readonly writeChains = new Map<string, Promise<void>>();
     /** id → absolute path, populated by writes and loadAll. */
     private readonly discovered = new Map<string, string>();
+    /** id → cumulative write-failure count, for rate-limited alerting. */
+    private readonly failCounts = new Map<string, number>();
     /** Monotonic counter for unique temp filenames within a process. */
     private tmpSeq = 0;
 
@@ -120,6 +142,9 @@ export class StateStore<T> {
         this.relPathFn = opts.relPath;
         this.legacyFn = opts.legacy;
         this.validateFn = opts.validate ?? defaultValidate;
+        this.retryAttempts = Math.max(1, opts.retryAttempts ?? 6);
+        this.retryBaseMs = Math.max(1, opts.retryBaseMs ?? 50);
+        this.retryMaxMs = Math.max(this.retryBaseMs, opts.retryMaxMs ?? 1600);
     }
 
     /** Debounced save. Coalesces bursts; the builder runs at write time, so
@@ -190,36 +215,48 @@ export class StateStore<T> {
             this.log("warn", `[persist] could not create dir ${path.dirname(file)}: ${errText(e)}`);
         }
         const tmp = this.tempPath(file);
-        try {
-            fs.writeFileSync(tmp, data, "utf8");
-            // renameSync can throw EPERM/EBUSY on Windows when the dest is
-            // briefly held (AV scanner, indexer, SMB). Retry briefly —
-            // transient locks usually release within ms.
-            let lastErr: unknown;
-            for (let attempt = 0; attempt < 3; attempt++) {
-                try {
-                    fs.renameSync(tmp, file);
-                    lastErr = undefined;
-                    break;
-                } catch (e) {
-                    lastErr = e;
-                    const code = (e as NodeJS.ErrnoException).code;
-                    if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") break;
-                    // brief sync backoff (Atomics.wait is the sync sleep)
-                    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 * (attempt + 1));
-                }
-            }
-            if (lastErr) throw lastErr;
-            return true;
-        } catch (e) {
-            this.log("error", `[persist] flushSync failed for ${id}: ${errText(e)}`);
+        let lastErr: unknown;
+        for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
             try {
-                fs.unlinkSync(tmp);
-            } catch {
-                // best-effort cleanup of the orphan temp
+                fs.writeFileSync(tmp, data, "utf8");
+                fs.renameSync(tmp, file);
+                lastErr = undefined;
+                break;
+            } catch (e) {
+                lastErr = e;
+                try {
+                    fs.unlinkSync(tmp);
+                } catch {
+                    // temp never created or already gone
+                }
+                const code = (e as NodeJS.ErrnoException).code;
+                if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") break;
+                if (attempt === this.retryAttempts - 1) break;
+                // sync sleep (Atomics.wait) — backoff grows per attempt
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, this.backoffMs(attempt));
             }
-            return false;
         }
+        if (!lastErr) {
+            this.discovered.set(id, file);
+            this.clearFailure(id);
+            this.removeSpillSync(file);
+            return true;
+        }
+        // The canonical rename outlived the retry window (Windows lock held by
+        // AV/indexer/SMB). Spill to a side file so the data still lands on
+        // disk instead of being dropped — loadAll picks the freshest of the
+        // canonical and the spill.
+        let spillPath: string | null = null;
+        try {
+            const spill = this.spillPathFor(file);
+            fs.writeFileSync(spill, data, "utf8");
+            spillPath = spill;
+            this.discovered.set(id, spill);
+        } catch {
+            // spillover also failed (dir read-only / disk full) — data at risk
+        }
+        this.recordFailure(id, lastErr, spillPath);
+        return spillPath !== null;
     }
 
     /** Load one record. Checks the discovered path (from a prior
@@ -255,15 +292,31 @@ export class StateStore<T> {
         for (const file of files) {
             const envelope = this.readEnvelope(file);
             if (!envelope) continue;
-            const expected =
-                path.basename(this.relPathOf(envelope.id, envelope.payload)) === path.basename(file) ||
-                flatFileNameFor(envelope.id) === path.basename(file);
-            if (!expected) {
+            const base = path.basename(file);
+            const relBase = path.basename(this.relPathOf(envelope.id, envelope.payload));
+            const flatBase = flatFileNameFor(envelope.id);
+            // A file is a valid record for its envelope id when its name is the
+            // canonical name OR a spill (`.fb`) of the canonical name. This lets
+            // a spilled record (written while the canonical was locked) be
+            // discovered and reconciled against the canonical by savedAt.
+            let owner: string | null = null;
+            if (base === relBase || base === flatBase) {
+                owner = envelope.id;
+            } else if (base.endsWith(".fb.json")) {
+                const canonicalBase = `${base.slice(0, -".fb.json".length)}.json`;
+                if (canonicalBase === relBase || canonicalBase === flatBase) {
+                    owner = envelope.id;
+                }
+            }
+            if (owner === null) {
                 this.log("warn", `[persist] skipping ${rel(file, this.dir)}: filename does not match record id`);
                 continue;
             }
-            this.discovered.set(envelope.id, file);
-            out.set(envelope.id, envelope);
+            const existing = out.get(owner);
+            if (!existing || envelope.savedAt >= existing.savedAt) {
+                out.set(owner, envelope);
+                this.discovered.set(owner, file);
+            }
         }
         return out;
     }
@@ -323,15 +376,30 @@ export class StateStore<T> {
             this.log("warn", `[persist] could not create dir ${path.dirname(file)}: ${errText(e)}`);
         }
         const tmp = this.tempPath(file);
+        const env = this.envelope(id, payload);
         try {
-            await fsp.writeFile(tmp, JSON.stringify(this.envelope(id, payload)), "utf8");
-            await renameWithRetry(tmp, file);
+            await fsp.writeFile(tmp, JSON.stringify(env), "utf8");
+            await this.renameWithRetry(tmp, file);
             this.discovered.set(id, file);
+            this.clearFailure(id);
+            await this.removeSpill(file);
         } catch (e) {
-            // Wrap so a failure cleans up the .tmp orphan instead of leaving
-            // it for the next write to collide with.
+            // Clean up the .tmp orphan so the next write doesn't collide with it.
             await fsp.unlink(tmp).catch(() => {});
-            this.log("error", `[persist] write failed for ${id}: ${errText(e)}`);
+            // The canonical rename outlived the retry window (Windows lock held
+            // by AV/indexer/SMB). Spill to a side file so the data still lands
+            // on disk instead of being dropped — loadAll picks the freshest of
+            // the canonical and the spill.
+            let spillPath: string | null = null;
+            try {
+                const spill = this.spillPathFor(file);
+                await fsp.writeFile(spill, JSON.stringify(env), "utf8");
+                spillPath = spill;
+                this.discovered.set(id, spill);
+            } catch {
+                // spillover also failed (dir read-only / disk full) — data at risk
+            }
+            this.recordFailure(id, e, spillPath);
             throw e;
         }
     }
@@ -362,6 +430,76 @@ export class StateStore<T> {
     private tempPath(dest: string): string {
         const seq = this.tmpSeq++;
         return path.join(path.dirname(dest), `.tmp-${path.basename(dest, ".json")}-${process.pid}-${seq}`);
+    }
+
+    private backoffMs(attempt: number): number {
+        return Math.min(this.retryBaseMs * 2 ** attempt, this.retryMaxMs);
+    }
+
+    /** Side file for a record whose canonical write keeps failing: the
+     *  canonical name with a `.fb` (fallback) infix, e.g. `a.json` →
+     *  `a.fb.json`. One slot per id, overwritten on each spill, so a stuck
+     *  lock never accumulates files. Ends in `.json` so loadAll discovers it. */
+    private spillPathFor(file: string): string {
+        const base = path.basename(file);
+        const dot = base.lastIndexOf(".");
+        const stem = dot > 0 ? base.slice(0, dot) : base;
+        const ext = dot > 0 ? base.slice(dot) : ".json";
+        return path.join(path.dirname(file), `${stem}.fb${ext}`);
+    }
+
+    /** Remove a stale spill after a successful canonical write (best-effort). */
+    private async removeSpill(file: string): Promise<void> {
+        await fsp.unlink(this.spillPathFor(file)).catch(() => {});
+    }
+
+    private removeSpillSync(file: string): void {
+        try {
+            fs.unlinkSync(this.spillPathFor(file));
+        } catch {
+            // no spill or still locked — loadAll reconciles by savedAt
+        }
+    }
+
+    /** Rate-limited failure alerting: log on the first failure and at each
+     *  power-of-two count (1,2,4,8,…), so a long lock yields ~log2(N) lines
+     *  instead of one per write. Includes the spill path so the operator can
+     *  see where the data landed. */
+    private recordFailure(id: string, err: unknown, spillPath: string | null): void {
+        const count = (this.failCounts.get(id) ?? 0) + 1;
+        this.failCounts.set(id, count);
+        const alertAt = count === 1 || (count >= 2 && (count & (count - 1)) === 0);
+        if (!alertAt) return;
+        const where = spillPath
+            ? `; data spilled to ${rel(spillPath, this.dir)}`
+            : "; SPILLOVER ALSO FAILED — data at risk";
+        this.log(count === 1 ? "error" : "warn", `[persist] write failed for ${id} (total ${count}x): ${errText(err)}${where}`);
+    }
+
+    private clearFailure(id: string): void {
+        this.failCounts.delete(id);
+    }
+
+    /** fs.rename with exponential-backoff retries on Windows transient locks
+     *  (EPERM/EBUSY/EACCES from AV scan, search indexer, SMB). Other errors
+     *  are real and rethrown immediately. */
+    private async renameWithRetry(src: string, dest: string): Promise<void> {
+        let lastErr: unknown;
+        for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
+            try {
+                await fsp.rename(src, dest);
+                return;
+            } catch (e) {
+                lastErr = e;
+                const code = (e as NodeJS.ErrnoException).code;
+                if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw e;
+                if (attempt === this.retryAttempts - 1) throw e;
+                const { promise, resolve } = Promise.withResolvers<void>();
+                setTimeout(resolve, this.backoffMs(attempt));
+                await promise;
+            }
+        }
+        throw lastErr;
     }
 
     /** Parse + validate one file. Corrupt or invalid records return null
@@ -448,27 +586,6 @@ function isEnvelopeLike(value: unknown): value is PersistedEnvelope<unknown> {
  *  names stay greppable. */
 export function flatFileNameFor(id: string): string {
     return createHash("sha256").update(id, "utf8").digest("hex").slice(0, 24) + ".json";
-}
-
-/** fs.rename with brief retries on Windows transient locks (EPERM/EBUSY/
- *  EACCES from AV scan, search indexer, SMB). A short delay + retry almost
- *  always succeeds; other errors are real and rethrown immediately. */
-async function renameWithRetry(src: string, dest: string): Promise<void> {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-            await fsp.rename(src, dest);
-            return;
-        } catch (e) {
-            lastErr = e;
-            const code = (e as NodeJS.ErrnoException).code;
-            if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw e;
-            const { promise, resolve } = Promise.withResolvers<void>();
-            setTimeout(resolve, 20 * (attempt + 1));
-            await promise;
-        }
-    }
-    throw lastErr;
 }
 
 function errText(e: unknown): string {

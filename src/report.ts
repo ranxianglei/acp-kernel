@@ -1,3 +1,4 @@
+import { isToolMessage } from "./message-kind.js";
 import { refForRaw } from "./refs.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "./types.js";
 
@@ -8,7 +9,7 @@ function formatTokens(n: number): string {
 
 function pct(n: number, total: number): number {
     if (n <= 0 || total <= 0) return 0;
-    return Math.max(1, Math.round((n / total) * 100));
+    return Math.round((n / total) * 100);
 }
 
 function numericPart(blockId: string): number {
@@ -60,6 +61,7 @@ interface VisibleMessageInfo {
     ref: string;
     tokens: number;
     tool: string;
+    isTool: boolean;
     index: number;
 }
 
@@ -77,14 +79,26 @@ function collectVisible(
     for (const block of state.blocks) {
         if (block.active) summaryTokens += summaryTokensOf(block, countTokens);
     }
+    // Wire converters only set toolName on the call side; resolve result
+    // names through the shared toolCallId so both halves land in the same
+    // tool bucket (issue #390).
+    const nameByCallId = new Map<string, string>();
+    for (const message of messages) {
+        if (message.contentType === "tool-call" && message.toolCallId && message.toolName) {
+            nameByCallId.set(message.toolCallId, message.toolName);
+        }
+    }
     const visible: VisibleMessageInfo[] = [];
     messages.forEach((message, index) => {
         if (coveredIds.has(message.id)) return;
         const ref = refForRaw(state.messageRefs, message.id);
         if (!ref) return;
         const tokens = countTokens(message.text ?? "");
-        const tool = message.toolName ?? "text";
-        if (tokens > 0) visible.push({ ref, tokens, tool, index });
+        const isTool = isToolMessage(message);
+        const tool = isTool
+            ? (message.toolName ?? (message.toolCallId ? nameByCallId.get(message.toolCallId) : undefined) ?? "tool")
+            : "text";
+        if (tokens > 0) visible.push({ ref, tokens, tool, isTool, index });
     });
     return { visible, summaryTokens };
 }
@@ -145,10 +159,10 @@ function renderOverview(
     const topTool = [...toolTypeMap.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
     const totalTool = visible
-        .filter((m) => m.tool !== "text")
+        .filter((m) => m.isTool)
         .reduce((sum, m) => sum + m.tokens, 0);
     const totalText = visible
-        .filter((m) => m.tool === "text")
+        .filter((m) => !m.isTool)
         .reduce((sum, m) => sum + m.tokens, 0);
     const total = summaryTokens + totalTool + totalText;
 

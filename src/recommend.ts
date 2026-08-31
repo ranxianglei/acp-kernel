@@ -20,6 +20,7 @@ import type {
   ProtectedRange,
 } from "./types.js";
 import type { CompressionState } from "./types.js";
+import { isToolMessage } from "./message-kind.js";
 import {
   collectProtectedToolCallIds,
   isMessageProtectedWithPairing,
@@ -38,11 +39,6 @@ function refNum(ref: string): number {
 function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
-
-function isToolMessage(message: CoreMessage): boolean {
-  return message.contentType === "tool-call" || message.contentType === "tool-result";
-}
-
 
 function isSyntheticOrPruned(
   message: CoreMessage,

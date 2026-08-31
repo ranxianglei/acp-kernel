@@ -24,12 +24,13 @@ export interface StatusPanelInput {
   nudge: NudgeDecision | undefined;
   /** Configured model context window, in tokens. */
   modelContextLimit: number;
-  /** chars/4 estimate of the FULL (unpruned) core-message projection — the
-   *  same estimation scale as the kernel breakdown. When provided, the
-   *  panel derives `Session-only` on that scale (unpruned − sent). Without
-   *  it the line is omitted: subtracting the host's provider-scale number
-   *  from an estimate-scale number invents a third, meaningless scale
-   *  (issue #18 "看板统计的和拆分的有差异"). */
+  /** Estimate of the FULL (unpruned) core-message projection, computed with
+   *  the SAME estimator the core uses for the nudge contextBreakdown
+   *  (defaultCountTokens unless the host injects one into createCore) —
+   *  never chars/4 when the core runs CJK-aware. When provided, the panel
+   *  derives `Session-only` on that scale (unpruned − sent). Without it the
+   *  line is omitted: subtracting numbers from different scales invents a
+   *  meaningless third scale (issue #18 "看板统计的和拆分的有差异"). */
   unprunedTokens?: number;
   /** Per-request prompt-cache usage (from assistant messages' provider-
    *  reported `usage`). Requests without cache reporting are excluded by
@@ -67,9 +68,10 @@ export function buildStatusPanel(input: StatusPanelInput): string {
   const classified = bd ? bd.system + bd.tool + bd.summaries + bd.code + bd.text : 0;
   const systemPromptTokens = input.systemPromptTokens;
   const sentTotal = classified + systemPromptTokens;
-  // Same-scale derivation only: both sides are chars/4 estimates. The host
-  // footer's tokenCount (provider-anchored, session-tree) is displayed as
-  // its own line and never fed into an arithmetic difference with these.
+  // Same-scale derivation only: both sides use the core's estimator
+  // (defaultCountTokens unless the host injects one into createCore). The
+  // host footer's tokenCount (provider-anchored, session-tree) is displayed
+  // as its own line and never fed into an arithmetic difference with these.
   const sessionOnly = input.unprunedTokens !== undefined ? Math.max(0, input.unprunedTokens - sentTotal) : 0;
   const displayTotal = tokenCount;
   const displayPct = limit > 0 ? Math.round((displayTotal / limit) * 100) : 0;

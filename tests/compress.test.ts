@@ -426,7 +426,12 @@ test("consumed plus fresh-but-small range is not misreported as too small", () =
   assert.equal(retry.result.blocksCreated, 0);
   assert.equal(retry.result.errors.length, 1);
   assert.match(retry.result.errors[0]!, /already compressed/);
-  assert.match(retry.result.errors[0]!, /your refs are stale/);
+  assert.match(retry.result.errors[0]!, /covered by active block\(s\)/);
+  assert.match(
+    retry.result.errors[0]!,
+    /\[diagnostics: session highest ref=m00005, unknown ranges in request=0\/2, session history=1 compression\(s\), 1 block\(s\)\]/,
+  );
+  assert.doesNotMatch(retry.result.errors[0]!, /renumber/i);
   assert.match(retry.result.errors[0]!, /Run acp_status/);
   assert.doesNotMatch(retry.result.errors[0]!, /Combine more messages/);
 });
@@ -468,7 +473,16 @@ test("all-unknown batch reports stale refs instead of too-small (billion-context
     result.result.errors[0]!,
     /None of the 2 requested range\(s\) resolved/,
   );
-  assert.match(result.result.errors[0]!, /renumbers the remaining refs/);
+  assert.match(result.result.errors[0]!, /no compress reassigns them/);
+  assert.match(
+    result.result.errors[0]!,
+    /cannot come from an earlier compress in this session/,
+  );
+  assert.match(
+    result.result.errors[0]!,
+    /\[diagnostics: session highest ref=m00005, unknown ranges in request=2\/2, session history=0 compression\(s\), 0 block\(s\)\]/,
+  );
+  assert.doesNotMatch(result.result.errors[0]!, /renumber/i);
   assert.match(result.result.errors[0]!, /Run acp_status/);
   assert.doesNotMatch(result.result.errors[0]!, /too small/);
   assert.match(result.result.errors[1]!, /does not exist in this session/);
@@ -524,6 +538,166 @@ test("consumed plus unknown ranges keep the already-compressed message", () => {
     retry.result.errors.find((e) => e.startsWith("range m00050..m00060")) ?? "",
     /does not exist in this session/,
   );
+});
+
+test("first compress of a fresh session with foreign refs reports a new generation, not a prior compress (billion-context#387)", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [
+    msg("u", "the task"),
+    msg("a", "alpha"),
+    msg("b", "beta"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00050", endRef: "m00060", summary: "foreign" }],
+    messages,
+    state,
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
+  });
+
+  assert.equal(result.result.blocksCreated, 0);
+  assert.equal(result.result.errors.length, 2);
+  assert.match(
+    result.result.errors[0]!,
+    /None of the 1 requested range\(s\) resolved/,
+  );
+  assert.match(
+    result.result.errors[0]!,
+    /cannot come from an earlier compress in this session/,
+  );
+  assert.match(result.result.errors[0]!, /switching model or upstream/);
+  assert.match(result.result.errors[0]!, /native-compaction rebase/);
+  assert.match(
+    result.result.errors[0]!,
+    /\[diagnostics: session highest ref=m00003, unknown ranges in request=1\/1, session history=0 compression\(s\), 0 block\(s\)\]/,
+  );
+  assert.doesNotMatch(result.result.errors[0]!, /renumber/i);
+  assert.match(result.result.errors[1]!, /does not exist in this session/);
+});
+
+test("refs from before a native-compaction rebase report a new generation with zeroed history (billion-context#387)", () => {
+  const core = createCore();
+  const oldState = createInitialState();
+  const oldMessages = [
+    msg("u", "the task"),
+    msg("a", "alpha"),
+    msg("b", "beta"),
+    msg("c", "gamma"),
+    msg("d", "delta"),
+  ];
+  oldState.messageRefs = assignRefs(oldMessages, {
+    existing: oldState.messageRefs,
+    nextIndex: 1,
+  }).map;
+  const { state: afterOne } = core.applyCompression({
+    ranges: [{ startRef: "m00002", endRef: "m00003", summary: "s1" }],
+    messages: oldMessages,
+    state: oldState,
+    config: config(),
+  });
+  const { state: afterTwo } = core.applyCompression({
+    ranges: [{ startRef: "m00004", endRef: "m00005", summary: "s2" }],
+    messages: oldMessages,
+    state: afterOne,
+    config: config(),
+  });
+  assert.equal(afterTwo.stats.compressionCount, 2);
+
+  const rebased = createInitialState();
+  const freshMessages = [msg("u2", "new task"), msg("e", "epsilon")];
+  rebased.messageRefs = assignRefs(freshMessages, {
+    existing: rebased.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00004", endRef: "m00005", summary: "old refs" }],
+    messages: freshMessages,
+    state: rebased,
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
+  });
+
+  assert.equal(result.result.blocksCreated, 0);
+  assert.match(
+    result.result.errors[0]!,
+    /None of the 1 requested range\(s\) resolved/,
+  );
+  assert.match(result.result.errors[0]!, /native-compaction rebase/);
+  assert.match(result.result.errors[0]!, /refs restart at m00001/);
+  assert.match(
+    result.result.errors[0]!,
+    /\[diagnostics: session highest ref=m00002, unknown ranges in request=1\/1, session history=0 compression\(s\), 0 block\(s\)\]/,
+  );
+  assert.doesNotMatch(result.result.errors[0]!, /renumber/i);
+});
+
+test("drifted message content dangles the old ref — reported as unanchorable, not already-compressed (billion-context#387)", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [
+    msg("u", "the task"),
+    msg("a", "alpha"),
+    msg("b", "beta"),
+    msg("c", "gamma"),
+    msg("d", "delta"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const drifted = [
+    msg("u", "the task"),
+    msg("a", "alpha"),
+    msg("b", "beta"),
+    msg("c", "gamma"),
+    msg("d2", "delta (edited)"),
+  ];
+  state.messageRefs = assignRefs(drifted, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00004", endRef: "m00005", summary: "c and d" }],
+    messages: drifted,
+    state,
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
+  });
+
+  assert.equal(result.result.blocksCreated, 0);
+  assert.match(result.result.errors[0]!, /cannot be anchored/);
+  assert.match(result.result.errors[0]!, /no active block covers them/);
+  assert.match(result.result.errors[0]!, /leaving your old refs dangling/);
+  assert.match(
+    result.result.errors[0]!,
+    /\[diagnostics: session highest ref=m00006, unknown ranges in request=0\/1, session history=0 compression\(s\), 0 block\(s\)\]/,
+  );
+  assert.doesNotMatch(result.result.errors[0]!, /already compressed/);
+  assert.doesNotMatch(result.result.errors[0]!, /renumber/i);
 });
 
 test("fresh small content without consumed ranges keeps the too-small message", () => {

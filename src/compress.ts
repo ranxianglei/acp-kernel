@@ -1,4 +1,4 @@
-import { assignRefs, highestUsedIndex } from "./refs.js";
+import { assignRefs, highestUsedIndex, indexToRef } from "./refs.js";
 import { prune, isSummaryMessageId } from "./prune.js";
 import { syncBlocks } from "./sync.js";
 import { advanceSurvival, activeBlocks, blockById } from "./state.js";
@@ -9,6 +9,7 @@ import {
   BoundaryNotFoundError,
   resolveBoundaries,
   blockVisibleInRange,
+  parseBoundary,
 } from "./boundaries.js";
 import type { ResolvedRange } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
@@ -124,6 +125,38 @@ function rangeError(
 function numericBlockId(id: string): number {
   const parsed = /^b(\d+)$/.exec(id);
   return parsed ? Number(parsed[1]) : 0;
+}
+
+function refGateDiagnostics(
+  state: CompressionState,
+  requestedRanges: number,
+  unknownCount: number,
+): string {
+  const highest = highestUsedIndex(state.messageRefs);
+  const highestRef = highest > 0 ? indexToRef(highest) : "none";
+  return `[diagnostics: session highest ref=${highestRef}, unknown ranges in request=${unknownCount}/${requestedRanges}, session history=${state.stats.compressionCount} compression(s), ${state.blocks.length} block(s)]`;
+}
+
+function danglingMessageRefs(
+  state: CompressionState,
+  messages: CoreMessage[],
+  spec: { startRef: string; endRef: string },
+): string[] {
+  const visible = new Set(messages.map((m) => m.id));
+  const dangling: string[] = [];
+  for (const ref of [spec.startRef, spec.endRef]) {
+    const parsed = parseBoundary(ref);
+    if (!parsed || parsed.kind !== "message") continue;
+    const rawId =
+      state.messageRefs.byRef[parsed.raw] ??
+      state.messageRefs.byRef[indexToRef(parsed.numericId)];
+    if (!rawId || visible.has(rawId)) continue;
+    const covered = state.blocks.some(
+      (block) => block.active && block.effectiveMessageIds.includes(rawId),
+    );
+    if (!covered) dangling.push(parsed.raw);
+  }
+  return dangling;
 }
 
 export function createCore(ports: Ports = {}): CompressionCore {
@@ -267,13 +300,23 @@ export function createCore(ports: Ports = {}): CompressionCore {
           live.length > 0
             ? ` Current active blocks span ${live[0]}..${live[live.length - 1]} — retry with startId/endId set to active block IDs in that span.`
             : "";
+        const diagnostics = refGateDiagnostics(
+          state,
+          input.ranges.length,
+          unknownCount,
+        );
+        const danglingRefs = consumedRanges.flatMap((spec) =>
+          danglingMessageRefs(state, input.messages, spec),
+        );
         const gateMessage =
           resolvableCount === 0 &&
           consumedRanges.length === 0 &&
           unknownCount > 0
-            ? `None of the ${input.ranges.length} requested range(s) resolved — every ref failed with "does not exist in this session". Refs recorded before an earlier compress are stale: each successful compress renumbers the remaining refs. Run acp_status, then call the compress tool again using only the refs it reports.`
+            ? `None of the ${input.ranges.length} requested range(s) resolved — every ref is unknown to this session. Refs are per-session snapshots, assigned once when a message is first rendered; no compress reassigns them, so unknown refs cannot come from an earlier compress in this session. They come from a different generation: a previous session instance (switching model or upstream mid-conversation starts a fresh session whose refs restart at m00001), the generation before a native-compaction rebase (which also resets refs to m00001), or a typo. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
             : consumedRanges.length > 0
-              ? `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — your refs are stale: a prior compress renumbered the remaining refs, so this range now falls inside an active block. Run acp_status, then call the compress tool again using only the CURRENT compressible ranges it reports.${liveHint}`
+              ? danglingRefs.length > 0
+                ? `Requested range(s) cannot be anchored (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
+                : `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — those refs no longer point to directly compressible content: the range is covered by active block(s) or the block ref(s) are stale (distilled or consumed). ${diagnostics} Run acp_status, then call the compress tool again using only the CURRENT compressible ranges it reports.${liveHint}`
               : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
         return {
           state: input.state,

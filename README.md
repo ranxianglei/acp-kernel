@@ -50,7 +50,7 @@ const { state: compressed, result } = core.applyCompression({
 });
 
 core.decompress("b3", compressed);            // look up a block
-core.search("auth token", compressed);        // relevance-ranked block search
+core.search("auth token", compressed);        // relevance-ranked search over active blocks (+ optional visible messages)
 core.status(compressed, tokenCount, config);  // context-usage report
 ```
 

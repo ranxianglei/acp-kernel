@@ -31,6 +31,8 @@ import {
   type PipelineNode,
   type NodeIO,
 } from "./pipeline.js";
+import { blockDocs, messageDocs, searchBlocks } from "./search/index.js";
+import type { MessageInput, SearchDoc, SearchResult } from "./search/types.js";
 import type {
   ApplyCompressionResult,
   CompressionBlock,
@@ -58,7 +60,11 @@ export interface CompressionCore {
     blockId: string,
     state: CompressionState,
   ): CompressionBlock | undefined;
-  search(query: string, state: CompressionState): CompressionBlock[];
+  search(
+    query: string,
+    state: CompressionState,
+    messages?: CoreMessage[],
+  ): SearchResult[];
   status(
     state: CompressionState,
     tokenCount: number,
@@ -381,17 +387,33 @@ export function createCore(ports: Ports = {}): CompressionCore {
     return blockById(state, blockId);
   }
 
-  function search(query: string, state: CompressionState): CompressionBlock[] {
-    const terms = query
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((term) => term.length > 0);
-    if (terms.length === 0) return [];
-    const scored = activeBlocks(state)
-      .map((block) => ({ block, score: scoreRelevance(block, terms) }))
-      .filter((entry) => entry.score > 0.1)
-      .sort((left, right) => right.score - left.score);
-    return scored.map((entry) => entry.block);
+  function search(
+    query: string,
+    state: CompressionState,
+    messages?: CoreMessage[],
+  ): SearchResult[] {
+    // Active blocks only: content folded into a parent tier is reachable
+    // through the parent's summary — scoring both would double-count it.
+    const activeIds = new Set(activeBlocks(state).map((b) => b.blockId));
+    const docs: SearchDoc[] = blockDocs(state).filter((d) =>
+      activeIds.has(d.ref),
+    );
+    if (messages) {
+      const inputs: MessageInput[] = [];
+      for (const m of messages) {
+        const ref = state.messageRefs.byRaw[m.id];
+        const text = m.text ?? "";
+        if (!ref || !text) continue;
+        inputs.push({
+          ref,
+          role: m.role === "system" ? "assistant" : m.role,
+          text,
+          tokens: state.tokenSnapshot[ref],
+        });
+      }
+      docs.push(...messageDocs(inputs));
+    }
+    return searchBlocks(docs, query);
   }
 
   function status(
@@ -1337,30 +1359,6 @@ function cloneState(state: CompressionState): CompressionState {
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
   };
-}
-
-function scoreRelevance(block: CompressionBlock, terms: string[]): number {
-  const topic = (block.topic ?? "").toLowerCase();
-  const summary = block.summary.toLowerCase();
-  let score = 0;
-  for (const term of terms) {
-    const topicHits = countOccurrences(topic, term);
-    if (topicHits > 0) score += Math.min(topicHits * 0.15, 0.45);
-    const summaryHits = countOccurrences(summary, term);
-    if (summaryHits > 0) score += Math.min(summaryHits * 0.04, 0.2);
-  }
-  return Math.min(score, 1);
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-  if (!haystack || !needle) return 0;
-  let count = 0;
-  let position = 0;
-  while ((position = haystack.indexOf(needle, position)) !== -1) {
-    count++;
-    position += needle.length;
-  }
-  return count;
 }
 
 export { createInitialState };

@@ -231,8 +231,132 @@ test("search returns active blocks matching the query, ranked", () => {
   );
 
   const hits = core.search("auth token", state);
-  assert.equal(hits.length, 1);
+  assert.ok(hits.length >= 1);
   assert.equal(hits[0]!.blockId, "b1");
+});
+
+test("search: 0-block session with visible messages returns message hits", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [
+    msg("a", "the auth token refresh flow uses jwt rotation"),
+    msg("b", "docker compose deployment notes"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const hits = core.search("auth token", state, messages);
+  assert.ok(hits.length >= 1, "visible messages must be searchable");
+  assert.equal(hits[0]!.kind, "message");
+  assert.equal(hits[0]!.ref, "m00001");
+});
+
+test("search: CJK query hits CJK block summary", () => {
+  const core = createCore();
+  const state = createInitialState();
+  state.blocks.push({
+    blockId: "b1",
+    runId: "r1",
+    tier: 1,
+    topic: "认证系统",
+    summary: "实现了登录和身份验证流程,使用 jwt 签发令牌",
+    directMessageIds: [],
+    effectiveMessageIds: [],
+    directBlockIds: [],
+    createdAt: 0,
+    survivedCount: 0,
+    generation: "young",
+    active: true,
+  });
+
+  const hits = core.search("身份验证", state);
+  assert.ok(hits.length >= 1, "CJK query must hit CJK summary");
+  assert.equal(hits[0]!.kind, "block");
+  assert.equal(hits[0]!.blockId, "b1");
+});
+
+test("search: CJK query hits CJK visible message", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [
+    msg("a", "请帮我修复登录页面的身份验证错误"),
+    msg("b", "docker compose deployment notes"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const hits = core.search("身份验证", state, messages);
+  assert.ok(hits.length >= 1, "CJK query must hit CJK message");
+  assert.equal(hits[0]!.kind, "message");
+  assert.equal(hits[0]!.ref, "m00001");
+});
+
+test("search: a term appearing once in a summary passes the threshold", () => {
+  const core = createCore();
+  const state = createInitialState();
+  state.blocks.push({
+    blockId: "b1",
+    runId: "r1",
+    tier: 1,
+    topic: "deployment",
+    summary: "configured the postgres connection pool",
+    directMessageIds: [],
+    effectiveMessageIds: [],
+    directBlockIds: [],
+    createdAt: 0,
+    survivedCount: 0,
+    generation: "young",
+    active: true,
+  });
+
+  const hits = core.search("postgres", state);
+  assert.ok(hits.length >= 1, "single-occurrence term must pass");
+  assert.equal(hits[0]!.blockId, "b1");
+});
+
+test("search: inactive (folded) blocks are excluded from the corpus", () => {
+  const core = createCore();
+  const state = createInitialState();
+  state.blocks.push(
+    {
+      blockId: "b1",
+      runId: "r1",
+      tier: 1,
+      topic: "deployment",
+      summary: "docker compose",
+      directMessageIds: [],
+      effectiveMessageIds: [],
+      directBlockIds: [],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: true,
+    },
+    {
+      blockId: "b2",
+      runId: "r1",
+      tier: 1,
+      topic: "auth legacy",
+      summary: "auth token rotation",
+      directMessageIds: [],
+      effectiveMessageIds: [],
+      directBlockIds: [],
+      createdAt: 0,
+      survivedCount: 0,
+      generation: "young",
+      active: false,
+    },
+  );
+
+  const hits = core.search("auth token", state);
+  assert.ok(
+    hits.every((h) => h.blockId !== "b2"),
+    "inactive block must not be searchable",
+  );
 });
 
 test("GC is fully removed: createCore() exposes no gc method", () => {

@@ -252,7 +252,7 @@ Since host tools cannot coexist with a declared tools field, ALL ACP tools use t
    ${ACP_STATUS_OPEN}${ACP_STATUS_CLOSE}
    No payload needed. Use this FIRST when unsure about context state.
 
-2. search_context — search compressed block summaries by keyword:
+2. search_context — search compressed block summaries and visible messages by keyword:
    ${ACP_SEARCH_OPEN}{"query":"auth token refresh"}${ACP_SEARCH_CLOSE}
    Use when you need details that may have been compressed away.
 
@@ -301,7 +301,7 @@ ACP TOOLS (FUNCTION CALLS)
 The proxy also provides these as real function tools you can call directly (they appear in your tool list). Call them like any other function; the proxy executes them and returns the result, then you continue.
 
 - acp_status — view context usage, compression state, and compressible ranges. No arguments. Use this FIRST when unsure about context state.
-- search_context — search compressed block summaries by keyword. Arguments: {"query":"...","limit":5}.
+- search_context — search compressed block summaries and visible messages by keyword. Arguments: {"query":"...","limit":5}.
 - decompress — restore compressed content for exact details. Arguments: {"blockId":"b5"} (optional "toFile":"/tmp/x.txt", "full":true).
 
 Note: compress is ONLY available via the text marker above (it needs batch ranges + an immediate stop), NOT as a function tool.`;
@@ -339,7 +339,7 @@ export const SEARCH_CONTEXT_TOOL_OPENAI = {
   function: {
     name: SEARCH_CONTEXT_TOOL_NAME,
     description:
-      "Search through compressed block summaries by keyword. Use BEFORE decompressing to find the right block.",
+      "Search through compressed block summaries and visible messages by keyword (BM25 + fuzzy, CJK-aware). Use BEFORE decompressing to find the right block or message.",
     parameters: {
       type: "object",
       properties: {

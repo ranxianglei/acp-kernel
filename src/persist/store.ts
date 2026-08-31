@@ -214,9 +214,13 @@ export class StateStore<T> {
         } catch (e) {
             this.log("warn", `[persist] could not create dir ${path.dirname(file)}: ${errText(e)}`);
         }
-        const tmp = this.tempPath(file);
         let lastErr: unknown;
         for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
+            // Fresh temp name per attempt: on Windows a failed cleanup can
+            // leave the previous name delete-pending, and creating over a
+            // tombstoned name fails immediately — reusing it would burn every
+            // remaining attempt before the write even happens.
+            const tmp = this.tempPath(file);
             try {
                 fs.writeFileSync(tmp, data, "utf8");
                 fs.renameSync(tmp, file);

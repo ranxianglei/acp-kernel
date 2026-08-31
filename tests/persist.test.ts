@@ -632,3 +632,27 @@ test("a successful write clears the failure counter so alerting restarts", async
         rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test("flushSync retries use a fresh temp name per attempt (no tombstoned reuse)", (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { retryAttempts: 3, retryBaseMs: 1, retryMaxMs: 1 });
+        const written: string[] = [];
+        t.mock.method(fs, "writeFileSync", ((p: string, _data: string) => {
+            written.push(p);
+        }) as typeof fs.writeFileSync);
+        t.mock.method(fs, "renameSync", (() => {
+            throw eperm();
+        }) as typeof fs.renameSync);
+        const ok = s.flushSync("sid-tmp", () => ({ label: "x", count: 1 }));
+        // The write spilled, so the caller still sees success.
+        assert.equal(ok, true);
+        const tmps = written.filter((p) => path.basename(p).startsWith(".tmp-"));
+        assert.equal(tmps.length, 3, "one temp write per attempt");
+        assert.equal(new Set(tmps).size, 3, "each attempt used a distinct temp name");
+        assert.ok(written.some((p) => p.endsWith(".fb.json")), "spill file written");
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});

@@ -61,6 +61,7 @@ interface VisibleMessageInfo {
     tokens: number;
     tool: string;
     index: number;
+    isUser: boolean;
 }
 
 function collectVisible(
@@ -84,7 +85,7 @@ function collectVisible(
         if (!ref) return;
         const tokens = countTokens(message.text ?? "");
         const tool = message.toolName ?? "text";
-        if (tokens > 0) visible.push({ ref, tokens, tool, index });
+        if (tokens > 0) visible.push({ ref, tokens, tool, index, isUser: message.role === "user" });
     });
     return { visible, summaryTokens };
 }
@@ -123,7 +124,7 @@ export function buildStatusReport(
         if (view === "messages") {
             return renderMessageDrilldown(visible, toolFilter, sort, limit);
         }
-        return renderUncompressedRanges(visible);
+        return renderUncompressedRanges(visible, sort, limit);
     }
 
     return renderOverview(visible, summaryTokens, activeBlocks, state, countTokens, limit);
@@ -201,7 +202,7 @@ function renderOverview(
     return lines.join("\n");
 }
 
-function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
+function renderUncompressedRanges(visible: VisibleMessageInfo[], sort: string, limit: number): string {
     const lines: string[] = [];
     const totalTokens = visible.reduce((s, m) => s + m.tokens, 0);
     lines.push(`UNCOMPRESSED — ${formatTokens(totalTokens)} | ${visible.length} visible messages`);
@@ -210,9 +211,11 @@ function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
         lines.push("  (no uncompressed messages)");
         return lines.join("\n");
     }
-    // Merge consecutive messages into ranges (by numeric ref), aggregating
-    // token counts and dominant tool so the view reads as blocks, not a
-    // per-message firehose — mirroring the Compressible Ranges output.
+    // Group messages into ranges: merge consecutive refs, but split at
+    // user-message boundaries once a group has >= 3 messages — the same
+    // condition buildCompressibleRanges uses (recommend.ts), so each range
+    // aligns to roughly one conversation turn instead of collapsing the
+    // whole visible window into one giant range when refs are dense.
     interface Merged { startRef: string; endRef: string; startNum: number; count: number; tokens: number; tool: string; }
     const refNum = (ref: string): number => {
         const m = ref.match(/\d+/);
@@ -222,7 +225,9 @@ function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
     for (const m of visible) {
         const num = refNum(m.ref);
         const last = merged[merged.length - 1];
-        if (last && num === last.startNum + last.count) {
+        const contiguous = !!last && num === last.startNum + last.count;
+        const turnBoundary = !!last && m.isUser && last.count >= 3;
+        if (contiguous && !turnBoundary) {
             last.endRef = m.ref;
             last.count += 1;
             last.tokens += m.tokens;
@@ -230,12 +235,19 @@ function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
             merged.push({ startRef: m.ref, endRef: m.ref, startNum: num, count: 1, tokens: m.tokens, tool: m.tool });
         }
     }
-    for (const r of merged.slice(0, 30)) {
+    // Largest ranges first by default so the view directly answers "what
+    // should I compress first" (matches the default sort and the tool's
+    // documented purpose); sort:"time" keeps chronological order.
+    if (sort !== "time") merged.sort((a, b) => b.tokens - a.tokens || a.startNum - b.startNum);
+    lines.push(`Sorted by ${sort === "time" ? "time" : "size"}`);
+    lines.push("");
+    const shown = merged.slice(0, limit);
+    for (const r of shown) {
         const range = r.count === 1 ? r.startRef : `${r.startRef}–${r.endRef}`;
         lines.push(`  ${range}  (${r.count} msgs, ${formatTokens(r.tokens)}${r.count > 1 ? ` (${Math.round(r.tokens / r.count)}/msg)` : ""}) ${r.tool}`);
     }
-    if (merged.length > 30) {
-        lines.push(`  ... and ${merged.length - 30} more ranges`);
+    if (merged.length > shown.length) {
+        lines.push(`  ... and ${merged.length - shown.length} more ranges`);
     }
     return lines.join("\n");
 }

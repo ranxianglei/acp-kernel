@@ -18,6 +18,7 @@ import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
 import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
+import { isToolMessage } from "./message-kind.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import { adjustBoundariesForReasoningPairs } from "./reasoning-pairs.js";
 import {
@@ -1302,10 +1303,7 @@ function computeContextBreakdown(
     const tokens = count(msg.text ?? "");
     if (msg.text?.startsWith("[Compressed conversation section]")) {
       summaries += tokens;
-    } else if (
-      msg.contentType === "tool-call" ||
-      msg.contentType === "tool-result"
-    ) {
+    } else if (isToolMessage(msg)) {
       tool += tokens;
     } else if (msg.role === "system") {
       system += tokens;

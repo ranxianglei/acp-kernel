@@ -76,6 +76,7 @@ export type {
 } from "./decompress.js";
 export { buildStatusReport, buildRecap } from "./report.js";
 export type { StatusReportOptions } from "./report.js";
+export { isToolMessage } from "./message-kind.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";
 export type { HideConsumedResult } from "./hide-consumed.js";
 export {

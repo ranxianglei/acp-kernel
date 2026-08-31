@@ -87,17 +87,48 @@ function allocateFreeRef(
   map: MessageRefMap,
   start: number,
 ): { text: string; index: number } {
-  let candidate = Math.max(start, MIN_INDEX);
-  while (candidate <= MAX_INDEX) {
+  const from = Math.max(start, MIN_INDEX);
+  for (let candidate = from; candidate <= MAX_INDEX; candidate++) {
     const text = indexToRef(candidate);
     if (!map.byRef[text]) {
       return { text, index: candidate };
     }
-    candidate++;
+  }
+  // Forward scan exhausted — reclaim a freed low slot (pruneDeadRefs keeps
+  // the map bounded, so free slots appear only via reclamation).
+  for (let candidate = MIN_INDEX; candidate < from; candidate++) {
+    const text = indexToRef(candidate);
+    if (!map.byRef[text]) {
+      return { text, index: candidate };
+    }
   }
   throw new Error(
-    `ref capacity exhausted: cannot allocate beyond ${indexToRef(MAX_INDEX)}`,
+    `ref capacity exhausted: all ${MAX_INDEX} ref slots are occupied by live messages — nothing left to reclaim`,
   );
+}
+
+export interface PruneDeadRefsResult {
+  map: MessageRefMap;
+  pruned: number;
+}
+
+// Drop byRaw entries whose raw id is not in `liveIds`. Callers union the
+// current view with ids covered by ACTIVE blocks, so live block tombstones
+// survive while edit-drifted and distilled messages release their refs.
+export function pruneDeadRefs(
+  map: MessageRefMap,
+  liveIds: Set<string>,
+): PruneDeadRefsResult {
+  let pruned = 0;
+  const byRaw: Record<string, string> = {};
+  for (const [rawId, ref] of Object.entries(map.byRaw)) {
+    if (liveIds.has(rawId)) {
+      byRaw[rawId] = ref;
+      continue;
+    }
+    pruned++;
+  }
+  return { map: rebuildRefIndex({ byRaw, byRef: {} }), pruned };
 }
 
 export function rebuildRefIndex(map: MessageRefMap): MessageRefMap {

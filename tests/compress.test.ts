@@ -648,7 +648,7 @@ test("refs from before a native-compaction rebase report a new generation with z
   assert.doesNotMatch(result.result.errors[0]!, /renumber/i);
 });
 
-test("drifted message content dangles the old ref — reported as unanchorable, not already-compressed (billion-context#387)", () => {
+test("drifted message content releases the old ref — reported as unknown (ref released), not already-compressed (billion-context#387)", () => {
   const core = createCore();
   const state = createInitialState();
   const messages = [
@@ -689,12 +689,13 @@ test("drifted message content dangles the old ref — reported as unanchorable, 
   });
 
   assert.equal(result.result.blocksCreated, 0);
-  assert.match(result.result.errors[0]!, /cannot be anchored/);
-  assert.match(result.result.errors[0]!, /no active block covers them/);
-  assert.match(result.result.errors[0]!, /leaving your old refs dangling/);
+  // #176: applyCompression syncs (prunes dead refs) before boundary resolution, so a
+  // drifted ref is released and reported as unknown — not the pre-#176 "dangling" branch.
+  assert.match(result.result.errors[0]!, /every ref is unknown to this session/);
+  assert.match(result.result.errors[0]!, /edited or removed/);
   assert.match(
     result.result.errors[0]!,
-    /\[diagnostics: session highest ref=m00006, unknown ranges in request=0\/1, session history=0 compression\(s\), 0 block\(s\)\]/,
+    /\[diagnostics: session highest ref=m00006, unknown ranges in request=1\/1, session history=0 compression\(s\), 0 block\(s\)\]/,
   );
   assert.doesNotMatch(result.result.errors[0]!, /already compressed/);
   assert.doesNotMatch(result.result.errors[0]!, /renumber/i);
@@ -1147,8 +1148,8 @@ test("gate error names the current active block span when anchors stay consumed"
       tier: 1,
       topic: "t",
       summary: "s2",
-      directMessageIds: ["a"],
-      effectiveMessageIds: ["a", "b"],
+      directMessageIds: ["gone1"],
+      effectiveMessageIds: ["gone1", "gone2"],
       directBlockIds: [],
       createdAt: 0,
       survivedCount: 0,

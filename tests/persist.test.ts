@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import fs from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync, existsSync } from "node:fs";
+import fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateStore, flatFileNameFor } from "../src/persist/store.js";
@@ -467,11 +469,166 @@ test("loadSync hint probes a namespaced path without loadAll", async () => {
         // without the hint, loadSync misses (flat fallback only).
         const s2 = store(dir, { relPath: (id, payload) => path.join("proto", payload.label, `${id}.json`) });
         assert.equal(s2.loadSync("hint-1"), null);
-        // With the relative-path hint, the namespaced file resolves.
-        const hit = s2.loadSync("hint-1", path.join("proto", "hostA", "hint-1.json"));
-        assert.ok(hit);
-        assert.deepEqual(hit.payload, { label: "hostA", count: 1 });
+    // With the relative-path hint, the namespaced file resolves.
+    const hit = s2.loadSync("hint-1", path.join("proto", "hostA", "hint-1.json"));
+    assert.ok(hit);
+    assert.deepEqual(hit.payload, { label: "hostA", count: 1 });
     } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+function spillNameFor(id: string): string {
+    return flatFileNameFor(id).replace(/\.json$/, ".fb.json");
+}
+
+function eperm(): NodeJS.ErrnoException {
+    const e = new Error("EPERM: operation not permitted, rename") as NodeJS.ErrnoException;
+    e.code = "EPERM";
+    return e;
+}
+
+test("rename failure spills to a side file instead of dropping data", async (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
+        t.mock.method(fsp, "rename", async () => {
+            throw eperm();
+        });
+        let threw = false;
+        try {
+            await s.writeNow("sid-spill", () => ({ label: "kept", count: 1 }));
+        } catch {
+            threw = true;
+        }
+        assert.equal(threw, true);
+        const spillFile = path.join(dir, spillNameFor("sid-spill"));
+        assert.ok(existsSync(spillFile), "spill file exists");
+        const env = JSON.parse(readFileSync(spillFile, "utf8")) as { id: string; payload: Payload };
+        assert.equal(env.id, "sid-spill");
+        assert.deepEqual(env.payload, { label: "kept", count: 1 });
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("loadAll discovers a spilled record and reconciles against the canonical by savedAt", async (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
+        await s.writeNow("sid-r", () => ({ label: "old", count: 1 }));
+        await new Promise((r) => setTimeout(r, 5));
+        t.mock.method(fsp, "rename", async () => {
+            throw eperm();
+        });
+        await s.writeNow("sid-r", () => ({ label: "new", count: 2 })).catch(() => {});
+        t.mock.restoreAll();
+        const next = store(dir);
+        const all = await next.loadAll();
+        assert.deepEqual(all.get("sid-r")?.payload, { label: "new", count: 2 });
+        assert.deepEqual(next.loadSync("sid-r")?.payload, { label: "new", count: 2 });
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("a canonical newer than the spill wins on load, and the stale spill is cleaned on success", async () => {
+    const dir = tmpDir();
+    try {
+        const spillFile = path.join(dir, spillNameFor("sid-c"));
+        writeFileSync(spillFile, JSON.stringify({ version: 1, savedAt: 1, id: "sid-c", payload: { label: "stale", count: 0 } }), "utf8");
+        const s = store(dir);
+        await s.writeNow("sid-c", () => ({ label: "fresh", count: 5 }));
+        assert.equal(existsSync(spillFile), false, "stale spill removed after canonical success");
+        assert.deepEqual(s.loadSync("sid-c")?.payload, { label: "fresh", count: 5 });
+        const next = store(dir);
+        assert.deepEqual((await next.loadAll()).get("sid-c")?.payload, { label: "fresh", count: 5 });
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("write failures alert on the first and power-of-two counts, not every write", async (t) => {
+    const dir = tmpDir();
+    try {
+        const logs: { level: string; msg: string }[] = [];
+        const s = store(dir, {
+            retryAttempts: 2,
+            retryBaseMs: 1,
+            retryMaxMs: 2,
+            log: (level, msg) => logs.push({ level, msg }),
+        });
+        t.mock.method(fsp, "rename", async () => {
+            throw eperm();
+        });
+        for (let i = 0; i < 5; i++) {
+            await s.writeNow("sid-f", () => ({ label: "x", count: i })).catch(() => {});
+        }
+        t.mock.restoreAll();
+        const failLogs = logs.filter((l) => l.msg.includes("write failed for sid-f"));
+        assert.equal(failLogs.length, 3);
+        assert.equal(failLogs[0].level, "error");
+        assert.ok(failLogs[0].msg.includes("total 1x"));
+        assert.ok(failLogs[0].msg.includes("data spilled to"));
+        assert.equal(failLogs[1].level, "warn");
+        assert.ok(failLogs[1].msg.includes("total 2x"));
+        assert.equal(failLogs[2].level, "warn");
+        assert.ok(failLogs[2].msg.includes("total 4x"));
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("flushSync spills to a side file when the rename keeps failing", (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
+        t.mock.method(fs, "renameSync", () => {
+            throw eperm();
+        });
+        const ok = s.flushSync("sid-fs", () => ({ label: "sync", count: 9 }));
+        assert.equal(ok, true);
+        const spillFile = path.join(dir, spillNameFor("sid-fs"));
+        assert.ok(existsSync(spillFile), "spill file exists");
+        const env = JSON.parse(readFileSync(spillFile, "utf8")) as { id: string; payload: Payload };
+        assert.equal(env.id, "sid-fs");
+        assert.deepEqual(env.payload, { label: "sync", count: 9 });
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("a successful write clears the failure counter so alerting restarts", async (t) => {
+    const dir = tmpDir();
+    try {
+        const logs: { level: string; msg: string }[] = [];
+        const s = store(dir, {
+            retryAttempts: 2,
+            retryBaseMs: 1,
+            retryMaxMs: 2,
+            log: (level, msg) => logs.push({ level, msg }),
+        });
+        t.mock.method(fsp, "rename", async () => {
+            throw eperm();
+        });
+        await s.writeNow("sid-reset", () => ({ label: "a", count: 0 })).catch(() => {});
+        t.mock.restoreAll();
+        await s.writeNow("sid-reset", () => ({ label: "b", count: 1 }));
+        t.mock.method(fsp, "rename", async () => {
+            throw eperm();
+        });
+        await s.writeNow("sid-reset", () => ({ label: "c", count: 2 })).catch(() => {});
+        t.mock.restoreAll();
+        const failLogs = logs.filter((l) => l.msg.includes("write failed for sid-reset"));
+        assert.equal(failLogs.length, 2);
+        assert.ok(failLogs[0].msg.includes("total 1x"));
+        assert.ok(failLogs[1].msg.includes("total 1x"));
+    } finally {
+        t.mock.restoreAll();
         rmSync(dir, { recursive: true, force: true });
     }
 });

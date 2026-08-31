@@ -1,6 +1,6 @@
 import { createCore } from "./compress.js";
 import { parseCompressArgs } from "./parse-compress-input.js";
-import { assignRefs, highestUsedIndex } from "./refs.js";
+import { assignRefs, highestUsedIndex, pruneDeadRefs } from "./refs.js";
 import { defaultCountTokens } from "./tokenize.js";
 import type { CompressionState, CoreMessage } from "./types.js";
 
@@ -30,9 +30,17 @@ export function rebuildCompressionState(
     ports: RebuildPorts = {},
 ): RebuildResult {
     const core = createCore({ countTokens: ports.countTokens ?? defaultCountTokens });
+    // Prune dead refs from the pre-fork state first: stale entries would pin
+    // the cursor (highestUsedIndex + 1) near MAX_INDEX.
+    const liveIds = new Set(messages.map((message) => message.id));
+    for (const block of state.blocks) {
+        if (!block.active) continue;
+        for (const id of block.effectiveMessageIds) liveIds.add(id);
+    }
+    const pruned = pruneDeadRefs(state.messageRefs, liveIds);
     const refResult = assignRefs(messages, {
-        existing: state.messageRefs,
-        nextIndex: highestUsedIndex(state.messageRefs) + 1,
+        existing: pruned.map,
+        nextIndex: highestUsedIndex(pruned.map) + 1,
     });
     let working: CompressionState = { ...state, messageRefs: refResult.map };
 

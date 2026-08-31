@@ -141,6 +141,7 @@ export type {
 } from "./cache-report.js";
 export { renderHandoff, renderMessage, matchSession } from "./handoff.js";
 export type { HandoffInput, HandoffMeta, HandoffBlockFull } from "./handoff.js";
+export { isToolMessage } from "./message-kind.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";
 export type { HideConsumedResult } from "./hide-consumed.js";
 export {

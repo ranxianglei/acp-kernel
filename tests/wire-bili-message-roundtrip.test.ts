@@ -2,10 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { anthropicToCore, coreToAnthropic } from "../src/wire/anthropic.js";
 import { openaiToCore, coreToOpenai } from "../src/wire/openai.js";
-import { responsesToCore, coreToResponses } from "../src/wire/responses.js";
+import { responsesToCore, coreToResponses, patchResponsesInput } from "../src/wire/responses.js";
 import type { AnthropicBlock, AnthropicRequestBody } from "../src/wire/anthropic.js";
 import type { OpenAIRequestBody } from "../src/wire/openai.js";
-import type { ResponsesRequestBody } from "../src/wire/responses.js";
+import type { ResponseInputItem, ResponsesRequestBody } from "../src/wire/responses.js";
 
 const IMG_DATA = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 const DATA_URL = `data:image/png;base64,${IMG_DATA}`;
@@ -445,4 +445,69 @@ test("responses: ACP_REASONING_KEEP=none drops reasoning but keeps call items", 
         if (prev === undefined) delete process.env.ACP_REASONING_KEEP;
         else process.env.ACP_REASONING_KEEP = prev;
     }
+});
+
+// 10. OpenAI's EasyInputMessage shorthand legally omits `type` (omp and bare
+// /v1/responses clients send `{ role, content }`): those items must fold
+// exactly like their typed `message` form instead of falling into the preamble.
+test("responses: EasyInputMessage without type folds like a typed message", () => {
+    const body: ResponsesRequestBody = {
+        input: [
+            { role: "user", content: "hello" },
+            { role: "assistant", content: "hi there" },
+            { type: "message", role: "user", content: "second" },
+        ] as unknown as ResponseInputItem[],
+    };
+    const { msgs, preamble, systemParts } = responsesToCore(body);
+    assert.equal(preamble.length, 0, "type-less messages are not opaque");
+    assert.equal(msgs.length, 3);
+    assert.equal(msgs[0]?.role, "user");
+    assert.equal(msgs[0]?.text, "hello");
+    assert.equal(msgs[1]?.role, "assistant");
+    assert.equal(msgs[1]?.text, "hi there");
+    assert.equal(systemParts.length, 0);
+});
+
+// 11. Folded text splices back into the EasyInputMessage slot; re-emitted
+// items carry the canonical typed form (interchangeable on the wire).
+test("responses: EasyInputMessage round-trips through patchResponsesInput", () => {
+    const body: ResponsesRequestBody = {
+        input: [
+            { role: "user", content: "fold me" },
+            { role: "assistant", content: "ok" },
+            { role: "user", content: "and me" },
+        ] as unknown as ResponseInputItem[],
+    };
+    const projection = responsesToCore(body);
+    const patched = projection.msgs.map((m, i) => (i === 0 ? { ...m, text: `[sum] ${m.text}` } : m));
+    const rebuilt = patchResponsesInput(projection, patched);
+    assert.ok(Array.isArray(rebuilt));
+    const first = rebuilt[0] as { type?: string; role?: string; content?: unknown };
+    assert.equal(first.type, "message", "re-emitted in canonical typed form");
+    assert.equal(first.role, "user");
+    assert.equal(first.content, "[sum] fold me");
+    assert.equal((rebuilt[1] as { content?: unknown }).content, "ok", "untouched slots keep content");
+});
+
+// 12. Type-less system/developer shorthands follow the typed path into
+// systemParts (hosts re-inject them via injectResponsesDeveloperMessage).
+test("responses: EasyInputMessage system role joins systemParts", () => {
+    const body: ResponsesRequestBody = {
+        instructions: "be brief",
+        input: [{ role: "system", content: "extra rules" }] as unknown as ResponseInputItem[],
+    };
+    const { msgs, systemParts } = responsesToCore(body);
+    assert.deepEqual(systemParts, ["be brief", "extra rules"]);
+    assert.equal(msgs.length, 0);
+});
+
+// 13. Items with neither `type` nor a message `role` stay opaque.
+test("responses: type-less non-message items stay in the preamble", () => {
+    const body: ResponsesRequestBody = {
+        input: [{ foo: "bar" }] as unknown as ResponseInputItem[],
+    };
+    const { msgs, preamble } = responsesToCore(body);
+    assert.equal(msgs.length, 0);
+    assert.equal(preamble.length, 1);
+    assert.deepEqual(preamble[0], { foo: "bar" });
 });

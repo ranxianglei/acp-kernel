@@ -46,14 +46,18 @@ function bar(value: number, total: number, width: number = 20): string {
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
-/** Render the /acp status panel. Three token numbers, each labeled with
- *  its own scale, never mixed in arithmetic:
- *  - Session accounting (host footer scale): the append-only session tree
- *    INCLUDING compressed originals. It never shrinks — adapter pruning is
- *    a per-request transform view the host cannot see.
+/** Render the /acp status panel. Token counts only — no window-relative
+ *  percentages (the same token total is 50% of a 200k window and 5% of a
+ *  2M window, so a % communicates nothing stable). Two scales, each
+ *  labeled, never mixed in arithmetic:
  *  - Sent view (chars/4 est.): what actually reaches the LLM after
  *    compression (kernel's classification over the pruned projection +
- *    measured system prompt). This is the number compression controls.
+ *    measured system prompt). This is the number compression controls,
+ *    shown first — it is the "current actual context".
+ *  - Session accounting (host footer scale): the append-only session tree
+ *    INCLUDING compressed originals. It never shrinks — adapter pruning is
+ *    a per-request transform view the host cannot see. This is the
+ *    cumulative total the host footer derives its % from.
  *  - Session-only (chars/4 est.): unpruned projection − sent view; the
  *    compressed originals pruned from every request.
  *  Subtracting the host number from an estimate produced numbers that
@@ -72,8 +76,6 @@ export function buildStatusPanel(input: StatusPanelInput): string {
   // its own line and never fed into an arithmetic difference with these.
   const sessionOnly = input.unprunedTokens !== undefined ? Math.max(0, input.unprunedTokens - sentTotal) : 0;
   const displayTotal = tokenCount;
-  const displayPct = limit > 0 ? Math.round((displayTotal / limit) * 100) : 0;
-  const sentPct = limit > 0 ? Math.round((sentTotal / limit) * 100) : 0;
   const activeBlocksList = state.blocks.filter((b) => b.active);
   const totalBlocksList = state.blocks;
 
@@ -84,18 +86,19 @@ export function buildStatusPanel(input: StatusPanelInput): string {
   lines.push("╰─────────────────────────────────────────────╯");
   if (input.version) lines.push(input.version);
   lines.push("");
-  lines.push(`Context (session accounting, host footer scale): ${displayPct}% (${fmt(displayTotal)} / ${fmt(limit)}) — never shrinks; includes compressed originals`);
 
   if (nudge && bd) {
-    const growth = bd.growth;
-    if (growth > 0 && displayTotal > 0) {
-      lines.push(`Growth: +${fmt(growth)} since last nudge`);
-    }
-    lines.push("");
-    lines.push(`Sent to LLM (after compression, est.): ${fmt(sentTotal)}${limit > 0 ? ` (${sentPct}% of limit)` : ""}`);
+    lines.push(`Sent to LLM (after compression, est.): ${fmt(sentTotal)}${limit > 0 ? ` / ${fmt(limit)}` : ""}`);
     if (input.unprunedTokens !== undefined && sessionOnly > 0) {
       lines.push(`Session-only (compressed originals, est.): ${fmt(sessionOnly)} — pruned from every request; the footer/nudge still count them`);
     }
+  }
+  lines.push(`Cumulative (session accounting, host footer scale): ${fmt(displayTotal)} — never shrinks; includes compressed originals (the host footer % is this number ÷ window)`);
+  if (nudge && bd && bd.growth > 0 && displayTotal > 0) {
+    lines.push(`Growth: +${fmt(bd.growth)} since last nudge`);
+  }
+
+  if (nudge && bd) {
     lines.push("");
     lines.push("Token Breakdown (sent view):");
 

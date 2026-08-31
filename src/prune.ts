@@ -54,6 +54,16 @@ export function prune(
   const firstUserIndex = messages.findIndex(
     (message) => message.role === "user",
   );
+  // Rendered summaries are `role: "system"`. Strict OpenAI backends reject a
+  // system message that follows any non-system message, so every summary
+  // anchor is clamped to the first non-system message — summaries always land
+  // in the leading system prefix (index 0 when the view has none). Clamping to
+  // the first non-system (not first user) message also covers hosts that lead
+  // with a non-user, non-system message.
+  const firstNonSystemIndex = messages.findIndex(
+    (message) => message.role !== "system",
+  );
+  const summaryClampIndex = firstNonSystemIndex >= 0 ? firstNonSystemIndex : 0;
 
   const indexById = new Map<string, number>();
   const summaryIndexById = new Map<string, number>();
@@ -64,7 +74,12 @@ export function prune(
   });
 
   const anchors = inject
-    ? collectSummaryAnchors(state, indexById, summaryIndexById)
+    ? collectSummaryAnchors(
+        state,
+        indexById,
+        summaryIndexById,
+        summaryClampIndex,
+      )
     : [];
 
   return stripOrphanedReasoning(
@@ -81,12 +96,16 @@ interface SummaryAnchor {
   summary: string;
   topic?: string;
   insertAt: number;
+  // Unclamped position, used only to order summaries chronologically after
+  // clamping folds several of them onto the same leading-prefix slot.
+  orderKey: number;
 }
 
 function collectSummaryAnchors(
   state: CompressionState,
   indexById: Map<string, number>,
   summaryIndexById: Map<string, number>,
+  clampIndex: number,
 ): SummaryAnchor[] {
   const anchors: SummaryAnchor[] = [];
   for (const block of activeBlocks(state)) {
@@ -99,7 +118,8 @@ function collectSummaryAnchors(
         blockId: block.blockId,
         summary: block.summary,
         topic: block.topic,
-        insertAt: existingIndex,
+        insertAt: Math.min(existingIndex, clampIndex),
+        orderKey: existingIndex,
       });
       continue;
     }
@@ -110,14 +130,16 @@ function collectSummaryAnchors(
         earliest = index;
       }
     }
+    const original = earliest ?? 0;
     anchors.push({
       blockId: block.blockId,
       summary: block.summary,
       topic: block.topic,
-      insertAt: earliest ?? 0,
+      insertAt: Math.min(original, clampIndex),
+      orderKey: original,
     });
   }
-  anchors.sort((left, right) => left.insertAt - right.insertAt);
+  anchors.sort((left, right) => left.orderKey - right.orderKey);
   return anchors;
 }
 

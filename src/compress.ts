@@ -697,7 +697,15 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     for (const block of activeBlocks(input.state)) {
       if (nestedSeen.has(block.blockId)) continue;
       if (
-        blockVisibleInRange(block, indexByMessageId, adjustedStart, adjustedEnd)
+        blockVisibleInRange(
+          block,
+          indexByMessageId,
+          adjustedStart,
+          adjustedEnd,
+          input.state.messageRefs.byRaw,
+          resolved.refStart,
+          resolved.refEnd,
+        )
       ) {
         nestedSeen.add(block.blockId);
         resolved.nestedBlockIds.push(block.blockId);

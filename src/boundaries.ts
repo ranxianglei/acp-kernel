@@ -75,6 +75,11 @@ export interface ResolvedRange {
   boundaryKind: BoundaryKind;
   protectedGaps: number[];
   snappedBoundaries: string[];
+  // Numeric ref bounds of message-ref boundaries (null when either boundary is
+  // a block ref). Lets block detection fall back to a block's content refs when
+  // its raws are pruned and its summary sits in the leading system prefix.
+  refStart: number | null;
+  refEnd: number | null;
 }
 
 export function resolveBoundaries(
@@ -115,6 +120,14 @@ export function resolveBoundaries(
     [startIndex, endIndex] = [endIndex, startIndex];
   }
 
+  const bothMessageRefs = start.kind === "message" && end.kind === "message";
+  const refStart = bothMessageRefs
+    ? Math.min(start.numericId, end.numericId)
+    : null;
+  const refEnd = bothMessageRefs
+    ? Math.max(start.numericId, end.numericId)
+    : null;
+
   const messageIds: string[] = [];
   for (let index = startIndex; index <= endIndex; index++) {
     const message = input.messages[index];
@@ -131,7 +144,17 @@ export function resolveBoundaries(
   const nestedBlockIds: string[] = [];
   const nestedSeen = new Set<string>();
   for (const block of activeBlocks(input.state)) {
-    if (blockVisibleInRange(block, indexByMessageId, startIndex, endIndex)) {
+    if (
+      blockVisibleInRange(
+        block,
+        indexByMessageId,
+        startIndex,
+        endIndex,
+        input.state.messageRefs.byRaw,
+        refStart,
+        refEnd,
+      )
+    ) {
       if (!nestedSeen.has(block.blockId)) {
         nestedSeen.add(block.blockId);
         nestedBlockIds.push(block.blockId);
@@ -149,6 +172,8 @@ export function resolveBoundaries(
     boundaryKind,
     protectedGaps,
     snappedBoundaries,
+    refStart,
+    refEnd,
   };
 }
 
@@ -314,12 +339,19 @@ export function visibleBlockAnchor(
 // (rendered summary or earliest surviving raw) falls inside it. The summary
 // alone is not sufficient: when a block covers the session's first user
 // message, prune keeps that one raw and inserts the summary BEFORE it, so the
-// summary index can sit outside a range that still contains the raw.
+// summary index can sit outside a range that still contains the raw. The
+// content-ref fallback covers the inverse: a block whose raws are ALL pruned
+// (none survive in the view) while its summary sits in the leading system
+// prefix (also outside the range) — detected by its raw refs landing inside
+// the requested message-ref span.
 export function blockVisibleInRange(
   block: CompressionBlock,
   indexByMessageId: Map<string, number>,
   startIndex: number,
   endIndex: number,
+  byRaw: Record<string, string> = {},
+  refStart: number | null = null,
+  refEnd: number | null = null,
 ): boolean {
   const summaryIndex = indexByMessageId.get(summaryMessageId(block.blockId));
   if (
@@ -333,7 +365,28 @@ export function blockVisibleInRange(
     block.effectiveMessageIds,
     indexByMessageId,
   );
-  return rawIndex !== null && rawIndex >= startIndex && rawIndex <= endIndex;
+  if (rawIndex !== null && rawIndex >= startIndex && rawIndex <= endIndex) {
+    return true;
+  }
+  // Fallback only when NO raw of the block survives in the view (all pruned):
+  // that is the one case where neither the summary (now in the leading prefix)
+  // nor any raw can anchor the block inside the range. Gating on rawIndex===null
+  // keeps a block whose anchor raw is merely OUTSIDE the range (but present) from
+  // being wrongly treated as nested.
+  if (rawIndex === null && refStart !== null && refEnd !== null) {
+    for (const id of block.effectiveMessageIds) {
+      const ref = byRaw[id];
+      if (ref === undefined) continue;
+      const num = refNumber(ref);
+      if (num !== null && num >= refStart && num <= refEnd) return true;
+    }
+  }
+  return false;
+}
+
+function refNumber(ref: string): number | null {
+  const match = MESSAGE_REF_PATTERN.exec(ref);
+  return match ? Number(match[1]) : null;
 }
 
 export function earliestIndexOfIds(

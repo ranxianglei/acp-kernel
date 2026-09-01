@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createInitialState } from "../src/state.js";
 import { renderHandoff, renderMessage, matchSession } from "../src/handoff.js";
-import type { CompressionBlock, CompressionState, CoreMessage } from "../src/types.js";
+import type { CompressionBlock, CoreMessage } from "../src/types.js";
 
 function msg(id: string, role: CoreMessage["role"] = "user", text: string = id): CoreMessage {
   return { id, role, contentType: "text", text };
@@ -16,6 +16,7 @@ function makeBlock(overrides: Partial<CompressionBlock> & { blockId: string }): 
     directMessageIds: [],
     effectiveMessageIds: [],
     directBlockIds: [],
+    compressedTokens: 0,
     createdAt: 0,
     survivedCount: 0,
     generation: "young",
@@ -39,6 +40,8 @@ test("renderMessage renders each content type", () => {
     "_reasoning_: thinking\n",
   );
   assert.equal(renderMessage({ id: "e", role: "user", contentType: "text", text: "" }), "_(empty)_");
+  assert.equal(renderMessage({ id: "f", role: "assistant", contentType: "tool-call" }), "`?()` args:\n");
+  assert.equal(renderMessage({ id: "g", role: "tool", contentType: "tool-result", toolName: "bash" }), "`bash()` →\n");
 });
 
 test("renderHandoff full view shows every original message", () => {
@@ -94,6 +97,8 @@ test("renderHandoff renders metadata bullets in order and omits optionals", () =
   assert.doesNotMatch(noOptional, /- label:/);
   assert.doesNotMatch(noOptional, /- last context tokens:/);
   assert.match(noOptional, /- title: \(untitled\)/);
+  const zeroTokens = renderHandoff({ coreMessages: messages, state, full: true, meta: { sessionId: "abc", contextTokens: 0 } });
+  assert.doesNotMatch(zeroTokens, /- last context tokens:/);
 });
 
 test("renderHandoff empty conversation shows a placeholder", () => {
@@ -111,6 +116,7 @@ test("matchSession matches by exact id, label, and prefix", () => {
   assert.deepEqual(matchSession(sessions, "beta", labelOf).map((s) => s.id), ["sess-bbb-222"]);
   assert.deepEqual(matchSession(sessions, "sess-aaa", labelOf).map((s) => s.id), ["sess-aaa-111"]);
   assert.deepEqual(matchSession(sessions, "alpha", labelOf).map((s) => s.id), ["sess-aaa-111"]);
+  assert.deepEqual(matchSession(sessions, "alp", labelOf).map((s) => s.id), ["sess-aaa-111"]);
   assert.deepEqual(matchSession(sessions, "sess", labelOf).map((s) => s.id), ["sess-aaa-111", "sess-bbb-222"]);
   assert.deepEqual(matchSession(sessions, "nope", labelOf), []);
 });

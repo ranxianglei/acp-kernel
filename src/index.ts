@@ -61,6 +61,18 @@ export {
 } from "./compression-rules.js";
 export { defaultPrompts, resolvePrompts } from "./prompts.js";
 export type { Prompts, ResolvePromptsOptions } from "./prompts.js";
+export {
+  applySectionOverrides,
+  cloneWithDescriptions,
+  applyAcpToolOverrides,
+} from "./surface-config.js";
+export type {
+  SectionOverride,
+  CompressPromptSections,
+  ToolPromptOverrides,
+  ToolPrompts,
+  AcpToolLike,
+} from "./surface-config.js";
 export { truncateLargeToolOutputs } from "./truncate-tools.js";
 export type { TruncateOptions, TruncateResult } from "./truncate-tools.js";
 export {

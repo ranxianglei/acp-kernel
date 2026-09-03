@@ -88,6 +88,26 @@ export interface StateStoreOptions<T> {
     retryMaxMs?: number;
 }
 
+/** Options for {@link StateStore.loadAll}. */
+export interface LoadAllOptions {
+    /**
+     * Cap on the total bytes of record files loadAll will read and parse.
+     * When set, loadAll does a stat-only pass first (readdir + stat, no
+     * content reads), groups each canonical file with its `.fb.json` spill
+     * variant (same id ⇒ all-or-nothing, so the pair's freshest-wins
+     * reconciliation always sees both sides), then includes groups
+     * newest-mtime-first while the running total stays within the budget.
+     * Excluded groups are left on disk untouched (the store never deletes)
+     * and stay individually reachable via loadSync(id, hint). If no group
+     * fits, the result is an empty map (a warning is logged) — the budget
+     * is a hard cap, so one oversized record can never blow past it. Group
+     * freshness uses file mtime as a stat-level proxy for the in-envelope
+     * savedAt; ordering among parsed records still comes from savedAt
+     * reconciliation. Omitted ⇒ parse every record (default, unchanged).
+     */
+    maxParseBytes?: number;
+}
+
 /**
  * Crash-safe, debounce-coalescing JSON state store. Mechanism only — lifted
  * from billion-context's proxy SessionStore and generalized:
@@ -288,11 +308,18 @@ export class StateStore<T> {
     /** Load every record under dir. Populates the discovery map (enables
      *  loadSync for namespaced relPaths). Skips corrupt files, `.tmp-*`
      *  orphans, and records whose filename does not match their id — one
-     *  bad file never blocks boot. Never throws. */
-    async loadAll(): Promise<Map<string, PersistedEnvelope<T>>> {
+     *  bad file never blocks boot. Never throws.
+     *
+     * With `options.maxParseBytes`, parsing is budget-limited via a stat-only
+     * preselection pass (see {@link LoadAllOptions.maxParseBytes}); skipped
+     * records are not deleted and remain loadable via loadSync(id, hint). */
+    async loadAll(options?: LoadAllOptions): Promise<Map<string, PersistedEnvelope<T>>> {
         const out = new Map<string, PersistedEnvelope<T>>();
         if (!this.enabled) return out;
-        const files = await this.walkJsonFiles(this.dir);
+        const files =
+            options?.maxParseBytes == null
+                ? await this.walkJsonFiles(this.dir)
+                : await this.selectWithinBudget(options.maxParseBytes);
         for (const file of files) {
             const envelope = this.readEnvelope(file);
             if (!envelope) continue;
@@ -572,6 +599,63 @@ export class StateStore<T> {
             }
         }
         return out;
+    }
+
+    /** Stat-only preselection for budgeted loadAll: pairs each canonical
+     *  file with its `.fb.json` spill under a dir+stem key (identical stems
+     *  in different directories are different records), sums group sizes,
+     *  and fills the budget newest-mtime-first. Never reads file content. */
+    private async selectWithinBudget(budget: number): Promise<string[]> {
+        if (!Number.isFinite(budget) || budget < 0) {
+            throw new TypeError(
+                `maxParseBytes must be a finite non-negative number, got ${String(budget)}`,
+            );
+        }
+        const entries = await Promise.all(
+            (await this.walkJsonFiles(this.dir)).map(async (file) => {
+                try {
+                    const st = await fsp.stat(file);
+                    return { file, size: st.size, mtimeMs: st.mtimeMs };
+                } catch {
+                    return null; // vanished or unreadable between walk and stat
+                }
+            }),
+        );
+        const groups = new Map<string, { key: string; files: string[]; size: number; mtimeMs: number }>();
+        for (const e of entries) {
+            if (!e) continue;
+            const base = path.basename(e.file);
+            const stem = base.endsWith(".fb.json")
+                ? base.slice(0, -".fb.json".length)
+                : base.slice(0, -".json".length);
+            const key = `${path.dirname(e.file)}\u0000${stem}`;
+            const g = groups.get(key) ?? { key, files: [], size: 0, mtimeMs: 0 };
+            g.files.push(e.file);
+            g.size += e.size;
+            g.mtimeMs = Math.max(g.mtimeMs, e.mtimeMs);
+            groups.set(key, g);
+        }
+        const ordered = [...groups.values()].sort(
+            (a, b) => b.mtimeMs - a.mtimeMs || b.size - a.size || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
+        );
+        const selected: string[] = [];
+        let used = 0;
+        let skipped = 0;
+        for (const g of ordered) {
+            if (used + g.size > budget) {
+                skipped++;
+                continue;
+            }
+            selected.push(...g.files);
+            used += g.size;
+        }
+        if (skipped > 0) {
+            this.log(
+                "warn",
+                `[persist] loadAll budget ${budget} bytes: parsed ${ordered.length - skipped}/${ordered.length} record groups (skipped ${skipped})`,
+            );
+        }
+        return selected;
     }
 }
 

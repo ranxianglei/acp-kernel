@@ -14,5 +14,5 @@
  * - the store never deletes files; cleanup is a downstream decision
  */
 export { StateStore, flatFileNameFor } from "./store.js";
-export type { PersistedEnvelope, PersistLogger, StateStoreOptions } from "./store.js";
+export type { LoadAllOptions, PersistedEnvelope, PersistLogger, StateStoreOptions } from "./store.js";
 export { mergeCompressionState } from "./state-merge.js";

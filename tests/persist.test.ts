@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -653,6 +653,117 @@ test("flushSync retries use a fresh temp name per attempt (no tombstoned reuse)"
         assert.ok(written.some((p) => p.endsWith(".fb.json")), "spill file written");
     } finally {
         t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+function writeRawRecord(dir: string, id: string, opts: { name?: string; savedAt?: number; mtimeSec?: number; pad?: number } = {}): string {
+    const file = path.join(dir, opts.name ?? flatFileNameFor(id));
+    mkdirSync(path.dirname(file), { recursive: true });
+    const payload: Record<string, unknown> = { label: id, count: 0 };
+    if (opts.pad !== undefined) payload.pad = "x".repeat(opts.pad);
+    writeFileSync(file, JSON.stringify({ version: 1, savedAt: opts.savedAt ?? 1_000_000, id, payload }), "utf8");
+    if (opts.mtimeSec !== undefined) fs.utimesSync(file, opts.mtimeSec, opts.mtimeSec);
+    return file;
+}
+
+test("loadAll maxParseBytes parses only the newest records within the budget", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir);
+        ["old-1", "mid-1", "mid-2", "new-1"].forEach((id, i) =>
+            writeRawRecord(dir, id, { pad: 1000, mtimeSec: 1000 + i * 100 }),
+        );
+        const size = fs.statSync(path.join(dir, flatFileNameFor("old-1"))).size;
+        const out = await s.loadAll({ maxParseBytes: 2 * size + 1 });
+        assert.deepEqual([...out.keys()].sort(), ["mid-2", "new-1"]);
+        // Without a budget the behavior is unchanged: everything parses.
+        assert.equal((await s.loadAll()).size, 4);
+        // Skipped records are not deleted and stay directly loadable.
+        assert.ok(existsSync(path.join(dir, flatFileNameFor("old-1"))), "skipped file stays on disk");
+        assert.equal(s.loadSync("old-1")?.payload.label, "old-1");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("loadAll budget skips an oversized newest group and fills from older groups", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir);
+        writeRawRecord(dir, "huge-new", { pad: 50_000, mtimeSec: 4000 });
+        writeRawRecord(dir, "old-a", { pad: 100, mtimeSec: 1000 });
+        writeRawRecord(dir, "old-b", { pad: 100, mtimeSec: 2000 });
+        const small = fs.statSync(path.join(dir, flatFileNameFor("old-a"))).size;
+        const out = await s.loadAll({ maxParseBytes: 2 * small + 1 });
+        assert.deepEqual([...out.keys()].sort(), ["old-a", "old-b"]);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("loadAll budget treats a canonical file and its spill as one all-or-nothing unit", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir);
+        writeRawRecord(dir, "dup-id", { savedAt: 100, mtimeSec: 3000, pad: 500 });
+        writeRawRecord(dir, "dup-id", { name: spillNameFor("dup-id"), savedAt: 200, mtimeSec: 3001, pad: 500 });
+        writeRawRecord(dir, "fresh-id", { mtimeSec: 4000, pad: 100 });
+        const dupSize = fs.statSync(path.join(dir, flatFileNameFor("dup-id"))).size;
+        const freshSize = fs.statSync(path.join(dir, flatFileNameFor("fresh-id"))).size;
+        // Room for the fresh record plus only one half of the pair → the pair is skipped whole.
+        const tight = await s.loadAll({ maxParseBytes: freshSize + dupSize });
+        assert.deepEqual([...tight.keys()], ["fresh-id"]);
+        // Room for the whole pair → both halves parse and reconcile by savedAt.
+        const roomy = await s.loadAll({ maxParseBytes: freshSize + 2 * dupSize });
+        assert.equal(roomy.get("dup-id")?.savedAt, 200);
+        assert.equal(roomy.get("dup-id")?.payload.label, "dup-id");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("loadAll budget smaller than every record parses nothing and warns", async () => {
+    const dir = tmpDir();
+    try {
+        const logs: { level: string; msg: string }[] = [];
+        const s = store(dir, { log: (level, msg) => logs.push({ level, msg }) });
+        writeRawRecord(dir, "a-1", { mtimeSec: 1000 });
+        writeRawRecord(dir, "b-1", { mtimeSec: 2000 });
+        const out = await s.loadAll({ maxParseBytes: 1 });
+        assert.equal(out.size, 0);
+        assert.ok(existsSync(path.join(dir, flatFileNameFor("a-1"))), "files remain on disk");
+        assert.ok(existsSync(path.join(dir, flatFileNameFor("b-1"))), "files remain on disk");
+        assert.ok(logs.some((l) => l.level === "warn" && l.msg.includes("budget")), "warn logged");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("loadAll rejects invalid budgets fail-fast", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir);
+        await assert.rejects(s.loadAll({ maxParseBytes: -1 }), TypeError);
+        await assert.rejects(s.loadAll({ maxParseBytes: Number.NaN }), TypeError);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("loadAll budget pairs canonical and spill within a directory only", async () => {
+    const dir = tmpDir();
+    try {
+        const relPath = (id: string): string =>
+            id === "p" ? "n1/same.json" : id === "q" ? "n2/same.json" : flatFileNameFor(id);
+        const s = store(dir, { relPath });
+        writeRawRecord(dir, "p", { name: "n1/same.json", mtimeSec: 3000, pad: 500 });
+        writeRawRecord(dir, "q", { name: "n2/same.json", mtimeSec: 4000, pad: 500 });
+        const size = fs.statSync(path.join(dir, "n1/same.json")).size;
+        // Equal-sized same-stem files in different dirs must NOT merge into one oversized group.
+        const out = await s.loadAll({ maxParseBytes: size + 1 });
+        assert.deepEqual([...out.keys()], ["q"]);
+    } finally {
         rmSync(dir, { recursive: true, force: true });
     }
 });

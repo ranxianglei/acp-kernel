@@ -1,4 +1,4 @@
-import { assignRefs, highestUsedIndex, indexToRef, pruneDeadRefs } from "./refs.js";
+import { assignRefs, highestUsedIndex, indexToRef } from "./refs.js";
 import { prune, isSummaryMessageId } from "./prune.js";
 import { syncBlocks } from "./sync.js";
 import { advanceSurvival, activeBlocks, blockById } from "./state.js";
@@ -165,13 +165,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
   function applyCompression(
     input: ApplyCompressionInput,
   ): ApplyCompressionResult {
-    // Sync against the caller's view before boundary resolution (a bare clone
-    // would keep stale state): deactivates drifted/orphaned blocks and prunes
-    // dead refs, so stale state can't hit "active block but none of its content visible".
-    const state: CompressionState = syncBlocks(
-      input.messages,
-      input.state,
-    ).state;
+    const state: CompressionState = cloneState(input.state);
     const runId = allocateRunId(state);
     let blocksCreated = 0;
     let tokensCompressed = 0;
@@ -318,7 +312,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
           resolvableCount === 0 &&
           consumedRanges.length === 0 &&
           unknownCount > 0
-            ? `None of the ${input.ranges.length} requested range(s) resolved — every ref is unknown to this session. Refs are per-session snapshots, assigned once when a message is first rendered; no compress reassigns them, so unknown refs cannot come from an earlier compress in this session. They come from a different generation: a previous session instance (switching model or upstream mid-conversation starts a fresh session whose refs restart at m00001), the generation before a native-compaction rebase (which also resets refs to m00001), a typo, or a message that was edited or removed (its old ref was released when the content id changed). ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
+            ? `None of the ${input.ranges.length} requested range(s) resolved — every ref is unknown to this session. Refs are per-session snapshots, assigned once when a message is first rendered; no compress reassigns them, so unknown refs cannot come from an earlier compress in this session. They come from a different generation: a previous session instance (switching model or upstream mid-conversation starts a fresh session whose refs restart at m00001), the generation before a native-compaction rebase (which also resets refs to m00001), or a typo. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
             : consumedRanges.length > 0
               ? danglingRefs.length > 0
                 ? `Requested range(s) cannot be anchored (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
@@ -510,18 +504,9 @@ const assignRefsNode: PipelineNode = {
     const protectedFn = hasProtection
       ? (m: CoreMessage) => isMessageProtected(m, ctx.config)
       : undefined;
-    // Prune before allocating: legacy state (pre-reclamation) or host-side
-    // drift can leave the map near MAX_INDEX — releasing dead slots first is
-    // what lets allocation reuse them instead of throwing capacity-exhausted.
-    const liveIds = new Set(io.messages.map((m) => m.id));
-    for (const block of io.state.blocks) {
-      if (!block.active) continue;
-      for (const id of block.effectiveMessageIds) liveIds.add(id);
-    }
-    const pruned = pruneDeadRefs(io.state.messageRefs, liveIds);
     const refResult = assignRefs(io.messages, {
-      existing: pruned.map,
-      nextIndex: highestUsedIndex(pruned.map) + 1,
+      existing: io.state.messageRefs,
+      nextIndex: highestUsedIndex(io.state.messageRefs) + 1,
       isProtected: protectedFn,
     });
     return { ...io, state: { ...io.state, messageRefs: refResult.map } };
@@ -1374,6 +1359,27 @@ function computeContextBreakdown(
     }
   }
   return { system, tool, summaries, code, text, total, growth };
+}
+
+function cloneState(state: CompressionState): CompressionState {
+  return {
+    blocks: state.blocks.map((block) => ({
+      ...block,
+      directMessageIds: [...block.directMessageIds],
+      effectiveMessageIds: [...block.effectiveMessageIds],
+      directBlockIds: [...block.directBlockIds],
+    })),
+    messageRefs: {
+      byRaw: { ...state.messageRefs.byRaw },
+      byRef: { ...state.messageRefs.byRef },
+    },
+    tokenSnapshot: { ...(state.tokenSnapshot ?? {}) },
+    nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
+    stats: { ...state.stats },
+    absorbed: (state.absorbed ?? []).map((record) => ({ ...record })),
+    nextBlockId: state.nextBlockId,
+    nextRunId: state.nextRunId,
+  };
 }
 
 function scoreRelevance(block: CompressionBlock, terms: string[]): number {

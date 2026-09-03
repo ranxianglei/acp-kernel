@@ -35,37 +35,28 @@ export function parseBoundary(ref: string): ParsedBoundary | null {
   return null;
 }
 
-export type BoundaryFailureReason =
-  "consumed" | "generation-replaced" | "edit-drift";
-
 /**
  * Thrown when a boundary ref parses but cannot be anchored in the visible
  * context. `kind` distinguishes a ref that never existed ("unknown", e.g. a
- * typo or a ref from another session) from one whose content is gone
- * ("consumed"). `reason` classifies the consumed case: "consumed" (an active
- * block covers it — retry with the block ref), "generation-replaced" (the
- * covering block was itself distilled/consumed — content no longer
- * available), "edit-drift" (the message was edited or removed, changing its
- * content id). `endpoint` names the failing side of the range.
+ * typo or a ref from another session) from one that was consumed by an
+ * existing block ("consumed", messages hidden by prune). `endpoint` names the
+ * failing side of the range so callers can attribute the error precisely.
  */
 export class BoundaryNotFoundError extends Error {
   readonly code = "BOUNDARY_NOT_FOUND";
   readonly kind: "unknown" | "consumed";
   readonly endpoint: "start" | "end";
-  readonly reason: BoundaryFailureReason | null;
 
   constructor(
     kind: "unknown" | "consumed",
     endpoint: "start" | "end",
     message: string,
-    reason: BoundaryFailureReason | null = null,
   ) {
     super(message);
     this.name = "BoundaryNotFoundError";
     this.code = "BOUNDARY_NOT_FOUND";
     this.kind = kind;
     this.endpoint = endpoint;
-    this.reason = reason;
   }
 }
 
@@ -181,7 +172,7 @@ function resolveAnchorIndex(
       throw new BoundaryNotFoundError(
         "unknown",
         endpoint,
-        `${label}="${boundary.raw}" does not exist in this session (typo, wrong session, or the message was edited/removed and its ref released) — run acp_status for current refs.`,
+        `${label}="${boundary.raw}" does not exist in this session (typo or wrong session) — run acp_status for current refs.`,
       );
     }
     const index = indexByMessageId.get(rawId);
@@ -195,33 +186,10 @@ function resolveAnchorIndex(
         snapped: `${label}="${boundary.raw}" refers to a message already compressed into an active block — anchored to the active block covering it instead.`,
       };
     }
-    const coveringActive = state.blocks.filter(
-      (block) => block.active && block.effectiveMessageIds.includes(rawId),
-    );
-    if (coveringActive.length > 0) {
-      throw new BoundaryNotFoundError(
-        "consumed",
-        endpoint,
-        `${label}="${boundary.raw}" is already compressed into active block(s) ${coveringActive.map((block) => block.blockId).join(", ")} — retry with the block ref(s) instead of the message ref.`,
-        "consumed",
-      );
-    }
-    const generationReplaced = state.blocks.some(
-      (block) => !block.active && block.effectiveMessageIds.includes(rawId),
-    );
-    if (generationReplaced) {
-      throw new BoundaryNotFoundError(
-        "consumed",
-        endpoint,
-        `${label}="${boundary.raw}" was compressed into a block that has since been distilled or consumed — its content is no longer available in this session; run acp_status for current refs.`,
-        "generation-replaced",
-      );
-    }
     throw new BoundaryNotFoundError(
       "consumed",
       endpoint,
-      `${label}="${boundary.raw}" no longer exists — the message was edited or removed (its content id changed); run acp_status for current refs.`,
-      "edit-drift",
+      `${label}="${boundary.raw}" not found in visible context (likely consumed by an existing block).`,
     );
   }
 
@@ -251,26 +219,16 @@ function resolveAnchorIndex(
     };
   }
   if (!block.active) {
-    const consumer = state.blocks.find(
-      (candidate) =>
-        candidate.active &&
-        candidate.directBlockIds.includes(block.blockId) &&
-        visibleBlockAnchor(candidate, indexByMessageId) !== null,
-    );
     throw new BoundaryNotFoundError(
       "consumed",
       endpoint,
-      consumer
-        ? `${label}="b${boundary.numericId}" was consumed by ${consumer.blockId} (higher-tier block) — retry with ${consumer.blockId} instead.`
-        : `${label}="b${boundary.numericId}" is inactive (distilled or garbage-collected) and none of its content is visible in the current context — run acp_status for current refs.`,
-      "generation-replaced",
+      `${label}="b${boundary.numericId}" not found in visible context (block distilled/consumed by a higher-tier block).`,
     );
   }
   throw new BoundaryNotFoundError(
     "consumed",
     endpoint,
-    `${label}="b${boundary.numericId}" is an active block but none of its content (raw messages or rendered summary) is present in the current view — its messages were likely edited or removed (id drift); it will be deactivated on the next state sync. Run acp_status to verify.`,
-    "edit-drift",
+    `${label}="b${boundary.numericId}" is an active block but none of its content (raw messages or rendered summary) is visible in the current context — run acp_status to verify.`,
   );
 }
 

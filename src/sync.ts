@@ -1,4 +1,3 @@
-import { pruneDeadRefs } from "./refs.js";
 import { summaryMessageId } from "./prune.js";
 import type { CompressionState, CoreMessage } from "./types.js";
 
@@ -78,18 +77,6 @@ export function syncBlocks(
       deactivated.push(block.blockId);
     }
   }
-
-  // Reclaim dead refs AFTER the activity pass: live = current view ∪ ids
-  // covered by ACTIVE blocks only. Keeping tombstones of inactive (distilled
-  // or orphaned) blocks too would make the map grow with total session
-  // history instead of staying proportional to the live view.
-  const liveIds = new Set(presentIds);
-  for (const block of result.blocks) {
-    if (!block.active) continue;
-    for (const id of block.effectiveMessageIds) liveIds.add(id);
-  }
-  const prunedRefs = pruneDeadRefs(result.messageRefs, liveIds);
-  result.messageRefs = prunedRefs.map;
 
   return { state: result, deactivated };
 }

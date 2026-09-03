@@ -26,7 +26,6 @@ export {
   refToIndex,
   refForRaw,
   rawForRef,
-  pruneDeadRefs,
   BLOCKED_REF,
 } from "./refs.js";
 export {
@@ -44,7 +43,6 @@ export {
   visibleBlockAnchor,
   blockVisibleInRange,
 } from "./boundaries.js";
-export type { BoundaryFailureReason } from "./boundaries.js";
 export {
   defaultCountTokens,
   estimateTokensFast,

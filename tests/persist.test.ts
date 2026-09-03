@@ -687,6 +687,21 @@ test("loadAll maxParseBytes parses only the newest records within the budget", a
     }
 });
 
+test("loadAll budget skips an oversized newest group and fills from older groups", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir);
+        writeRawRecord(dir, "huge-new", { pad: 50_000, mtimeSec: 4000 });
+        writeRawRecord(dir, "old-a", { pad: 100, mtimeSec: 1000 });
+        writeRawRecord(dir, "old-b", { pad: 100, mtimeSec: 2000 });
+        const small = fs.statSync(path.join(dir, flatFileNameFor("old-a"))).size;
+        const out = await s.loadAll({ maxParseBytes: 2 * small + 1 });
+        assert.deepEqual([...out.keys()].sort(), ["old-a", "old-b"]);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test("loadAll budget treats a canonical file and its spill as one all-or-nothing unit", async () => {
     const dir = tmpDir();
     try {

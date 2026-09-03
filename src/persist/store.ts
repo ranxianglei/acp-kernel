@@ -97,7 +97,10 @@ export interface LoadAllOptions {
      * variant (same id ⇒ all-or-nothing, so the pair's freshest-wins
      * reconciliation always sees both sides), then includes groups
      * newest-mtime-first while the running total stays within the budget.
-     * Excluded groups are left on disk untouched (the store never deletes)
+     * A group that does not fit is skipped individually and selection
+     * continues with older groups — the byte cap is hard even when the
+     * newest group alone exceeds it; only if NO group fits is the result
+     * empty. Excluded groups are left on disk untouched (the store never deletes)
      * and stay individually reachable via loadSync(id, hint). If no group
      * fits, the result is an empty map (a warning is logged) — the budget
      * is a hard cap, so one oversized record can never blow past it. Group
@@ -308,11 +311,13 @@ export class StateStore<T> {
     /** Load every record under dir. Populates the discovery map (enables
      *  loadSync for namespaced relPaths). Skips corrupt files, `.tmp-*`
      *  orphans, and records whose filename does not match their id — one
-     *  bad file never blocks boot. Never throws.
+     *  bad file never blocks boot; filesystem and record problems never
+     *  throw. An invalid `maxParseBytes` (non-finite or negative) throws
+     *  TypeError fail-fast instead.
      *
      * With `options.maxParseBytes`, parsing is budget-limited via a stat-only
-     * preselection pass (see {@link LoadAllOptions.maxParseBytes}); skipped
-     * records are not deleted and remain loadable via loadSync(id, hint). */
+     *  preselection pass (see {@link LoadAllOptions.maxParseBytes}); skipped
+     *  records are not deleted and remain loadable via loadSync(id, hint). */
     async loadAll(options?: LoadAllOptions): Promise<Map<string, PersistedEnvelope<T>>> {
         const out = new Map<string, PersistedEnvelope<T>>();
         if (!this.enabled) return out;

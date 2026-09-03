@@ -53,6 +53,12 @@ export interface NudgeState {
    *  tiers. Using a record (not N named fields) so adding tier 4+ needs no
    *  schema change. */
   lastShownByTier: Record<number, number>;
+  /** Lifetime flag: true once ANY nudge has been injected in this state's
+   *  history. Deliberately NOT reset by applyCompression or shrink re-anchor —
+   *  the inherited-ready-mass waiver (first nudge on a fresh/rebuilt state
+   *  sitting on large ready T1) must not re-arm after a nudge was already
+   *  shown, which would defeat post-compress spacing cadence. */
+  everInjected: boolean;
 }
 
 export interface CompressionStats {

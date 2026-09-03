@@ -11,6 +11,7 @@ export function createInitialState(): CompressionState {
       baselineTokens: 0,
       anchors: {},
       lastShownByTier: {},
+      everInjected: false,
     },
     stats: { tokensCompressed: 0, compressionCount: 0, absorbedTokens: 0 },
     absorbed: [],

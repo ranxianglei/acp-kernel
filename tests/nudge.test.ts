@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCore } from "../src/compress.js";
 import { createInitialState } from "../src/state.js";
-import type { Config, CoreMessage } from "../src/types.js";
+import type { Config, CoreMessage, NudgeState } from "../src/types.js";
 
 function buildConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -47,16 +47,74 @@ function makeMessages(count: number): CoreMessage[] {
 // effectiveThreshold (no pending) = 6000
 // effectiveThreshold (pending) = 3000
 
-test("nudge: baseline stamped on first turn, no nudge below threshold", () => {
+// #194: a fresh/rebuilt state ingesting large history sits on ready T1 mass
+// that the growth reference (seeded at current tokenCount) can never count.
+// Pre-fix, the first nudge stalled until a full growthFloor of NEW tokens
+// arrived. The inherited-ready waiver fires the first T1 nudge immediately.
+test("nudge: inherited ready T1 mass waives the growth gate on a fresh state (#194)", () => {
   const core = createCore();
   const config = buildConfig();
   const messages = makeMessages(10);
   const state = createInitialState();
 
+  // ~50K tokens of ready T1, growth since unseeded reference = 0, usage 10%.
   const turn1 = core.processTurn({ messages, state, config, tokenCount: 10000 });
-  assert.equal(turn1.nudge.shouldInject, false);
+  assert.equal(turn1.nudge.shouldInject, true, "inherited ready mass → first nudge fires immediately");
+  assert.equal(turn1.nudge.tier, 1);
+  assert.ok(turn1.nudge.reason.includes("waived"), `reason marks the waiver: ${turn1.nudge.reason}`);
   assert.equal(turn1.state.nudge.lastPerMessageNudgeTokens, 10000, "baseline stamped");
-  assert.equal(turn1.state.nudge.lastNudgeShownTokens, 0, "no nudge shown");
+  assert.equal(turn1.state.nudge.lastNudgeShownTokens, 10000, "shown stamped");
+  assert.equal(turn1.state.nudge.everInjected, true, "lifetime flag armed");
+});
+
+test("nudge: small fresh session below threshold stays quiet", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = Array.from({ length: 10 }, (_, i) =>
+    textMessage(i % 2 === 0 ? "user" : "assistant", `m${i}`, `msg ${i} `.repeat(10)),
+  );
+  const state = createInitialState();
+
+  // ~175 tokens total << 6000 interval → nothing worth offering yet.
+  const turn1 = core.processTurn({ messages, state, config, tokenCount: 10000 });
+  assert.equal(turn1.nudge.shouldInject, false, "pending below interval → no nudge");
+  assert.equal(turn1.state.nudge.lastPerMessageNudgeTokens, 10000, "baseline stamped");
+  assert.equal(turn1.state.nudge.everInjected, false);
+});
+
+test("nudge: stall shape — ready mass reaches interval before floor of NEW growth arrives (#194)", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const small = Array.from({ length: 4 }, (_, i) =>
+    textMessage(i % 2 === 0 ? "user" : "assistant", `m${i}`, `s${i} `.repeat(10)),
+  );
+  let state = core.processTurn({ messages: small, state: createInitialState(), config, tokenCount: 10000 }).state;
+  assert.equal(state.nudge.everInjected, false, "turn 1 too small to inject");
+
+  // Reconnect-style ingest: ~50K ready T1 arrives but only +3000 new tokens
+  // since baseline (< floor 5000). Pre-fix this was the 18-minute idle.
+  const turn2 = core.processTurn({ messages: makeMessages(10), state, config, tokenCount: 13000 });
+  assert.equal(turn2.nudge.shouldInject, true, "ready mass >= interval → waiver despite growth 3000 < floor 5000");
+  assert.equal(turn2.nudge.tier, 1);
+  assert.ok(turn2.nudge.reason.includes("waived"));
+});
+
+test("nudge: legacy snapshot without everInjected and a shown-but-uncompressed nudge does not re-fire (#194 guard)", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = makeMessages(10);
+  let state = createInitialState();
+
+  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  state = core.processTurn({ messages, state, config, tokenCount: 55000 }).state;
+  assert.equal(state.nudge.lastNudgeShownTokens, 55000, "nudge shown, model has not compressed");
+
+  const legacyNudge: NudgeState = { ...state.nudge };
+  delete (legacyNudge as Record<string, unknown>).everInjected;
+  const legacy = { ...state, nudge: legacyNudge };
+
+  const next = core.processTurn({ messages, state: legacy, config, tokenCount: 55000 });
+  assert.equal(next.nudge.shouldInject, false, "!hasPendingNudge guard blocks the waiver on old snapshots");
 });
 
 test("nudge: fires when growth exceeds threshold AND usage over min limit", () => {

@@ -658,6 +658,7 @@ const nudgeNode: PipelineNode = {
 
     if (nudge.shouldInject) {
       stamped.lastNudgeShownTokens = ctx.tokenCount;
+      stamped.everInjected = true;
       // Record the injected tier's own cadence baseline. Shared baseline
       // (lastNudgeShownTokens) suppresses lower-priority tiers within this
       // turn; the per-tier entry throttles re-firing of the SAME tier.
@@ -1187,6 +1188,16 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const t2Count = tiers[2]?.targetBlocks.length ?? 0;
   const t3Count = tiers[3]?.targetBlocks.length ?? 0;
 
+  // Inherited ready-mass waiver (#194): on a fresh/rebuilt state the growth
+  // reference seeds at the CURRENT tokenCount, so history ingested before the
+  // first seed can never count toward growth — the first nudge used to stall
+  // until a full growthFloor of NEW tokens arrived while ready T1 sat idle.
+  // Ready T1 mass at least one full interval large is compressible now; waive
+  // the growth gate for the first injection only. everInjected + !hasPendingNudge
+  // keep this from re-arming after a shown (even ignored) nudge or post-compress.
+  const inheritedReady =
+    !state.nudge.everInjected && !hasPendingNudge && t1Eff >= nudgeGrowthTokens;
+
   if (pressure) {
     // High pressure: pick the tier with the MAX pending so pressure can route
     // to distillation when that reclaims the most tokens. Gated on effective
@@ -1215,10 +1226,11 @@ function decideNudge(input: NudgeInput): NudgeDecision {
           ? `${label} T1: max effective pending ${bestPending}, usage ${Math.round(usage * 100)}%`
           : `${label} T${best} distill: max pending ${bestPending} (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}), usage ${Math.round(usage * 100)}%`;
     }
-  } else if (growthReady) {
+  } else if (growthReady || inheritedReady) {
     if (t1Eff >= nudgeGrowthTokens) {
       injectedTier = 1;
-      injectedReason = `T1 effective ${t1Eff} >= ${nudgeGrowthTokens}, growth ${growthSinceReference}, usage ${Math.round(usage * 100)}%`;
+      const waived = !growthReady;
+      injectedReason = `T1 effective ${t1Eff} >= ${nudgeGrowthTokens}, growth ${growthSinceReference}, usage ${Math.round(usage * 100)}%${waived ? " (growth gate waived: inherited ready mass)" : ""}`;
     } else if (
       config.tiers.enabled &&
       (t2Count >= config.tiers.tier2Trigger ||
@@ -1336,6 +1348,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       hasPendingNudge: hasPendingNudge ? 1 : 0,
       overLimit: overLimit ? 1 : 0,
       emergencyOverride: emergencyOverride ? 1 : 0,
+      inheritedReady: inheritedReady ? 1 : 0,
       pendingT1: tiers[1]!.pending,
       pendingT2: tiers[2]!.pending,
       pendingT3: tiers[3]!.pending,

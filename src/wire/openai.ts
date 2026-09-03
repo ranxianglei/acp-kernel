@@ -64,6 +64,9 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                 break;
             }
             case "user": {
+                // Image-only messages keep text "" (NO "[image]" placeholder as
+                // in the responses/anthropic codecs): image-only msgs already
+                // had "" pre-#187, and switching would shift their derived ids.
                 const text = stringContent(m.content);
                 const imgs = allImageParts(m.content);
                 const firstImg = imgs[0];
@@ -75,8 +78,12 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                     role: "user",
                     contentType: "text",
                     text,
-                    ...(imgs.length === 1 && firstParsed
-                        ? { rawOpenaiContent: imgs[0], imageMediaType: firstParsed.mediaType, imageBase64: firstParsed.base64 }
+                    ...(imgs.length === 1
+                        ? {
+                            rawOpenaiContent: imgs[0],
+                            // data: URLs only — remote URLs ride rawOpenaiContent verbatim (issue #187)
+                            ...(firstParsed ? { imageMediaType: firstParsed.mediaType, imageBase64: firstParsed.base64 } : {}),
+                        }
                         : imgs.length > 1
                             ? { rawOpenaiContentParts: imgs }
                             : {}),
@@ -248,9 +255,10 @@ function stringContent(content: OpenAIMessage["content"]): string {
 
 type OpenAIImagePart = { type: "image_url"; image_url: { url: string } };
 
-/** Collect ALL data-URL image parts in a user content array, in wire order.
- *  (firstImagePart only kept the first, which silently dropped images 2..N
- *  on the coreToOpenai rebuild.) */
+/** Collect ALL image_url parts in a user content array, in wire order —
+ *  data: URLs and remote http(s) URLs alike. (firstImagePart only kept the
+ *  first, silently dropping images 2..N; the data-URL-only filter then
+ *  silently dropped every remote-URL image — issue #187.) */
 function allImageParts(content: OpenAIMessage["content"]): OpenAIImagePart[] {
     if (!Array.isArray(content)) return [];
     const out: OpenAIImagePart[] = [];
@@ -261,7 +269,7 @@ function allImageParts(content: OpenAIMessage["content"]): OpenAIImagePart[] {
         // narrow via a named const before reading the url.
         const imagePart = p as { image_url: { url?: unknown } };
         const url = imagePart.image_url.url;
-        if (typeof url === "string" && parseDataUrl(url)) out.push(p as OpenAIImagePart);
+        if (typeof url === "string") out.push(p as OpenAIImagePart);
     }
     return out;
 }

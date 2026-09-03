@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { anthropicToCore, coreToAnthropic } from "../src/wire/anthropic.js";
 import { openaiToCore, coreToOpenai } from "../src/wire/openai.js";
-import { responsesToCore, coreToResponses } from "../src/wire/responses.js";
+import { responsesToCore, coreToResponses, patchResponsesInput } from "../src/wire/responses.js";
 import type { AnthropicBlock, AnthropicRequestBody } from "../src/wire/anthropic.js";
 import type { OpenAIRequestBody } from "../src/wire/openai.js";
 import type { ResponsesRequestBody } from "../src/wire/responses.js";
@@ -191,6 +191,86 @@ test("openai: user message with multiple image_url parts round-trips ALL images"
     assert.ok(typeof text?.text === "string" && text.text.startsWith("compare these?"), "text preserved");
 });
 
+// 5c. A single REMOTE (non-data) URL image gets no base64 sidecar, so it must
+//     ride rawOpenaiContent verbatim. Previously allImageParts filtered to
+//     data: URLs, so a lone remote-URL image produced NO sidecar at all and
+//     was silently dropped on the coreToOpenai rebuild (issue #187).
+test("openai: single remote-URL image_url round-trips via rawOpenaiContent", () => {
+    const REMOTE_URL = "https://example.com/a.png";
+    const body: OpenAIRequestBody = {
+        messages: [
+            {
+                role: "user",
+                content: [
+                    { type: "text", text: "t" },
+                    { type: "image_url", image_url: { url: REMOTE_URL } },
+                ],
+            },
+        ],
+    };
+    const { msgs } = openaiToCore(body);
+    assert.ok(msgs[0]?.rawOpenaiContent, "rawOpenaiContent sidecar stored for a single remote-URL image");
+    assert.equal(msgs[0]?.imageBase64, undefined, "no base64 split for non-data URLs");
+    assert.equal(msgs[0]?.imageMediaType, undefined, "no mediaType split for non-data URLs");
+    const rebuilt = coreToOpenai(msgs);
+    const u = rebuilt[0]!;
+    assert.ok(Array.isArray(u.content), "content rebuilt as array");
+    const parts = u.content as unknown as { type: string; [k: string]: unknown }[];
+    const img = parts.find((p) => p.type === "image_url") as unknown as { image_url: { url: string } };
+    assert.equal(img?.image_url.url, REMOTE_URL, "remote-URL image restored verbatim");
+    const text = parts.find((p) => p.type === "text");
+    assert.ok(typeof text?.text === "string" && text.text.startsWith("t"), "text preserved");
+});
+
+// 5d. Image-only user message (no text part) with a remote URL: the message
+//     text is empty, so survival depends entirely on the sidecar.
+test("openai: image-only remote-URL user message survives rebuild", () => {
+    const REMOTE_URL = "https://example.com/b.jpg";
+    const body: OpenAIRequestBody = {
+        messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: REMOTE_URL } }] }],
+    };
+    const { msgs } = openaiToCore(body);
+    assert.equal(msgs[0]?.text, "");
+    assert.ok(msgs[0]?.rawOpenaiContent, "sidecar stored despite empty text");
+    const rebuilt = coreToOpenai(msgs);
+    const u = rebuilt[0]!;
+    assert.ok(Array.isArray(u.content), "content rebuilt as array (not an empty string)");
+    const parts = u.content as unknown as { type: string; [k: string]: unknown }[];
+    assert.equal(parts.length, 1, "exactly one part — no empty text part injected");
+    const img = parts[0] as unknown as { type: string; image_url: { url: string } };
+    assert.equal(img.type, "image_url");
+    assert.equal(img.image_url.url, REMOTE_URL);
+});
+
+// 5e. Mixed data-URL + remote-URL multi-image message: allImageParts used to
+//     keep only data-URL parts, so the remote one vanished from
+//     rawOpenaiContentParts (wider gap than the single-image case).
+test("openai: mixed data-URL + remote-URL multi-image message preserves ALL images in order", () => {
+    const REMOTE_URL = "https://example.com/c.webp";
+    const body: OpenAIRequestBody = {
+        messages: [
+            {
+                role: "user",
+                content: [
+                    { type: "text", text: "both?" },
+                    { type: "image_url", image_url: { url: DATA_URL } },
+                    { type: "image_url", image_url: { url: REMOTE_URL } },
+                ],
+            },
+        ],
+    };
+    const { msgs } = openaiToCore(body);
+    assert.ok(msgs[0]?.rawOpenaiContentParts, "multi-image sidecar stored");
+    assert.equal((msgs[0]?.rawOpenaiContentParts ?? []).length, 2, "BOTH images collected (remote included)");
+    const rebuilt = coreToOpenai(msgs);
+    const u = rebuilt[0]!;
+    const parts = u.content as unknown as { type: string; [k: string]: unknown }[];
+    const imgs = parts.filter((p) => p.type === "image_url");
+    assert.equal(imgs.length, 2, "all 2 image_url parts preserved");
+    const urls = imgs.map((p) => (p as unknown as { image_url: { url: string } }).image_url.url);
+    assert.deepEqual(urls, [DATA_URL, REMOTE_URL], "order preserved");
+});
+
 // 6. Responses API input_image round-trips (image was previously dropped).
 test("responses: user input_image is restored via rawResponsesItem", () => {
     const body: ResponsesRequestBody = {
@@ -219,6 +299,117 @@ test("responses: user input_image is restored via rawResponsesItem", () => {
     const img = parts.find((p) => p.type === "input_image");
     assert.ok(img, "input_image reconstructed");
     assert.equal(img?.image_url, DATA_URL, "image url restored");
+});
+
+// 6b. Image-ONLY user item (no input_text) previously produced NO core
+//     message at all (effText === ""), so coreToResponses never saw it and
+//     the item vanished from the rebuilt input (issue #187). It must be
+//     tracked with the "[image]" placeholder (anthropic codec precedent) and
+//     re-emitted verbatim via rawResponsesItem while unmodified.
+test("responses: image-only user item is tracked and round-trips verbatim", () => {
+    const body: ResponsesRequestBody = {
+        input: [{ type: "message", role: "user", content: [{ type: "input_image", image_url: DATA_URL }] }],
+    };
+    const { msgs } = responsesToCore(body);
+    assert.equal(msgs.length, 1, "image-only item produces exactly one core message");
+    assert.equal(msgs[0]?.text, "[image]", "placeholder text used for identity + display");
+    assert.ok(msgs[0]?.rawResponsesItem, "rawResponsesItem sidecar stored");
+    assert.equal(msgs[0]?.imageMediaType, "image/png", "data-URL sidecar fields still populated");
+    assert.equal(msgs[0]?.imageBase64, IMG_DATA);
+    const rebuilt = coreToResponses(msgs);
+    assert.equal(rebuilt.length, 1);
+    assert.deepEqual(rebuilt[0], body.input[0], "raw item re-emitted verbatim (images intact)");
+});
+
+// 6c. The tracked image-only item must survive patchResponsesInput (the
+//     host-rebuild path) AND disappear when its id leaves msgs[] — i.e. it
+//     participates in compression like any other message. Before the fix it
+//     was only kept by the layout fallback (untracked → invisible to the
+//     compression pipeline, accumulating unbounded).
+test("responses: image-only item survives patchResponsesInput and prunes with its turn", () => {
+    const body: ResponsesRequestBody = {
+        input: [
+            { type: "message", role: "user", content: [{ type: "input_image", image_url: DATA_URL }] },
+            { type: "message", role: "assistant", content: "got it" },
+        ],
+    };
+    const proj = responsesToCore(body);
+    assert.equal(proj.msgs.length, 2, "both items tracked");
+    const imgMsg = proj.msgs.find((m) => m.text === "[image]")!;
+    assert.ok(imgMsg, "image-only item has a tracked core id");
+    const kept = patchResponsesInput(proj, proj.msgs);
+    assert.ok(JSON.stringify(kept).includes(DATA_URL), "image survives the patch rebuild");
+    const pruned = patchResponsesInput(proj, proj.msgs.filter((m) => m.id !== imgMsg.id));
+    assert.ok(!JSON.stringify(pruned).includes(DATA_URL), "pruning the id removes the image from the rebuild");
+});
+
+// 6d. Two identical image-only items must get distinct but STABLE ids across
+//     turns (ClusterCounter disambiguation), so a later turn cannot collapse
+//     or misalign them.
+test("responses: image-only item ids are stable and distinct across turns", () => {
+    const first: ResponsesRequestBody = {
+        input: [
+            { type: "message", role: "user", content: [{ type: "input_image", image_url: DATA_URL }] },
+            { type: "message", role: "assistant", content: "ok" },
+        ],
+    };
+    const second: ResponsesRequestBody = {
+        input: [
+            ...first.input,
+            { type: "message", role: "user", content: [{ type: "input_image", image_url: DATA_URL }] },
+            { type: "message", role: "assistant", content: "ok again" },
+        ],
+    };
+    const a = responsesToCore(first);
+    const b = responsesToCore(second);
+    const idsA = a.msgs.map((m) => m.id);
+    const idsB = b.msgs.map((m) => m.id);
+    assert.deepEqual(idsA.slice(0, 2), idsB.slice(0, 2), "earlier ids unchanged by later turns");
+    const imgIds = b.msgs.filter((m) => m.text === "[image]").map((m) => m.id);
+    assert.equal(new Set(imgIds).size, 2, "identical image-only items get distinct ids");
+});
+
+// 6e. MULTI-part image-only item: joining N−1 empty part texts yields a
+//     truthy "\n", which is not real text — it must still take the "[image]"
+//     placeholder (and keep matching canonicalUserText verbatim).
+test("responses: multi-input_image user item takes the [image] placeholder", () => {
+    const DATA_URL2 = `data:image/png;base64,${IMG_DATA}AAAA`;
+    const body: ResponsesRequestBody = {
+        input: [{ type: "message", role: "user", content: [{ type: "input_image", image_url: DATA_URL }, { type: "input_image", image_url: DATA_URL2 }] }],
+    };
+    const { msgs } = responsesToCore(body);
+    assert.equal(msgs.length, 1);
+    assert.equal(msgs[0]?.text, "[image]", "no-text multi-image item uses the placeholder (not the \"\\n\" join artifact)");
+    const rebuilt = coreToResponses(msgs);
+    assert.deepEqual(rebuilt[0], body.input[0], "raw item re-emitted verbatim");
+});
+
+// 6f. Whitespace-only text + image: the whitespace IS real text (a text part
+//     exists), so it must be kept as-is — both responsesToCore and
+//     canonicalUserText must agree on it for the verbatim round-trip to hold.
+test("responses: whitespace-only text plus image keeps its exact text", () => {
+    const body: ResponsesRequestBody = {
+        input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "   " }, { type: "input_image", image_url: DATA_URL }] }],
+    };
+    const { msgs } = responsesToCore(body);
+    assert.equal(msgs.length, 1);
+    assert.notEqual(msgs[0]?.text, "[image]", "whitespace text counts as real text, not the placeholder");
+    assert.ok(msgs[0]?.text?.startsWith("   "), "exact whitespace text preserved (kernel joins non-text parts with \\n)");
+    const rebuilt = coreToResponses(msgs);
+    assert.deepEqual(rebuilt[0], body.input[0], "verbatim round-trip holds for truthy-blank text");
+});
+
+// 6g. Image part whose image_url is malformed (non-string): still tracked and
+//     re-emitted verbatim; no base64 sidecar fields.
+test("responses: input_image with non-string image_url is tracked without sidecar fields", () => {
+    const badPart = { type: "input_image", image_url: { not: "a string" } } as unknown as { type: string; [k: string]: unknown };
+    const body = { input: [{ type: "message", role: "user", content: [badPart] }] } as unknown as ResponsesRequestBody;
+    const { msgs } = responsesToCore(body);
+    assert.equal(msgs.length, 1, "tracked despite malformed url");
+    assert.equal(msgs[0]?.text, "[image]");
+    assert.equal(msgs[0]?.imageBase64, undefined, "no base64 split for non-string urls");
+    const rebuilt = coreToResponses(msgs);
+    assert.deepEqual(rebuilt[0], body.input[0], "malformed item re-emitted verbatim");
 });
 
 // 7. Responses reasoning is routed into the compression pipeline (NOT the

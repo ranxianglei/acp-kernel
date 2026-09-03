@@ -106,6 +106,19 @@ function messageContent(content: string | ResponseContentPart[]): string {
     return typeof content === "string" ? content : content.map(partText).join("\n");
 }
 
+/** Kernel-side text responsesToCore assigns to a user item: its content
+ *  text, or the "[image]" placeholder when no text part exists (image-only
+ *  items — note ≥2 image parts join into a truthy "\n" that is not text).
+ *  coreToResponses re-emits the raw item verbatim exactly while the kernel
+ *  text still equals this form. MUST stay in lockstep with the displayText
+ *  computation in responsesToCore or the verbatim equality silently breaks. */
+function canonicalUserText(message: ResponseInputMessage): string {
+    const contentText = messageContent(message.content);
+    const hasImage = Array.isArray(message.content) && message.content.some((part) => part.type === "input_image");
+    const hasTextPart = typeof message.content !== "string" && message.content.some((part) => part.type === "input_text" || part.type === "output_text");
+    return !contentText || (hasImage && !hasTextPart) ? "[image]" : contentText;
+}
+
 /** Extract the reasoning text from a responses reasoning item. The host
  *  carries it in `content` (reasoning_text parts); the primeFold mirror
  *  carries it in `summary` (summary_text parts). Both must yield the same
@@ -203,8 +216,18 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
                             effText = split.text;
                         }
                     }
-                    if (effText) {
-                        coreId = clusters.next(deriveMessageId(role, "text", effText));
+                    // Image-only user items have no text of their own (≥2 image
+                    // parts join to a truthy "\n" — not real text). Track them
+                    // with the "[image]" placeholder (anthropic codec precedent)
+                    // so they enter the compression space instead of vanishing
+                    // from the rebuilt input (issue #187). displayText derives
+                    // from effText (post-split); the placeholder applies only
+                    // when no real text part exists.
+                    const hasImage = Array.isArray(message.content) && message.content.some((part) => part.type === "input_image");
+                    const hasTextPart = typeof message.content !== "string" && message.content.some((part) => part.type === "input_text" || part.type === "output_text");
+                    if (effText || (role === "user" && hasImage)) {
+                        const displayText = !effText || (role === "user" && hasImage && !hasTextPart) ? "[image]" : effText;
+                        coreId = clusters.next(deriveMessageId(role, "text", displayText));
                         const imageUrl = Array.isArray(message.content)
                             ? message.content.find((part) => part.type === "input_image" && typeof part.image_url === "string")?.image_url
                             : undefined;
@@ -213,7 +236,7 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
                             id: coreId,
                             role,
                             contentType: "text",
-                            text: effText,
+                            text: displayText,
                             rawResponsesItem: item,
                             ...(image ? { imageMediaType: image.mediaType, imageBase64: image.base64 } : {}),
                         });
@@ -385,7 +408,7 @@ export function coreToResponses(
         if (message.role === "system") {
             out.push({ type: "message", role: "developer", content: message.text ?? "" });
         } else if (message.role === "user") {
-            if (raw?.type === "message" && messageContent((raw as ResponseInputMessage).content) === (message.text ?? "")) out.push(raw);
+            if (raw?.type === "message" && canonicalUserText(raw as ResponseInputMessage) === (message.text ?? "")) out.push(raw);
             else out.push({ type: "message", role: "user", content: message.text ?? "" });
         } else if (message.role === "assistant") {
             if (message.contentType === "text") {

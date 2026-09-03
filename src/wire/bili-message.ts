@@ -55,8 +55,8 @@ export interface BiliMessage extends CoreMessage {
     /** The base64 data of an image (without the data: prefix). Lets the
      *  reverse conversion rebuild the full image payload. */
     imageBase64?: string;
-    /** OpenAI chat: ALL original image_url content parts (each a data: URL
-     *  part) for a user message carrying more than one image, in wire order.
+    /** OpenAI chat: ALL original image_url content parts (data: or remote
+     *  URL) for a user message carrying more than one image, in wire order.
      *  coreToOpenai re-emits these verbatim (after the text part). The
      *  singular `rawOpenaiContent` still covers the single-image case and
      *  legacy persisted state. Typed as unknown[] (not OpenAIContentPart) to

@@ -780,3 +780,67 @@ test("nudge: first-sight bypass paces normally after the first nudge (#194)", ()
     "post-nudge growth 4000 < floor 10000 → paced again, no bypass",
   );
 });
+
+// #194 regression: the bypass must keep draining a backlog across compressions.
+// The reviewer on PR #196 caught that the one-shot wording hid this path:
+// applyCompression success clears the shown stamp and baseline, so a session
+// still in band with ready mass over the threshold nudges AGAIN without
+// waiting for a fresh growth floor of new tokens. This is the load-bearing
+// behavior for #351 (934K backlog needs several compressions to drain).
+test("nudge: first-sight bypass re-arms after a successful compression while still in band (#194)", () => {
+  const core = createCore();
+  const config = buildConfig({
+    nudge: {
+      ...buildConfig().nudge,
+      minGrowthFloor: 10000,
+      minGrowthRatio: 0.9,
+    },
+  });
+  const messages = makeMessages(20);
+  let state = createInitialState();
+
+  const turn1 = core.processTurn({ messages, state, config, tokenCount: 47000 });
+  assert.equal(turn1.nudge.shouldInject, true, "big ingest in band fires");
+  assert.match(turn1.nudge.reason, /\[first-sight mass\]/);
+
+  // Model executes the compress → success clears baseline + shown stamps.
+  state = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00005", summary: "drained a slice of the backlog" }],
+    messages,
+    state: turn1.state,
+    config,
+  }).state;
+  assert.equal(state.nudge.lastNudgeShownTokens, 0, "shown cleared by the compression");
+
+  // Still in band (48%) with growth 0 post-compress: the backlog is not yet
+  // drained, so the bypass must fire again — NOT wait for 10000 new tokens.
+  const turn2 = core.processTurn({ messages, state, config, tokenCount: 48000 });
+  assert.equal(
+    turn2.nudge.shouldInject,
+    true,
+    "post-compress, still in band + ready mass → nudge again (drain semantics)",
+  );
+  assert.match(turn2.nudge.reason, /\[first-sight mass\]/);
+});
+
+// Companion: once the drain gets usage below the band, the bypass goes quiet
+// even though growth is still 0 — it must not become an always-on compressor.
+test("nudge: first-sight bypass falls silent once usage drops below the band (#194)", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = makeMessages(20);
+  let state = createInitialState();
+
+  const turn1 = core.processTurn({ messages, state, config, tokenCount: 55000 });
+  assert.equal(turn1.nudge.shouldInject, true);
+
+  state = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00005", summary: "drained most of the backlog" }],
+    messages,
+    state: turn1.state,
+    config,
+  }).state;
+
+  const turn2 = core.processTurn({ messages, state, config, tokenCount: 20000 });
+  assert.equal(turn2.nudge.shouldInject, false, "20% < 45% band → drain complete, pacing resumes");
+});

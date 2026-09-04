@@ -1173,12 +1173,14 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   // (stateless full-history ingest / restored state) shows growthSinceReference
   // ≈ 0 and waits for a full floor of NEW tokens before its first compress —
   // #351 sat 934K-ready for 18 idle minutes and died ~4 min short of the floor.
-  // The floor paces REPEATED nudges; it must not gate the first one. Bypass it
-  // only while the session has never been nudged (baseline AND shown unstamped)
-  // and only inside the normal nudge band (usage >= minContextLimitPct — a
-  // fresh small session below the band still waits, as before) and only when
-  // the effective ready mass already clears the normal threshold, so the tier
-  // branches below apply unchanged.
+  // The floor paces WITHIN a backlog; it must not gate draining one. The bypass
+  // re-arms after every SUCCESSFUL compression (which clears the baseline):
+  // still-in-band with ready mass over threshold keeps nudging the backlog
+  // down, one compress per re-fire — no growth debt between compressions.
+  // Guardrails: while the model IGNORES a nudge the shown stamp stays set, so
+  // this never re-fires on an unresponsive session; a fresh session below the
+  // usage band still waits, as before; and the tier branches below apply
+  // unchanged.
   const firstSightMassReady =
     state.nudge.lastNudgeShownTokens === 0 &&
     baseline === 0 &&

@@ -1165,10 +1165,29 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   );
   let injectedTier: CompressionTier | null = null;
   let injectedReason = "";
-  const growthReady = growthSinceReference >= growthFloor;
   const t1Eff = tiers[1]?.pending ?? 0;
   const t2Pen = tiers[2]?.pending ?? 0;
   const t3Pen = tiers[3]?.pending ?? 0;
+  // First-sight mass bypass (#194): growthReference seeds to tokenCount when
+  // no baseline exists, so a session that ARRIVES with a huge ready mass
+  // (stateless full-history ingest / restored state) shows growthSinceReference
+  // ≈ 0 and waits for a full floor of NEW tokens before its first compress —
+  // #351 sat 934K-ready for 18 idle minutes and died ~4 min short of the floor.
+  // The floor paces WITHIN a backlog; it must not gate draining one. The bypass
+  // re-arms after every SUCCESSFUL compression (which clears the baseline):
+  // still-in-band with ready mass over threshold keeps nudging the backlog
+  // down, one compress per re-fire — no growth debt between compressions.
+  // Guardrails: while the model IGNORES a nudge the shown stamp stays set, so
+  // this never re-fires on an unresponsive session; a fresh session below the
+  // usage band still waits, as before; and the tier branches below apply
+  // unchanged.
+  const firstSightMassReady =
+    state.nudge.lastNudgeShownTokens === 0 &&
+    baseline === 0 &&
+    usage >= config.nudge.minContextLimitPct &&
+    Math.max(t1Eff, t2Pen, t3Pen) >= nudgeGrowthTokens;
+  const growthReady =
+    firstSightMassReady || growthSinceReference >= growthFloor;
   const t2Count = tiers[2]?.targetBlocks.length ?? 0;
   const t3Count = tiers[3]?.targetBlocks.length ?? 0;
 
@@ -1238,6 +1257,9 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   }
 
   const shouldInject = injectedTier !== null;
+  if (shouldInject && firstSightMassReady) {
+    injectedReason += " [first-sight mass]";
+  }
 
   let reason: string;
   if (injectedTier !== null) {

@@ -90,6 +90,19 @@ test("validateConfig flags min > max nudge thresholds", () => {
   assert.ok(validateConfig(base).some((e) => e.includes("minContextLimitPct")));
 });
 
+test("validateConfig flags negative or non-finite minPressureBenefitTokens", () => {
+  const base = defaultConfig(200000);
+  base.nudge.minPressureBenefitTokens = -1;
+  assert.ok(validateConfig(base).some((e) => e.includes("minPressureBenefitTokens")));
+  base.nudge.minPressureBenefitTokens = Number.NaN;
+  assert.ok(validateConfig(base).some((e) => e.includes("minPressureBenefitTokens")));
+});
+
+test("validateConfig accepts explicit minPressureBenefitTokens override", () => {
+  const cfg = defaultConfig(200000, { nudge: { minPressureBenefitTokens: 0 } });
+  assert.deepEqual(validateConfig(cfg), []);
+});
+
 test("validateConfig passes for default config", () => {
   assert.deepEqual(validateConfig(defaultConfig(200000)), []);
 });

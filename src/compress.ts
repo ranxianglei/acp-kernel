@@ -1069,6 +1069,22 @@ function resolveAdaptiveGrowth(
   );
 }
 
+/** Minimum reclaimable tokens for a pressure-band nudge to be worth injecting.
+ *  A sub-threshold rewrite (e.g. re-distilling a 232-token summary at near-
+ *  equal size) resets the nudge baselines on success, re-arming the still-hot
+ *  band next turn — a zero-yield loop (#198). Scales with the window so an
+ *  inflated host tokenCount can never make a tiny pending look actionable:
+ *  max(5000, round(limit × 0.01)); explicit 0 restores legacy any-pending. */
+function resolveMinPressureBenefit(
+  modelContextLimit: number,
+  nudge: NudgeConfig,
+): number {
+  return (
+    nudge.minPressureBenefitTokens ??
+    Math.max(5000, Math.round(modelContextLimit * 0.01))
+  );
+}
+
 /** Compressible amount for each tier. T1 = EFFECTIVE merged-range tokens —
  *  only ranges whose real char count >= minCompressRange count (avoids
  *  inflation from fragmentation; matches the apply-side gate, which counts
@@ -1115,6 +1131,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const usage = limit > 0 ? tokenCount / limit : 0;
 
   const nudgeGrowthTokens = resolveAdaptiveGrowth(limit, config.nudge);
+  const minPressureBenefit = resolveMinPressureBenefit(limit, config.nudge);
 
   const overLimit = usage >= config.nudge.maxContextLimitPct;
   const emergencyOverride = usage >= config.nudge.emergencyThresholdPct;
@@ -1165,6 +1182,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   );
   let injectedTier: CompressionTier | null = null;
   let injectedReason = "";
+  let bestPending = 0;
   const t1Eff = tiers[1]?.pending ?? 0;
   const t2Pen = tiers[2]?.pending ?? 0;
   const t3Pen = tiers[3]?.pending ?? 0;
@@ -1203,7 +1221,6 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       candidates.push(2, 3);
     }
     let best: CompressionTier | null = null;
-    let bestPending = 0;
     for (const t of candidates) {
       const p = tiers[t]?.pending ?? 0;
       if (p > bestPending) {
@@ -1211,7 +1228,10 @@ function decideNudge(input: NudgeInput): NudgeDecision {
         best = t;
       }
     }
-    if (best !== null && bestPending > 0) {
+    // Minimum-benefit gate (#198): a sub-threshold pending can never look
+    // actionable, no matter how hot the band is — otherwise every "success"
+    // resets the baselines and the same EMERGENCY nudge re-injects each turn.
+    if (best !== null && bestPending >= minPressureBenefit) {
       injectedTier = best;
       const label = emergencyOverride ? "EMERGENCY" : "OVER-LIMIT";
       injectedReason =
@@ -1266,7 +1286,10 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     reason = injectedReason;
   } else if (pressure) {
     const label = emergencyOverride ? "EMERGENCY" : "OVER-LIMIT";
-    reason = `${label}: usage ${Math.round(usage * 100)}% but no tier has effective compressible content (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — nudge suppressed to avoid offering ranges below minCompressRange`;
+    reason =
+      bestPending === 0
+        ? `${label}: usage ${Math.round(usage * 100)}% but no tier has effective compressible content (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — nudge suppressed to avoid offering ranges below minCompressRange`
+        : `${label}: usage ${Math.round(usage * 100)}% but max pending ${bestPending} < min benefit ${minPressureBenefit} tokens (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — suppressed: rewriting below the benefit floor reclaims almost nothing while usage stays high; truncate.threshold remains the safety valve`;
    } else {
     const tiersList = [1, 2, 3] as const;
     const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
@@ -1343,6 +1366,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       hasPendingNudge: hasPendingNudge ? 1 : 0,
       overLimit: overLimit ? 1 : 0,
       emergencyOverride: emergencyOverride ? 1 : 0,
+      minPressureBenefit,
       pendingT1: tiers[1]!.pending,
       pendingT2: tiers[2]!.pending,
       pendingT3: tiers[3]!.pending,

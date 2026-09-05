@@ -135,7 +135,8 @@ test("compressibleRanges use real assigned refs, not array-index arithmetic", ()
   const result = core.processTurn({
     messages,
     state,
-    config: config({ protectedTools: ["skill"], preserveRecentMessages: 2, nudge: { ...config().nudge, growthRatio: 0 } }),
+    // minPressureBenefitTokens: 0 = legacy any-pending pressure injection; this test exercises ref assignment, not the #198 benefit gate.
+    config: config({ protectedTools: ["skill"], preserveRecentMessages: 2, nudge: { ...config().nudge, growthRatio: 0, minPressureBenefitTokens: 0 } }),
     tokenCount: 99000,
   });
 
@@ -167,10 +168,11 @@ test("processTurn does not mutate the caller's input state.nudge", () => {
   assert.equal(baselineBefore, 0);
   assert.equal(shownBefore, 0);
 
+  // minPressureBenefitTokens: 0 = legacy any-pending pressure injection; this test exercises input-state immutability, not the #198 benefit gate.
   const result = core.processTurn({
     messages,
     state,
-    config: config({ nudge: { ...config().nudge, growthRatio: 0 } }),
+    config: config({ nudge: { ...config().nudge, growthRatio: 0, minPressureBenefitTokens: 0 } }),
     tokenCount: 99000,
   });
 
@@ -273,7 +275,8 @@ test("composable pipeline excluding sync-blocks must not leak nudge mutations to
   const core = createCore();
   const state = createInitialState();
   const messages = [msg("a", "hello"), msg("b", "world")];
-  const cfg = config({ nudge: { ...config().nudge, growthRatio: 0 } });
+  // minPressureBenefitTokens: 0 = legacy any-pending pressure injection; this test exercises pipeline composition, not the #198 benefit gate.
+  const cfg = config({ nudge: { ...config().nudge, growthRatio: 0, minPressureBenefitTokens: 0 } });
 
   const nodes = core
     .defaultNodes()

@@ -1,4 +1,5 @@
 import { refForRaw } from "./refs.js";
+import { isToolMessage } from "./recommend.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "./types.js";
 
 function formatTokens(n: number): string {
@@ -8,7 +9,7 @@ function formatTokens(n: number): string {
 
 function pct(n: number, total: number): number {
     if (n <= 0 || total <= 0) return 0;
-    return Math.max(1, Math.round((n / total) * 100));
+    return Math.round((n / total) * 100);
 }
 
 function numericPart(blockId: string): number {
@@ -78,12 +79,24 @@ function collectVisible(
         if (block.active) summaryTokens += summaryTokensOf(block, countTokens);
     }
     const visible: VisibleMessageInfo[] = [];
+    // Tool RESULTS carry no toolName of their own — resolve them through
+    // their call so the tool bucket attributes result payload (#386: with
+    // `toolName ?? "text"` every tool-result landed in the text bucket and
+    // the tool bucket showed ~0.6% of the real volume).
+    const toolCallNames = new Map<string, string>();
+    for (const message of messages) {
+        if (message.contentType === "tool-call" && message.toolCallId && message.toolName) {
+            toolCallNames.set(message.toolCallId, message.toolName);
+        }
+    }
     messages.forEach((message, index) => {
         if (coveredIds.has(message.id)) return;
         const ref = refForRaw(state.messageRefs, message.id);
         if (!ref) return;
         const tokens = countTokens(message.text ?? "");
-        const tool = message.toolName ?? "text";
+        const tool = isToolMessage(message)
+            ? message.toolName ?? (message.toolCallId ? toolCallNames.get(message.toolCallId) : undefined) ?? "tool"
+            : "text";
         if (tokens > 0) visible.push({ ref, tokens, tool, index });
     });
     return { visible, summaryTokens };
@@ -213,10 +226,21 @@ function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
     // Merge consecutive messages into ranges (by numeric ref), aggregating
     // token counts and dominant tool so the view reads as blocks, not a
     // per-message firehose — mirroring the Compressible Ranges output.
-    interface Merged { startRef: string; endRef: string; startNum: number; count: number; tokens: number; tool: string; }
+    interface Merged { startRef: string; endRef: string; startNum: number; count: number; tokens: number; toolTokens: Map<string, number>; }
     const refNum = (ref: string): number => {
         const m = ref.match(/\d+/);
         return m ? parseInt(m[0], 10) : 0;
+    };
+    const dominantTool = (toolTokens: Map<string, number>): string => {
+        let best = "text";
+        let bestN = -1;
+        for (const [tool, n] of toolTokens) {
+            if (n > bestN) {
+                best = tool;
+                bestN = n;
+            }
+        }
+        return best;
     };
     const merged: Merged[] = [];
     for (const m of visible) {
@@ -226,13 +250,15 @@ function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
             last.endRef = m.ref;
             last.count += 1;
             last.tokens += m.tokens;
+            last.toolTokens.set(m.tool, (last.toolTokens.get(m.tool) ?? 0) + m.tokens);
         } else {
-            merged.push({ startRef: m.ref, endRef: m.ref, startNum: num, count: 1, tokens: m.tokens, tool: m.tool });
+            const toolTokens = new Map<string, number>([[m.tool, m.tokens]]);
+            merged.push({ startRef: m.ref, endRef: m.ref, startNum: num, count: 1, tokens: m.tokens, toolTokens });
         }
     }
     for (const r of merged.slice(0, 30)) {
         const range = r.count === 1 ? r.startRef : `${r.startRef}–${r.endRef}`;
-        lines.push(`  ${range}  (${r.count} msgs, ${formatTokens(r.tokens)}${r.count > 1 ? ` (${Math.round(r.tokens / r.count)}/msg)` : ""}) ${r.tool}`);
+        lines.push(`  ${range}  (${r.count} msgs, ${formatTokens(r.tokens)}${r.count > 1 ? ` (${Math.round(r.tokens / r.count)}/msg)` : ""}) ${dominantTool(r.toolTokens)}`);
     }
     if (merged.length > 30) {
         lines.push(`  ... and ${merged.length - 30} more ranges`);

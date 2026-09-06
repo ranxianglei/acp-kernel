@@ -2,7 +2,11 @@
  * Compression rule texts — VERBATIM copy from context-compress-algorithms (MIT, ours).
  * These were tuned over months of production use.
  *
- * DO NOT modify the wording — it is the result of extensive tuning.
+ * 2026-09-06 amendment (owner-approved; billion-context-pi#309 incident): write-side
+ * quote-fidelity rules merged INTO the tuned text. Verbatim user quotes now require
+ * a message ref; recorded task state is labeled as history; unicode written directly.
+ * Motivation: session 01a071dc blocks b60/b61 stored a fabricated
+ * `user verbatim '合并了 下一个'` as a live "CURRENT TASK", causing loop relapses.
  */
 
 export const COMPRESS_PHILOSOPHY = `Compression Philosophy:
@@ -13,7 +17,7 @@ export const COMPRESS_PHILOSOPHY = `Compression Philosophy:
 
 export const HOW_TO_COMPRESS_RULES = `HOW TO COMPRESS
 
-When you call \`compress\`, the summary you write becomes the only record of the replaced conversation. Make it self-contained and complete: every user request, experiment purpose, and work task in the range must be accurately captured. A later reader (or you, after decompressing) should be able to continue the task WITHOUT needing the original.
+When you call \`compress\`, the summary you write becomes the only record of the replaced conversation. Make it self-contained and complete: every user request, experiment purpose, and work task in the range must be accurately captured. A later reader (or you, after decompressing) should be able to continue the task WITHOUT needing the original. The summary records the PAST as of this block's creation: label recorded task state as history ("TASK AS OF THIS BLOCK: ...") — never as a live instruction, so a later reader treats it as settled context, not something to re-execute. Write plain text with real unicode characters; never copy \\uXXXX escape sequences or JSON-escaped fragments out of tool output.
 
 KEEP VERBATIM — never paraphrase or abbreviate these:
 - Full file paths with line numbers, directory prefix on every mention (\`lib/hooks.ts:347\`, \`src/index.ts:12-18\`, \`gatenet_v3/model.py:45\`). Never abbreviate to a bare filename (\`hooks.ts\`, \`model.py\`) — they are ambiguous and cannot be grepped or decompressed-to later.
@@ -23,7 +27,7 @@ KEEP VERBATIM — never paraphrase or abbreviate these:
 - Decisions and their rationale ("chose X over Y because Z" — the "because" is load-bearing; without it the decision looks arbitrary).
 - Constraints discovered ("must support Node 22", "no new dependencies", "AGENTS.md forbids \`as any\`").
 - Exact values: versions, config keys, thresholds, magic numbers.
-- User intent — quote short user messages verbatim. When the message is too long to quote, preserve intent with extra care: do not change scope, constraints, priorities, acceptance criteria, or requested outcomes. Mark them clearly as past quotes (e.g., "User said: ..."), not as current directives. Losing these changes the task itself.
+- User intent — quote short user messages verbatim ONLY WITH their message ref, e.g. \`User said (m00132): "ship it tonight"\`. Without a verifiable ref, paraphrase (\`user previously asked (paraphrased): ...\`) — this is the one exception to the verbatim rule above; never present a reconstructed or half-remembered phrase as a verbatim quote. When the message is too long to quote, preserve intent with extra care: do not change scope, constraints, priorities, acceptance criteria, or requested outcomes. Quotes are historical records, never current directives. Losing these changes the task itself.
 - The user's overall goal and any changes to it — the big-picture objective plus how it evolved during the compressed range. Each summary must reflect the goal as it stood at the end of the range, including pivots (e.g., "initially: fix bug X → pivoted to: refactor module Y after discovering root cause"). Losing the goal or its evolution makes all subsequent work appear unmotivated.
 - Purpose behind each significant action — preserve not just what was done but why: the hypothesis behind each experiment, the question behind each exploration, the task goal behind each work action. Without purpose, the summary reads as disconnected technical steps with no through-line.
 - Open questions and unresolved TODOs — losing these changes what work appears to remain.
@@ -58,6 +62,7 @@ KEEP — these are the only things that survive distillation:
 - Key lessons: what failed and why ("tried X, failed because Y"). These prevent repeating mistakes.
 - Critical constraints discovered ("must support Node 22", "AGENTS.md forbids as any").
 - Design decisions with architectural impact ("chose compress-as-anchor over synthetic messages because prefix cache").
+- User quotes and task state only as attributed history: keep the source ref with any user quote; never carry a tier-1 "CURRENT TASK" claim forward as a live directive — relabel it "TASK AS OF THIS BLOCK".
 - Whether content is OBSOLETE or SUPERSEDED — mark with one line: "[SUPERSEDED by PR #NNN]" or "[OBSOLETE: deleted in vX.Y.Z]". Do NOT keep the obsolete content's details — just the marker and reason.
 - Function/class/type names and module paths that are the SUBJECT of the work — e.g., "fixed filterCompressedRanges in prune.ts", "added SessionStateRegistry in state.ts". Not exact line numbers or full signatures — just enough to LOCATE the code without searching.
 - Exploration findings: if a block was exploratory with no decision, keep the CONCLUSION in one line ("explored X, not viable because Y"). Do not keep the exploration process.

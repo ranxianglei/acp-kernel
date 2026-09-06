@@ -28,11 +28,6 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function refNum(ref: string): number {
-  const n = parseInt(ref.slice(1), 10);
-  return Number.isNaN(n) ? -1 : n;
-}
-
 /** Default token estimate (chars/4) used when the caller doesn't inject a
  *  countTokens — preserves the historical behavior for backwards compat. */
 function estimateTextTokens(text: string): number {
@@ -153,7 +148,7 @@ export function buildCompressibleRanges(
 ): ContextRanges {
   const compressibleMsgs: {
     ref: string;
-    refNum: number;
+    gapBefore: boolean;
     tokens: number;
     chars: number;
     isTool: boolean;
@@ -161,7 +156,7 @@ export function buildCompressibleRanges(
   }[] = [];
   const protectedMsgs: {
     ref: string;
-    refNum: number;
+    gapBefore: boolean;
     tokens: number;
     tools: string[];
   }[] = [];
@@ -170,54 +165,68 @@ export function buildCompressibleRanges(
   // callIds of protected tool-calls first, then protect matching results too.
   const protectedCallIds = collectProtectedToolCallIds(messages, config);
 
+  // Segmentation is array adjacency, never ref arithmetic: surface-replacing
+  // hosts leave holes in the ref map (compressed messages leave the array, refs
+  // stay assigned) and insert mid-array summary nodes with fresh HIGH refs —
+  // ref arithmetic fragments every range there and emits startRef > endRef
+  // pairs. Only a numbered-ref message physically skipped between two entries
+  // interrupts; unrefed/BLOCKED consume no slot. On dense append-only hosts the
+  // two rules coincide, so ranges are byte-identical to the old behavior.
+  let skipSinceCompressible = false;
+  let skipSinceProtected = false;
+
   for (const msg of messages) {
-    if (isSyntheticOrPruned(msg, state)) continue;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
-
-    const rn = refNum(ref);
+    if (isSyntheticOrPruned(msg, state)) {
+      skipSinceCompressible = true;
+      skipSinceProtected = true;
+      continue;
+    }
 
     if (isMessageProtectedWithPairing(msg, config, protectedCallIds)) {
       protectedMsgs.push({
         ref,
-        refNum: rn,
+        gapBefore: skipSinceProtected,
         tokens: countTokens(msg.text ?? ""),
         tools: msg.toolName ? [msg.toolName] : [],
       });
+      skipSinceProtected = false;
+      skipSinceCompressible = true;
       continue;
     }
 
     if (protectedZoneRefs?.has(ref)) {
+      skipSinceCompressible = true;
+      skipSinceProtected = true;
       continue;
     }
 
     compressibleMsgs.push({
       ref,
-      refNum: rn,
+      gapBefore: skipSinceCompressible,
       tokens: countTokens(msg.text ?? ""),
       chars: (msg.text ?? "").length,
       isTool: isToolMessage(msg),
       isUser: msg.role === "user",
     });
+    skipSinceCompressible = false;
+    skipSinceProtected = true;
   }
 
-  // Build compressible groups (contiguous, split at ref gaps and at user
-  // messages once a group has >= 3 messages). Splitting at user boundaries
-  // keeps each compressible range aligned to roughly one user turn, instead
-  // of producing one giant range spanning many turns (or, conversely, a
-  // fragment per message when ref gaps appear). Mirrors opencode-acp's
+  // Build compressible groups (split at real array gaps and at user messages
+  // once a group has >= 3 messages). Splitting at user boundaries keeps each
+  // compressible range aligned to roughly one user turn, instead of producing
+  // one giant range spanning many turns. Mirrors opencode-acp's
   // buildCompressibleRanges condition.
   const compressible: CompressibleRange[] = [];
   let cur: CompressibleRange | null = null;
-  let prevRefNum = -2;
 
   for (const info of compressibleMsgs) {
-    const hasGap = info.refNum > prevRefNum + 1;
-    if (cur && ((info.isUser && cur.count >= 3) || hasGap)) {
+    if (cur && ((info.isUser && cur.count >= 3) || info.gapBefore)) {
       compressible.push(cur);
       cur = null;
     }
-    prevRefNum = info.refNum;
     if (!cur) {
       cur = {
         startRef: info.ref,
@@ -246,15 +255,12 @@ export function buildCompressibleRanges(
   // Build protected groups (contiguous)
   const protectedRanges: ProtectedRange[] = [];
   let pcur: ProtectedRange | null = null;
-  let pPrevRefNum = -2;
 
   for (const info of protectedMsgs) {
-    const hasGap = info.refNum > pPrevRefNum + 1;
-    if (pcur && hasGap) {
+    if (pcur && info.gapBefore) {
       protectedRanges.push(pcur);
       pcur = null;
     }
-    pPrevRefNum = info.refNum;
     if (!pcur) {
       pcur = {
         startRef: info.ref,

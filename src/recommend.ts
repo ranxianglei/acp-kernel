@@ -28,11 +28,6 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function refNum(ref: string): number {
-  const n = parseInt(ref.slice(1), 10);
-  return Number.isNaN(n) ? -1 : n;
-}
-
 /** Default token estimate (chars/4) used when the caller doesn't inject a
  *  countTokens — preserves the historical behavior for backwards compat. */
 function estimateTextTokens(text: string): number {
@@ -152,131 +147,147 @@ export function buildCompressibleRanges(
   countTokens: (text: string) => number = estimateTextTokens,
 ): ContextRanges {
   const compressibleMsgs: {
-    ref: string;
-    refNum: number;
-    tokens: number;
-    chars: number;
-    isTool: boolean;
-    isUser: boolean;
-  }[] = [];
+  ref: string;
+  gapBefore: boolean;
+  tokens: number;
+  chars: number;
+  isTool: boolean;
+  isUser: boolean;
+}[] = [];
   const protectedMsgs: {
-    ref: string;
-    refNum: number;
-    tokens: number;
-    tools: string[];
-  }[] = [];
+  ref: string;
+  gapBefore: boolean;
+  tokens: number;
+  tools: string[];
+}[] = [];
 
   // Pairing: a tool-result may carry only toolCallId (no toolName). Collect the
   // callIds of protected tool-calls first, then protect matching results too.
   const protectedCallIds = collectProtectedToolCallIds(messages, config);
 
+  // Continuity follows the message ARRAY, not ref arithmetic: a host that
+  // replaces its surface feeds the kernel the current surface only — shadowed
+  // messages leave the array (ref-map holes) and freshly written summary nodes
+  // join mid-array with fresh HIGH refs, so ref numbers no longer track
+  // message order. What still splits a range is a message SKIPPED between two
+  // entries: protected, synthetic, or in the protected zone.
+  let pendingGapC = false;
+  let pendingGapP = false;
+
   for (const msg of messages) {
-    if (isSyntheticOrPruned(msg, state)) continue;
-    const ref = state.messageRefs.byRaw[msg.id];
-    if (!ref || ref === "BLOCKED") continue;
+  const ref = state.messageRefs.byRaw[msg.id];
+  if (isSyntheticOrPruned(msg, state)) {
+  if (ref && ref !== "BLOCKED") {
+  pendingGapC = true;
+  pendingGapP = true;
+  }
+  continue;
+  }
+  if (!ref || ref === "BLOCKED") continue;
 
-    const rn = refNum(ref);
-
-    if (isMessageProtectedWithPairing(msg, config, protectedCallIds)) {
-      protectedMsgs.push({
-        ref,
-        refNum: rn,
-        tokens: countTokens(msg.text ?? ""),
-        tools: msg.toolName ? [msg.toolName] : [],
-      });
-      continue;
-    }
-
-    if (protectedZoneRefs?.has(ref)) {
-      continue;
-    }
-
-    compressibleMsgs.push({
-      ref,
-      refNum: rn,
-      tokens: countTokens(msg.text ?? ""),
-      chars: (msg.text ?? "").length,
-      isTool: isToolMessage(msg),
-      isUser: msg.role === "user",
-    });
+  if (isMessageProtectedWithPairing(msg, config, protectedCallIds)) {
+  protectedMsgs.push({
+  ref,
+  gapBefore: pendingGapP,
+  tokens: countTokens(msg.text ?? ""),
+  tools: msg.toolName ? [msg.toolName] : [],
+  });
+  pendingGapC = true;
+  pendingGapP = false;
+  continue;
   }
 
-  // Build compressible groups (contiguous, split at ref gaps and at user
-  // messages once a group has >= 3 messages). Splitting at user boundaries
-  // keeps each compressible range aligned to roughly one user turn, instead
-  // of producing one giant range spanning many turns (or, conversely, a
-  // fragment per message when ref gaps appear). Mirrors opencode-acp's
-  // buildCompressibleRanges condition.
+  if (protectedZoneRefs?.has(ref)) {
+  pendingGapC = true;
+  pendingGapP = true;
+  continue;
+  }
+
+  compressibleMsgs.push({
+  ref,
+  gapBefore: pendingGapC,
+  tokens: countTokens(msg.text ?? ""),
+  chars: (msg.text ?? "").length,
+  isTool: isToolMessage(msg),
+  isUser: msg.role === "user",
+  });
+  pendingGapC = false;
+  pendingGapP = true;
+}
+
+  // Build compressible groups (contiguous in the array; split at skipped-
+  // message boundaries and at user messages once a group has >= 3 messages).
+  // Splitting at user boundaries keeps each compressible range aligned to
+  // roughly one user turn, instead of producing one giant range spanning many
+  // turns. Array adjacency — not ref arithmetic — is the continuity ground
+  // truth: append-only hosts see exactly the ranges ref continuity used to
+  // derive, while replace-style hosts group the surface they actually show.
   const compressible: CompressibleRange[] = [];
   let cur: CompressibleRange | null = null;
-  let prevRefNum = -2;
 
   for (const info of compressibleMsgs) {
-    const hasGap = info.refNum > prevRefNum + 1;
-    if (cur && ((info.isUser && cur.count >= 3) || hasGap)) {
-      compressible.push(cur);
-      cur = null;
-    }
-    prevRefNum = info.refNum;
-    if (!cur) {
-      cur = {
-        startRef: info.ref,
-        endRef: info.ref,
-        count: 1,
-        tokens: info.tokens,
-        chars: info.chars,
-        toolPct: info.isTool ? 100 : 0,
-        textPct: info.isTool ? 0 : 100,
-      };
-    } else {
-      cur.endRef = info.ref;
-      cur.count++;
-      cur.tokens += info.tokens;
-      cur.chars = (cur.chars ?? 0) + info.chars;
-      if (info.isTool) {
-        cur.toolPct = Math.round((cur.toolPct * (cur.count - 1) + 100) / cur.count);
-      } else {
-        cur.toolPct = Math.round((cur.toolPct * (cur.count - 1)) / cur.count);
-      }
-      cur.textPct = 100 - cur.toolPct;
-    }
+  const hasGap = info.gapBefore;
+  if (cur && ((info.isUser && cur.count >= 3) || hasGap)) {
+  compressible.push(cur);
+  cur = null;
   }
+  if (!cur) {
+  cur = {
+  startRef: info.ref,
+  endRef: info.ref,
+  count: 1,
+  tokens: info.tokens,
+  chars: info.chars,
+  toolPct: info.isTool ? 100 : 0,
+  textPct: info.isTool ? 0 : 100,
+  };
+  } else {
+  cur.endRef = info.ref;
+  cur.count++;
+  cur.tokens += info.tokens;
+  cur.chars = (cur.chars ?? 0) + info.chars;
+  if (info.isTool) {
+  cur.toolPct = Math.round((cur.toolPct * (cur.count - 1) + 100) / cur.count);
+  } else {
+  cur.toolPct = Math.round((cur.toolPct * (cur.count - 1)) / cur.count);
+  }
+  cur.textPct = 100 - cur.toolPct;
+  }
+}
   if (cur) compressible.push(cur);
 
-  // Build protected groups (contiguous)
+  // Build protected groups (contiguous in the array)
   const protectedRanges: ProtectedRange[] = [];
   let pcur: ProtectedRange | null = null;
-  let pPrevRefNum = -2;
 
   for (const info of protectedMsgs) {
-    const hasGap = info.refNum > pPrevRefNum + 1;
-    if (pcur && hasGap) {
-      protectedRanges.push(pcur);
-      pcur = null;
-    }
-    pPrevRefNum = info.refNum;
-    if (!pcur) {
-      pcur = {
-        startRef: info.ref,
-        endRef: info.ref,
-        count: 1,
-        tokens: info.tokens,
-        tools: [...info.tools],
-      };
-    } else {
-      pcur.endRef = info.ref;
-      pcur.count++;
-      pcur.tokens += info.tokens;
-      for (const t of info.tools) {
-        if (!pcur!.tools.includes(t)) pcur!.tools.push(t);
-      }
-    }
+  const hasGap = info.gapBefore;
+  if (pcur && hasGap) {
+  protectedRanges.push(pcur);
+  pcur = null;
   }
+  if (!pcur) {
+  pcur = {
+  startRef: info.ref,
+  endRef: info.ref,
+  count: 1,
+  tokens: info.tokens,
+  tools: [...info.tools],
+  };
+  } else {
+  pcur.endRef = info.ref;
+  pcur.count++;
+  pcur.tokens += info.tokens;
+  for (const t of info.tools) {
+  if (!pcur!.tools.includes(t)) pcur!.tools.push(t);
+  }
+  }
+}
   if (pcur) protectedRanges.push(pcur);
 
   return {
-    compressible: compressible.filter((g) => g.tokens > 0),
-    protected: protectedRanges,
+  compressible: compressible.filter((g) => g.tokens > 0),
+  protected: protectedRanges,
   };
 }
 

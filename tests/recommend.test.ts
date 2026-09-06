@@ -245,6 +245,98 @@ test("buildCompressibleRanges: does NOT split before a group reaches 3 messages"
   assert.equal(ranges.compressible[0]!.count, 3);
 });
 
+// ─── Replace-host shapes: ref-map holes, mid-array summary nodes ───────────
+
+test("buildCompressibleRanges: ref-map holes from a replaced surface do NOT fragment ranges", () => {
+  // Regression guard for the replace-host contract: a durable-surface host
+  // passes the CURRENT surface only. Messages shadowed by an earlier
+  // compression leave the array while their refs stay assigned — the map
+  // grows holes. Nothing was SKIPPED between m2 and m7 on the surface, so
+  // the four messages form one contiguous range.
+  const history = [
+  msg("m1", "x".repeat(2000), "assistant"),
+  msg("m2", "y".repeat(2000), "assistant"),
+  msg("m3", "z".repeat(2000), "assistant"),
+  msg("m4", "w".repeat(2000), "assistant"),
+  msg("m5", "v".repeat(2000), "assistant"),
+  msg("m6", "u".repeat(2000), "assistant"),
+  msg("m7", "t".repeat(2000), "assistant"),
+  msg("m8", "s".repeat(2000), "assistant"),
+  ];
+  const state = assignAll(history);
+  const surface = [
+  msg("m1", "x".repeat(2000), "assistant"),
+  msg("m2", "y".repeat(2000), "assistant"),
+  msg("m7", "t".repeat(2000), "assistant"),
+  msg("m8", "s".repeat(2000), "assistant"),
+  ];
+  const ranges = buildCompressibleRanges(surface, state, config());
+  assert.equal(ranges.compressible.length, 1, "holes in the ref map are not interruptions");
+  assert.equal(ranges.compressible[0]!.startRef, "m00001");
+  assert.equal(ranges.compressible[0]!.endRef, "m00008");
+  assert.equal(ranges.compressible[0]!.count, 4);
+});
+
+test("buildCompressibleRanges: a mid-array summary node extends the range instead of flushing it", () => {
+  // The replace host writes the model's summary node at the position of the
+  // replaced span — mid-array — while assignRefs gives it a FRESH HIGH ref
+  // (m00007 here). Ref arithmetic saw the jump as a gap: it flushed the live
+  // head and emitted a descending pair that hid the messages behind the
+  // summary. Array adjacency says the summary is simply the next compressible
+  // message.
+  const history = [
+  msg("m1", "x".repeat(2000), "assistant"),
+  msg("m2", "y".repeat(2000), "assistant"),
+  msg("m3", "z".repeat(2000), "assistant"),
+  msg("m4", "w".repeat(2000), "assistant"),
+  msg("m5", "v".repeat(2000), "assistant"),
+  msg("m6", "u".repeat(2000), "assistant"),
+  ];
+  const state = assignAll(history);
+  const summary = msg("s1", "summary of the replaced span", "assistant");
+  // m3..m4 were replaced by the summary on the host surface; re-assigning refs
+  // for the surface keeps the first-wins map and allocates m00007 for the
+  // summary node.
+  const surface = [
+  msg("m1", "x".repeat(2000), "assistant"),
+  msg("m2", "y".repeat(2000), "assistant"),
+  summary,
+  msg("m5", "v".repeat(2000), "assistant"),
+  msg("m6", "u".repeat(2000), "assistant"),
+  ];
+  const state2 = assignAll(surface, state);
+  const ranges = buildCompressibleRanges(surface, state2, config());
+  assert.equal(ranges.compressible.length, 1, "no spurious split at the summary node");
+  assert.equal(ranges.compressible[0]!.startRef, "m00001");
+  assert.equal(ranges.compressible[0]!.endRef, "m00006");
+  assert.equal(ranges.compressible[0]!.count, 5);
+});
+
+test("buildCompressibleRanges: a range starting at a mid-array summary node is an ordered anchor pair", () => {
+  // Same shape with the replaced span at the HEAD: the group starts at the
+  // summary's fresh HIGH ref and ends at a lower one. The pair is ARRAY-ORDERED
+  // (start = array head, end = array tail); apply-side boundaries resolve
+  // anchors by message index (boundaries.ts), so the span still applies
+  // correctly — consumers must read the pair as anchors, never as a numeric
+  // interval.
+  const history = [
+  msg("m1", "x".repeat(2000), "assistant"),
+  msg("m2", "y".repeat(2000), "assistant"),
+  msg("m3", "z".repeat(2000), "assistant"),
+  msg("m4", "w".repeat(2000), "assistant"),
+  msg("m5", "v".repeat(2000), "assistant"),
+  ];
+  const state = assignAll(history);
+  const summary = msg("s1", "summary of the replaced head", "assistant");
+  const surface = [summary, msg("m4", "w".repeat(2000), "assistant"), msg("m5", "v".repeat(2000), "assistant")];
+  const state2 = assignAll(surface, state);
+  const ranges = buildCompressibleRanges(surface, state2, config());
+  assert.equal(ranges.compressible.length, 1);
+  assert.equal(ranges.compressible[0]!.startRef, "m00006", "the summary keeps its fresh high ref as the array head");
+  assert.equal(ranges.compressible[0]!.endRef, "m00005");
+  assert.equal(ranges.compressible[0]!.count, 3, "the descending pair still covers the whole array span");
+});
+
 // ─── Integration: 19-token bug fix ─────────────────────────────────────────────
 
 test("integration: tiny ranges are suppressed — fixes the 19-token compression bug", () => {

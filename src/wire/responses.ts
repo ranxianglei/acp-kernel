@@ -135,6 +135,9 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
     const layout: ResponseLayoutSlot[] = [];
     let droppedReasoning = 0;
     const clusters = new ClusterCounter();
+    // Backfill toolName onto call outputs from their paired calls — kernel
+    // guards are name-based. Not part of the identity seed (id stability).
+    const toolNames = new Map<string, string>();
     let idx = 0;
     if (typeof body.instructions === "string" && body.instructions.trim()) systemParts.push(body.instructions);
     if (typeof body.input === "string") {
@@ -236,13 +239,15 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
                     text: call.arguments ?? "",
                     rawResponsesItem: item,
                 });
+                toolNames.set(call.call_id, call.name);
                 break;
             }
             case "function_call_output": {
                 const output = item as ResponseFunctionCallOutput;
                 const text = typeof output.output === "string" ? output.output : JSON.stringify(output.output);
                 coreId = clusters.next(deriveMessageId("tool", "tool-result", text, { toolCallId: output.call_id }));
-                msgs.push({ id: coreId, role: "tool", contentType: "tool-result", toolCallId: output.call_id, text, rawResponsesItem: item });
+                const name = toolNames.get(output.call_id);
+                msgs.push({ id: coreId, role: "tool", contentType: "tool-result", toolCallId: output.call_id, text, ...(name ? { toolName: name } : {}), rawResponsesItem: item });
                 break;
             }
             case "computer_call":
@@ -267,6 +272,7 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
                 const argText = ctc.input ?? ctc.arguments ?? "";
                 coreId = clusters.next(deriveMessageId("assistant", "tool-call", argText, { toolCallId: callId, toolName: ctc.name ?? "custom" }));
                 msgs.push({ id: coreId, role: "assistant", contentType: "tool-call", toolName: ctc.name ?? "custom", toolCallId: callId, text: argText, rawResponsesItem: item });
+                toolNames.set(callId, ctc.name ?? "custom");
                 break;
             }
             case "custom_tool_call_output": {
@@ -275,7 +281,8 @@ export function responsesToCore(body: ResponsesRequestBody): ResponsesProjection
                 customToolCallIds.add(callId);
                 const outText = typeof ctco.output === "string" ? ctco.output : JSON.stringify(ctco.output ?? "");
                 coreId = clusters.next(deriveMessageId("tool", "tool-result", outText, { toolCallId: callId }));
-                msgs.push({ id: coreId, role: "tool", contentType: "tool-result", toolCallId: callId, text: outText, rawResponsesItem: item });
+                const name = toolNames.get(callId);
+                msgs.push({ id: coreId, role: "tool", contentType: "tool-result", toolCallId: callId, text: outText, ...(name ? { toolName: name } : {}), rawResponsesItem: item });
                 break;
             }
             default:

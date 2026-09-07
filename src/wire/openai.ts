@@ -51,6 +51,9 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
     const msgs: BiliMessage[] = [];
     const systemParts: string[] = [];
     const clusters = new ClusterCounter();
+    // Backfill toolName onto role:"tool" results from their paired tool_call —
+    // kernel guards are name-based. Not part of the identity seed (id stability).
+    const toolNames = new Map<string, string>();
     for (const m of body.messages) {
         switch (m.role) {
             case "system":
@@ -129,6 +132,7 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                             toolCallId: tc.id,
                             text: tc.function.arguments ?? "",
                         });
+                        toolNames.set(tc.id, tc.function.name);
                     }
                 }
                 break;
@@ -137,12 +141,14 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                 const base = deriveMessageId("tool", "tool-result", stringContent(m.content), {
                     toolCallId: m.tool_call_id ?? "",
                 });
+                const name = m.name || toolNames.get(m.tool_call_id ?? "");
                 msgs.push({
                     id: clusters.next(base),
                     role: "tool",
                     contentType: "tool-result",
                     toolCallId: m.tool_call_id ?? "",
                     text: stringContent(m.content),
+                    ...(name ? { toolName: name } : {}),
                 });
                 break;
             }

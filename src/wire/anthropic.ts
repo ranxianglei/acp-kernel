@@ -63,6 +63,11 @@ export function anthropicToCore(body: AnthropicRequestBody): Flat {
     const msgs: BiliMessage[] = [];
     const cacheControls = new Map<string, unknown>();
     const clusters = new ClusterCounter();
+    // Backfill toolName onto tool-results from their paired tool_use: the wire
+    // format only carries the call id on results, but kernel guards
+    // (excludeTools / protectedTools / isNeverPreserveRecent) are name-based.
+    // Not part of the result identity seed — ids must stay stable across versions.
+    const toolNames = new Map<string, string>();
     for (const m of body.messages) {
         const blocks = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
         for (const b of blocks) {
@@ -88,6 +93,7 @@ export function anthropicToCore(body: AnthropicRequestBody): Flat {
                         toolCallId: b.id,
                         text: safeStringify(b.input),
                     });
+                    toolNames.set(b.id, b.name);
                     if (b.cache_control) cacheControls.set(id, b.cache_control);
                     break;
                 }
@@ -95,12 +101,14 @@ export function anthropicToCore(body: AnthropicRequestBody): Flat {
                     const text = typeof b.content === "string" ? b.content : b.content.map((c) => c.text).join("\n");
                     const base = deriveMessageId("tool", "tool-result", text, { toolCallId: b.tool_use_id });
                     const id = clusters.next(base);
+                    const name = toolNames.get(b.tool_use_id);
                     msgs.push({
                         id,
                         role: "tool",
                         contentType: "tool-result",
                         toolCallId: b.tool_use_id,
                         text,
+                        ...(name ? { toolName: name } : {}),
                         ...(b.is_error === true ? { toolIsError: true } : {}),
                     });
                     if (b.cache_control) cacheControls.set(id, b.cache_control);

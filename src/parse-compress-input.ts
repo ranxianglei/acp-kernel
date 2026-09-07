@@ -8,6 +8,8 @@
 //   - raw newlines inside string values (line-wrapped summaries)
 //   - the whole arguments object stringified by the gateway (vLLM,
 //     billion-context#176)
+//   - single-quoted JSON: {'content': [...]} (weak local models,
+//     billion-context#603 / omp#121)
 //   - the stream cut off mid-arguments, leaving a truncated JSON prefix
 //
 // Hosts parse this on their own today: rebuild.ts (strict, silent skip),
@@ -37,6 +39,8 @@ export interface CompressParseDiagnostics {
     ok: boolean;
     /** Why the input parsed the way it did. */
     kind: CompressParseKind;
+    /** True when the winning parse came from single→double quote repair. */
+    quoteSalvage?: boolean;
     /** First 800 chars of the raw string input (string inputs only). */
     rawPrefix?: string;
     /** Raw string input length (string inputs only). */
@@ -87,6 +91,29 @@ function parseStringInput(raw: string, callId: string | undefined, diag: Compres
     diag.rawPrefix = raw.slice(0, 800);
     diag.length = raw.length;
     const cleaned = stripFence(raw.trim());
+    const first = parseStringCore(cleaned, callId, diag);
+    // Weak local models emit single-quoted args ({'content': [...]}). The
+    // salvage regex only recognizes double-quoted "content", so a truncated
+    // single-quoted prefix recovers nothing on the first pass. Retry once
+    // with the quotes normalized; the retry wins only if it recovers strictly
+    // more ranges, so valid input is never rewritten.
+    if (first.ranges.length === 0 || first.diagnostics.invalidItems > 0) {
+        const normalized = normalizeSingleQuotes(cleaned);
+        if (normalized !== undefined) {
+            const retryDiag: CompressParseDiagnostics = { ok: false, kind: "ok", invalidItems: 0 };
+            retryDiag.rawPrefix = diag.rawPrefix;
+            retryDiag.length = diag.length;
+            const retry = parseStringCore(normalized, callId, retryDiag);
+            if (retry.ranges.length > first.ranges.length) {
+                retryDiag.quoteSalvage = true;
+                return retry;
+            }
+        }
+    }
+    return first;
+}
+
+function parseStringCore(cleaned: string, callId: string | undefined, diag: CompressParseDiagnostics): ParsedCompressInput {
     if (cleaned === "") {
         diag.kind = "empty-input";
         return finish([], diag);
@@ -144,6 +171,7 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
         }
         entries = parsed.entries;
         salvaged = parsed.salvaged;
+        if (parsed.quoteRepaired) diag.quoteSalvage = true;
     } else {
         diag.kind = "content-not-array";
         return finish([], diag);
@@ -168,9 +196,22 @@ function parseObjectValue(value: Record<string, unknown>, callId: string | undef
     return finish(ranges, diag);
 }
 
-function parseContentArray(s: string): { entries: unknown[]; salvaged: boolean } | null {
+function parseContentArray(s: string): { entries: unknown[]; salvaged: boolean; quoteRepaired?: boolean } | null {
     const cleaned = stripFence(s.trim());
-    let value: unknown = cleaned === "" ? undefined : tryParseLenient(cleaned);
+    const direct = parseContentArrayCore(cleaned);
+    if (direct !== null && direct.entries.length > 0) return direct;
+    // Single-quoted array (weak local models): normalize once and re-run;
+    // the retry is adopted only if it recovers strictly more entries.
+    const normalized = normalizeSingleQuotes(cleaned);
+    if (normalized !== undefined) {
+        const retry = parseContentArrayCore(normalized);
+        if (retry !== null && retry.entries.length > 0) return { ...retry, quoteRepaired: true };
+    }
+    return direct;
+}
+
+function parseContentArrayCore(s: string): { entries: unknown[]; salvaged: boolean } | null {
+    let value: unknown = s === "" ? undefined : tryParseLenient(s);
     if (typeof value === "string") {
         value = tryParseLenient(stripFence(value));
     }
@@ -179,7 +220,7 @@ function parseContentArray(s: string): { entries: unknown[]; salvaged: boolean }
     }
     if (value === undefined) {
         // Unparseable (usually truncated): recover the complete entries.
-        const entries = salvageContentEntries('{"content": ' + cleaned);
+        const entries = salvageContentEntries('{"content": ' + s);
         return { entries, salvaged: entries.length > 0 };
     }
     return null;
@@ -267,6 +308,79 @@ function tryParseLenient(s: string): unknown {
         }
     }
     return undefined;
+}
+
+// State machine that converts single-quoted strings to double-quoted ones.
+// Apostrophes inside double-quoted strings are data and are copied verbatim;
+// control characters inside single-quoted regions become JSON escapes.
+// Returns undefined when nothing was converted (input unchanged).
+// Ported from billion-context compress-tool.ts (#603/#610): pure text repair —
+// it never invents structure, so anything it cannot make into valid JSON
+// simply stays unrecovered.
+function normalizeSingleQuotes(raw: string): string | undefined {
+    if (!raw.includes("'") || (!raw.includes("{") && !raw.includes("["))) return undefined;
+    let out = "";
+    let changed = false;
+    let inDouble = false;
+    let inSingle = false;
+    for (let i = 0; i < raw.length; i++) {
+        const ch = raw.charAt(i);
+        if (inDouble) {
+            out += ch;
+            if (ch === "\\" && i + 1 < raw.length) {
+                out += raw.charAt(i + 1);
+                i++;
+            } else if (ch === '"') {
+                inDouble = false;
+            }
+            continue;
+        }
+        if (inSingle) {
+            if (ch === "\\" && i + 1 < raw.length) {
+                const next = raw.charAt(i + 1);
+                out += next === "'" ? "'" : "\\" + next;
+                i++;
+                continue;
+            }
+            if (ch === "'") {
+                out += '"';
+                inSingle = false;
+                changed = true;
+                continue;
+            }
+            if (ch === '"') {
+                out += '\\"';
+                continue;
+            }
+            if (ch === "\n") {
+                out += "\\n";
+                continue;
+            }
+            if (ch === "\r") {
+                out += "\\r";
+                continue;
+            }
+            if (ch === "\t") {
+                out += "\\t";
+                continue;
+            }
+            out += ch;
+            continue;
+        }
+        if (ch === '"') {
+            inDouble = true;
+            out += ch;
+            continue;
+        }
+        if (ch === "'") {
+            inSingle = true;
+            out += '"';
+            changed = true;
+            continue;
+        }
+        out += ch;
+    }
+    return changed ? out : undefined;
 }
 
 function stripFence(s: string): string {

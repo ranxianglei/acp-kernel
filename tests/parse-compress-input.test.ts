@@ -122,6 +122,96 @@ test("parseCompressArgs preserves escaped quotes in salvaged entries", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Single-quoted JSON salvage (#603 / omp#121: weak local models)
+// ---------------------------------------------------------------------------
+
+test("parseCompressArgs salvages single-quoted JSON args (#603)", () => {
+    const input = `{'content':[{'startId':'m00010','endId':'m00020','summary':'first'},{'startId':'m00030','endId':'m00040','summary':'second','topic':'mid'}],'topic':'intro'}`;
+    const { ranges, diagnostics } = parseCompressArgs(input, { callId: "call-q" });
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(diagnostics.quoteSalvage, true);
+    assert.equal(ranges.length, 2);
+    assert.equal(ranges[0]?.startRef, "m00010");
+    assert.equal(ranges[0]?.endRef, "m00020");
+    assert.equal(ranges[0]?.summary, "first");
+    assert.equal(ranges[0]?.topic, "intro");
+    assert.equal(ranges[0]?.compressCallId, "call-q");
+    assert.equal(ranges[1]?.startRef, "m00030");
+    assert.equal(ranges[1]?.topic, "mid");
+});
+
+test("parseCompressArgs salvages mixed single/double quotes, keeps apostrophes in data (#603)", () => {
+    const input = `{'content': [{'startId': "m00001", 'endId': "m00009", 'summary': "it's done, really"}]}`;
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(diagnostics.quoteSalvage, true);
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.startRef, "m00001");
+    assert.equal(ranges[0]?.endRef, "m00009");
+    assert.equal(ranges[0]?.summary, "it's done, really");
+});
+
+test("parseCompressArgs salvages truncated single-quoted content array (#603)", () => {
+    const input = `{'content':[{'startId':'m00010','endId':'m00020','summary':'first'},{'startId':'m00030','endId':'m00040','summary':'secon`;
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "truncated");
+    assert.equal(diagnostics.ok, true);
+    assert.equal(diagnostics.quoteSalvage, true);
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.startRef, "m00010");
+    assert.equal(ranges[0]?.endRef, "m00020");
+    assert.equal(ranges[0]?.summary, "first");
+});
+
+test("parseCompressArgs salvages object input whose content string is single-quoted (#603)", () => {
+    const input = { content: `[{'startId':'m00005','endId':'m00006','summary':'ok'}]` };
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(diagnostics.quoteSalvage, true);
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.startRef, "m00005");
+    assert.equal(ranges[0]?.endRef, "m00006");
+    assert.equal(ranges[0]?.summary, "ok");
+});
+
+test("parseCompressArgs still rejects prose with apostrophes unchanged (#603)", () => {
+    const { ranges, diagnostics } = parseCompressArgs("I couldn't believe {that} would 'work'");
+    assert.deepEqual(ranges, []);
+    assert.equal(diagnostics.ok, false);
+    assert.equal(diagnostics.kind, "malformed-json");
+    assert.equal(diagnostics.quoteSalvage, undefined);
+});
+
+test("parseCompressArgs leaves valid double-quoted args untouched by salvage (#603)", () => {
+    const input = JSON.stringify({ content: [{ startId: "m00001", endId: "m00002", summary: "don't panic" }] });
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(diagnostics.quoteSalvage, undefined);
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.summary, "don't panic");
+});
+
+test("parseCompressArgs repairs single quotes combined with trailing commas and raw newlines", () => {
+    const input = `{'content':[{'startId':'m00001','endId':'m00002','summary':'line1\nline2',}]}`;
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(diagnostics.quoteSalvage, true);
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.summary, "line1\nline2");
+});
+
+test("parseCompressArgs does not fabricate fields for a single-quoted entry missing bounds", () => {
+    // Quote repair makes the entry parseable, but validation still applies:
+    // no endId/summary means no range — reported, not invented. The retry
+    // wins only on strictly more ranges, so first-pass diagnostics stand.
+    const input = `{'content':[{'startId':'m00010'}]}`;
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(ranges.length, 0);
+    assert.equal(diagnostics.ok, false);
+    assert.equal(diagnostics.quoteSalvage, undefined);
+});
+
+// ---------------------------------------------------------------------------
 // Truncation salvage
 // ---------------------------------------------------------------------------
 

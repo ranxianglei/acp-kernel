@@ -191,6 +191,21 @@ test("openai: user message with multiple image_url parts round-trips ALL images"
     assert.ok(typeof text?.text === "string" && text.text.startsWith("compare these?"), "text preserved");
 });
 
+// 5c. Malformed but JSON-valid image part (image_url:null) must degrade to a
+//     non-image part instead of throwing — previously raised TypeError reading
+//     null.url inside allImageParts, crashing the whole turn in proxy mode.
+test("openai: malformed image_url:null part is skipped without throwing", () => {
+    const body = {
+        messages: [
+            { role: "user", content: [{ type: "image_url", image_url: null }] },
+        ],
+    } as unknown as OpenAIRequestBody;
+    const { msgs } = openaiToCore(body);
+    assert.equal(msgs.length, 1);
+    assert.equal(msgs[0]?.imageMediaType, undefined, "null image_url degrades to non-image");
+    assert.equal(msgs[0]?.imageBase64, undefined);
+});
+
 // 6. Responses API input_image round-trips (image was previously dropped).
 test("responses: user input_image is restored via rawResponsesItem", () => {
     const body: ResponsesRequestBody = {

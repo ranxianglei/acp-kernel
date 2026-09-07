@@ -259,8 +259,8 @@ function allImageParts(content: OpenAIMessage["content"]): OpenAIImagePart[] {
         if (!("type" in p) || p.type !== "image_url" || !("image_url" in p)) continue;
         // The union's index-signature member leaves image_url as `unknown`, so
         // narrow via a named const before reading the url.
-        const imagePart = p as { image_url: { url?: unknown } };
-        const url = imagePart.image_url.url;
+        const imagePart = p as { image_url?: { url?: unknown } | null };
+        const url = imagePart.image_url?.url;
         if (typeof url === "string" && parseDataUrl(url)) out.push(p as OpenAIImagePart);
     }
     return out;

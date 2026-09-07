@@ -133,6 +133,19 @@ test("renderHandoff folded snapshot renders as-is without re-pruning", () => {
   assert.doesNotMatch(out, /summary/);
 });
 
+test("re-pruning the same snapshot without folded resurrects the summary at index 0", () => {
+  const state = createInitialState();
+  state.blocks.push(makeBlock({ blockId: "b0", effectiveMessageIds: ["m1", "m2"], directMessageIds: ["m1", "m2"] }));
+  const snapshot = [msg("m3", "assistant", "hi"), msg("m4", "user", "final question")];
+  const out = renderHandoff({ coreMessages: snapshot, state, full: false, meta: { sessionId: "s1" } });
+  assert.match(out, /## Conversation \(folded view as the model saw it, 2 client messages\)/);
+  assert.match(out, /\[Compressed conversation section\]/);
+  assert.ok(
+    out.indexOf("[Compressed conversation section]") < out.indexOf("### assistant"),
+    "resurrected summary must land before the first surviving message",
+  );
+});
+
 test("renderHandoff full+folded appends block originals after the tail", () => {
   const state = createInitialState();
   state.blocks.push(makeBlock({ blockId: "b0", topic: "investigation", summary: "summary" }));
@@ -142,13 +155,21 @@ test("renderHandoff full+folded appends block originals after the tail", () => {
     state,
     full: true,
     folded: true,
-    blocksFull: [{ blockId: "b0", topic: "investigation", count: 7, fullText: "hello proxy\n778899" }],
+    blocksFull: [
+      { blockId: "b0", topic: "investigation", count: 7, fullText: "hello proxy\n778899" },
+      { blockId: "b1", count: 2, fullText: "tail content\n\n" },
+    ],
     meta: { sessionId: "s1" },
   });
   assert.match(out, /## Conversation \(persisted folded snapshot, 1 messages\)/);
   assert.match(out, /## Block b0 — investigation/);
   assert.match(out, /### Original messages \(7\)/);
   assert.match(out, /778899/);
+  assert.match(out, /^## Block b1$/m);
+  assert.doesNotMatch(out, /## Block b1 —/);
+  assert.match(out, /### Original messages \(2\)/);
+  assert.doesNotMatch(out, /tail content\n\n/);
+  assert.ok(out.indexOf("## Block b0") > out.indexOf("hi"), "blocks must follow the conversation");
 });
 
 test("renderHandoff folded flag is ignored for block append when not full", () => {

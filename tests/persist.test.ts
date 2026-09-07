@@ -656,3 +656,101 @@ test("flushSync retries use a fresh temp name per attempt (no tombstoned reuse)"
         rmSync(dir, { recursive: true, force: true });
     }
 });
+
+function enoent(): NodeJS.ErrnoException {
+    const e = new Error("ENOENT: no such file or directory, rename") as NodeJS.ErrnoException;
+    e.code = "ENOENT";
+    return e;
+}
+
+test("a temp file vanishing before rename (ENOENT) is healed by whole-cycle retry", async (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { retryAttempts: 3, retryBaseMs: 1, retryMaxMs: 1 });
+        const realRename = fsp.rename.bind(fsp);
+        let calls = 0;
+        t.mock.method(fsp, "rename", (async (src: string, dest: string) => {
+            calls++;
+            if (calls === 1) throw enoent();
+            await realRename(src, dest);
+        }) as typeof fsp.rename);
+        await s.writeNow("sid-sweep", () => ({ label: "healed", count: 3 }));
+        const canonical = path.join(dir, flatFileNameFor("sid-sweep"));
+        const env = JSON.parse(readFileSync(canonical, "utf8")) as { id: string; payload: Payload };
+        assert.equal(env.id, "sid-sweep");
+        assert.deepEqual(env.payload, { label: "healed", count: 3 });
+        assert.equal(existsSync(path.join(dir, spillNameFor("sid-sweep"))), false, "no spill — canonical healed");
+        assert.ok(calls >= 2, "rename was retried");
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("the target directory vanishing (writeFile ENOENT) is recreated on retry", async (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { retryAttempts: 3, retryBaseMs: 1, retryMaxMs: 1 });
+        const realWriteFile = fsp.writeFile.bind(fsp);
+        let calls = 0;
+        t.mock.method(fsp, "writeFile", (async (p: string, data: string) => {
+            calls++;
+            if (calls === 1) throw enoent();
+            await realWriteFile(p, data);
+        }) as typeof fsp.writeFile);
+        await s.writeNow("sid-gone-dir", () => ({ label: "recreated", count: 7 }));
+        const canonical = path.join(dir, flatFileNameFor("sid-gone-dir"));
+        const env = JSON.parse(readFileSync(canonical, "utf8")) as { payload: Payload };
+        assert.deepEqual(env.payload, { label: "recreated", count: 7 });
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("persistent ENOENT still spills so data is never dropped", async (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
+        t.mock.method(fsp, "rename", (async () => {
+            throw enoent();
+        }) as typeof fsp.rename);
+        let threw = false;
+        try {
+            await s.writeNow("sid-enoent", () => ({ label: "kept", count: 1 }));
+        } catch {
+            threw = true;
+        }
+        assert.equal(threw, true);
+        const spillFile = path.join(dir, spillNameFor("sid-enoent"));
+        const env = JSON.parse(readFileSync(spillFile, "utf8")) as { id: string; payload: Payload };
+        assert.equal(env.id, "sid-enoent");
+        assert.deepEqual(env.payload, { label: "kept", count: 1 });
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("flushSync heals an ENOENT sweep the same way", (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { retryAttempts: 3, retryBaseMs: 1, retryMaxMs: 1 });
+        const realRenameSync = fs.renameSync.bind(fs);
+        let calls = 0;
+        t.mock.method(fs, "renameSync", ((src: string, dest: string) => {
+            calls++;
+            if (calls === 1) throw enoent();
+            return realRenameSync(src, dest);
+        }) as typeof fs.renameSync);
+        const ok = s.flushSync("sid-fs-sweep", () => ({ label: "sync", count: 4 }));
+        assert.equal(ok, true);
+        const canonical = path.join(dir, flatFileNameFor("sid-fs-sweep"));
+        const env = JSON.parse(readFileSync(canonical, "utf8")) as { payload: Payload };
+        assert.deepEqual(env.payload, { label: "sync", count: 4 });
+        assert.ok(calls >= 2, "renameSync was retried");
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});

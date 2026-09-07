@@ -26,7 +26,6 @@ export {
   refToIndex,
   refForRaw,
   rawForRef,
-  pruneDeadRefs,
   BLOCKED_REF,
 } from "./refs.js";
 export {
@@ -44,7 +43,6 @@ export {
   visibleBlockAnchor,
   blockVisibleInRange,
 } from "./boundaries.js";
-export type { BoundaryFailureReason } from "./boundaries.js";
 export {
   defaultCountTokens,
   estimateTokensFast,
@@ -78,6 +76,8 @@ export type {
 } from "./decompress.js";
 export { buildStatusReport, buildRecap } from "./report.js";
 export type { StatusReportOptions } from "./report.js";
+export { renderHandoff, renderMessage, matchSession } from "./handoff.js";
+export type { HandoffInput, HandoffMeta } from "./handoff.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";
 export type { HideConsumedResult } from "./hide-consumed.js";
 export {

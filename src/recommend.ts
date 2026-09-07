@@ -39,7 +39,7 @@ function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function isToolMessage(message: CoreMessage): boolean {
+export function isToolMessage(message: CoreMessage): boolean {
   return message.contentType === "tool-call" || message.contentType === "tool-result";
 }
 

@@ -1,4 +1,4 @@
-import { assignRefs, highestUsedIndex, indexToRef, pruneDeadRefs } from "./refs.js";
+import { assignRefs, highestUsedIndex, indexToRef } from "./refs.js";
 import { prune, isSummaryMessageId } from "./prune.js";
 import { syncBlocks } from "./sync.js";
 import { advanceSurvival, activeBlocks, blockById } from "./state.js";
@@ -165,13 +165,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
   function applyCompression(
     input: ApplyCompressionInput,
   ): ApplyCompressionResult {
-    // Sync against the caller's view before boundary resolution (a bare clone
-    // would keep stale state): deactivates drifted/orphaned blocks and prunes
-    // dead refs, so stale state can't hit "active block but none of its content visible".
-    const state: CompressionState = syncBlocks(
-      input.messages,
-      input.state,
-    ).state;
+    const state: CompressionState = cloneState(input.state);
     const runId = allocateRunId(state);
     let blocksCreated = 0;
     let tokensCompressed = 0;
@@ -318,7 +312,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
           resolvableCount === 0 &&
           consumedRanges.length === 0 &&
           unknownCount > 0
-            ? `None of the ${input.ranges.length} requested range(s) resolved — every ref is unknown to this session. Refs are per-session snapshots, assigned once when a message is first rendered; no compress reassigns them, so unknown refs cannot come from an earlier compress in this session. They come from a different generation: a previous session instance (switching model or upstream mid-conversation starts a fresh session whose refs restart at m00001), the generation before a native-compaction rebase (which also resets refs to m00001), a typo, or a message that was edited or removed (its old ref was released when the content id changed). ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
+            ? `None of the ${input.ranges.length} requested range(s) resolved — every ref is unknown to this session. Refs are per-session snapshots, assigned once when a message is first rendered; no compress reassigns them, so unknown refs cannot come from an earlier compress in this session. They come from a different generation: a previous session instance (switching model or upstream mid-conversation starts a fresh session whose refs restart at m00001), the generation before a native-compaction rebase (which also resets refs to m00001), or a typo. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
             : consumedRanges.length > 0
               ? danglingRefs.length > 0
                 ? `Requested range(s) cannot be anchored (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
@@ -510,18 +504,9 @@ const assignRefsNode: PipelineNode = {
     const protectedFn = hasProtection
       ? (m: CoreMessage) => isMessageProtected(m, ctx.config)
       : undefined;
-    // Prune before allocating: legacy state (pre-reclamation) or host-side
-    // drift can leave the map near MAX_INDEX — releasing dead slots first is
-    // what lets allocation reuse them instead of throwing capacity-exhausted.
-    const liveIds = new Set(io.messages.map((m) => m.id));
-    for (const block of io.state.blocks) {
-      if (!block.active) continue;
-      for (const id of block.effectiveMessageIds) liveIds.add(id);
-    }
-    const pruned = pruneDeadRefs(io.state.messageRefs, liveIds);
     const refResult = assignRefs(io.messages, {
-      existing: pruned.map,
-      nextIndex: highestUsedIndex(pruned.map) + 1,
+      existing: io.state.messageRefs,
+      nextIndex: highestUsedIndex(io.state.messageRefs) + 1,
       isProtected: protectedFn,
     });
     return { ...io, state: { ...io.state, messageRefs: refResult.map } };
@@ -1084,6 +1069,22 @@ function resolveAdaptiveGrowth(
   );
 }
 
+/** Minimum reclaimable tokens for a pressure-band nudge to be worth injecting.
+ *  A sub-threshold rewrite (e.g. re-distilling a 232-token summary at near-
+ *  equal size) resets the nudge baselines on success, re-arming the still-hot
+ *  band next turn — a zero-yield loop (#198). Scales with the window so an
+ *  inflated host tokenCount can never make a tiny pending look actionable:
+ *  max(5000, round(limit × 0.01)); explicit 0 restores legacy any-pending. */
+function resolveMinPressureBenefit(
+  modelContextLimit: number,
+  nudge: NudgeConfig,
+): number {
+  return (
+    nudge.minPressureBenefitTokens ??
+    Math.max(5000, Math.round(modelContextLimit * 0.01))
+  );
+}
+
 /** Compressible amount for each tier. T1 = EFFECTIVE merged-range tokens —
  *  only ranges whose real char count >= minCompressRange count (avoids
  *  inflation from fragmentation; matches the apply-side gate, which counts
@@ -1130,6 +1131,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const usage = limit > 0 ? tokenCount / limit : 0;
 
   const nudgeGrowthTokens = resolveAdaptiveGrowth(limit, config.nudge);
+  const minPressureBenefit = resolveMinPressureBenefit(limit, config.nudge);
 
   const overLimit = usage >= config.nudge.maxContextLimitPct;
   const emergencyOverride = usage >= config.nudge.emergencyThresholdPct;
@@ -1180,10 +1182,30 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   );
   let injectedTier: CompressionTier | null = null;
   let injectedReason = "";
-  const growthReady = growthSinceReference >= growthFloor;
+  let bestPending = 0;
   const t1Eff = tiers[1]?.pending ?? 0;
   const t2Pen = tiers[2]?.pending ?? 0;
   const t3Pen = tiers[3]?.pending ?? 0;
+  // First-sight mass bypass (#194): growthReference seeds to tokenCount when
+  // no baseline exists, so a session that ARRIVES with a huge ready mass
+  // (stateless full-history ingest / restored state) shows growthSinceReference
+  // ≈ 0 and waits for a full floor of NEW tokens before its first compress —
+  // #351 sat 934K-ready for 18 idle minutes and died ~4 min short of the floor.
+  // The floor paces WITHIN a backlog; it must not gate draining one. The bypass
+  // re-arms after every SUCCESSFUL compression (which clears the baseline):
+  // still-in-band with ready mass over threshold keeps nudging the backlog
+  // down, one compress per re-fire — no growth debt between compressions.
+  // Guardrails: while the model IGNORES a nudge the shown stamp stays set, so
+  // this never re-fires on an unresponsive session; a fresh session below the
+  // usage band still waits, as before; and the tier branches below apply
+  // unchanged.
+  const firstSightMassReady =
+    state.nudge.lastNudgeShownTokens === 0 &&
+    baseline === 0 &&
+    usage >= config.nudge.minContextLimitPct &&
+    Math.max(t1Eff, t2Pen, t3Pen) >= nudgeGrowthTokens;
+  const growthReady =
+    firstSightMassReady || growthSinceReference >= growthFloor;
   const t2Count = tiers[2]?.targetBlocks.length ?? 0;
   const t3Count = tiers[3]?.targetBlocks.length ?? 0;
 
@@ -1199,7 +1221,6 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       candidates.push(2, 3);
     }
     let best: CompressionTier | null = null;
-    let bestPending = 0;
     for (const t of candidates) {
       const p = tiers[t]?.pending ?? 0;
       if (p > bestPending) {
@@ -1207,7 +1228,10 @@ function decideNudge(input: NudgeInput): NudgeDecision {
         best = t;
       }
     }
-    if (best !== null && bestPending > 0) {
+    // Minimum-benefit gate (#198): a sub-threshold pending can never look
+    // actionable, no matter how hot the band is — otherwise every "success"
+    // resets the baselines and the same EMERGENCY nudge re-injects each turn.
+    if (best !== null && bestPending >= minPressureBenefit) {
       injectedTier = best;
       const label = emergencyOverride ? "EMERGENCY" : "OVER-LIMIT";
       injectedReason =
@@ -1253,13 +1277,19 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   }
 
   const shouldInject = injectedTier !== null;
+  if (shouldInject && firstSightMassReady) {
+    injectedReason += " [first-sight mass]";
+  }
 
   let reason: string;
   if (injectedTier !== null) {
     reason = injectedReason;
   } else if (pressure) {
     const label = emergencyOverride ? "EMERGENCY" : "OVER-LIMIT";
-    reason = `${label}: usage ${Math.round(usage * 100)}% but no tier has effective compressible content (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — nudge suppressed to avoid offering ranges below minCompressRange`;
+    reason =
+      bestPending === 0
+        ? `${label}: usage ${Math.round(usage * 100)}% but no tier has effective compressible content (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — nudge suppressed to avoid offering ranges below minCompressRange`
+        : `${label}: usage ${Math.round(usage * 100)}% but max pending ${bestPending} < min benefit ${minPressureBenefit} tokens (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — suppressed: rewriting below the benefit floor reclaims almost nothing while usage stays high; truncate.threshold remains the safety valve`;
    } else {
     const tiersList = [1, 2, 3] as const;
     const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
@@ -1336,6 +1366,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       hasPendingNudge: hasPendingNudge ? 1 : 0,
       overLimit: overLimit ? 1 : 0,
       emergencyOverride: emergencyOverride ? 1 : 0,
+      minPressureBenefit,
       pendingT1: tiers[1]!.pending,
       pendingT2: tiers[2]!.pending,
       pendingT3: tiers[3]!.pending,
@@ -1374,6 +1405,27 @@ function computeContextBreakdown(
     }
   }
   return { system, tool, summaries, code, text, total, growth };
+}
+
+function cloneState(state: CompressionState): CompressionState {
+  return {
+    blocks: state.blocks.map((block) => ({
+      ...block,
+      directMessageIds: [...block.directMessageIds],
+      effectiveMessageIds: [...block.effectiveMessageIds],
+      directBlockIds: [...block.directBlockIds],
+    })),
+    messageRefs: {
+      byRaw: { ...state.messageRefs.byRaw },
+      byRef: { ...state.messageRefs.byRef },
+    },
+    tokenSnapshot: { ...(state.tokenSnapshot ?? {}) },
+    nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
+    stats: { ...state.stats },
+    absorbed: (state.absorbed ?? []).map((record) => ({ ...record })),
+    nextBlockId: state.nextBlockId,
+    nextRunId: state.nextRunId,
+  };
 }
 
 function scoreRelevance(block: CompressionBlock, terms: string[]): number {

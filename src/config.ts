@@ -70,6 +70,13 @@ export function validateConfig(config: Config): string[] {
       "nudge.maxContextLimitPct must not exceed nudge.emergencyThresholdPct",
     );
   }
+  if (
+    config.nudge.minPressureBenefitTokens !== undefined &&
+    (!Number.isFinite(config.nudge.minPressureBenefitTokens) ||
+      config.nudge.minPressureBenefitTokens < 0)
+  ) {
+    errors.push("nudge.minPressureBenefitTokens must be finite and >= 0");
+  }
   if (config.promotionThreshold < 1) {
     errors.push("promotionThreshold must be >= 1");
   }

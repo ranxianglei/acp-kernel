@@ -142,6 +142,13 @@ export interface NudgeConfig {
    *  pending ≥ nudgeGrowthTokens × this multiplier AND T2 > T1 effective.
    *  Default 1.5. */
   tier2GrowthMultiplier: number;
+  /** Minimum tokens the pressure band (usage ≥ maxContextLimitPct /
+   *  emergencyThresholdPct) must be able to reclaim before injecting. Below
+   *  this, the rewrite reclaims almost nothing while high usage keeps the
+   *  band hot — each "success" resets the baselines and re-injects next turn
+   *  (zero-yield loop, #198). Default: max(5000, round(modelContextLimit ×
+   *  0.01)). Set 0 to restore the legacy any-pending behavior. */
+  minPressureBenefitTokens?: number;
 }
 
 export interface TruncateConfig {

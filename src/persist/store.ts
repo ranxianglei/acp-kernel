@@ -75,13 +75,18 @@ export interface StateStoreOptions<T> {
      */
     validate?: (envelope: PersistedEnvelope<T>) => boolean;
     /**
-     * Rename-retry policy for Windows transient locks (EPERM/EBUSY/EACCES
-     * from AV scan, search indexer, SMB). Exponential backoff: the delay
-     * after attempt i is min(retryBaseMs * 2^i, retryMaxMs). Defaults
-     * (6 attempts, 50ms base, 1600ms cap) give a ~1.5s window — long enough
-     * for most AV locks to release, short enough not to stall a sync flush.
-     * When the window is exhausted the write spills to a side file (see
-     * spillPath) instead of dropping the data.
+     * Transient-write retry policy (Windows + hostile temp environments).
+     * The whole write cycle — mkdir, temp write, rename — is retried with
+     * exponential backoff when it fails with a TRANSIENT code: EPERM/EBUSY/
+     * EACCES (a lock held by AV scan, search indexer, SMB) or ENOENT/ENOTDIR
+     * (the temp file or its directory vanished between create and rename —
+     * observed on CI Windows runners where a sweeper deletes freshly
+     * created files under %TEMP%). The delay after attempt i is
+     * min(retryBaseMs * 2^i, retryMaxMs). Defaults (6 attempts, 50ms base,
+     * 1600ms cap) give a ~1.5s window per write path — long enough for most
+     * locks to release, short enough not to stall a sync flush. When the
+     * window is exhausted the write spills to a side file (see spillPath)
+     * instead of dropping the data.
      */
     retryAttempts?: number;
     retryBaseMs?: number;
@@ -94,10 +99,12 @@ export interface StateStoreOptions<T> {
  *
  * - atomic writes: temp file + rename, so a crash mid-write never leaves a
  *   truncated record (readers see either the old or the new file)
- * - rename retries with exponential backoff on Windows transient locks
- *   (EPERM/EBUSY/EACCES); when the window is exhausted the record spills to
- *   a side file (`<name>.fb.json`) instead of being dropped, so a lock held
- *   by AV/indexer/SMB never silently loses session data
+ * - whole-cycle retries with exponential backoff on transient fs failures:
+ *   Windows locks (EPERM/EBUSY/EACCES from AV/indexer/SMB) and vanishing
+ *   files/dirs (ENOENT/ENOTDIR — a sweeper deleting fresh temp files, seen
+ *   on CI Windows runners); when the window is exhausted the record spills
+ *   to a side file (`<name>.fb.json`) instead of being dropped, so a lock
+ *   held by AV/indexer/SMB never silently loses session data
  * - per-id serialization so concurrent writeNow calls never interleave
  *   temp-file names or reorders writes
  * - debounced scheduleSave coalesces bursts into one write; the record is
@@ -209,19 +216,13 @@ export class StateStore<T> {
         }
         const file = this.resolvePath(id, payload);
         const data = JSON.stringify(this.envelope(id, payload));
-        try {
-            fs.mkdirSync(path.dirname(file), { recursive: true });
-        } catch (e) {
-            this.log("warn", `[persist] could not create dir ${path.dirname(file)}: ${errText(e)}`);
-        }
         let lastErr: unknown;
         for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
-            // Fresh temp name per attempt: on Windows a failed cleanup can
-            // leave the previous name delete-pending, and creating over a
-            // tombstoned name fails immediately — reusing it would burn every
-            // remaining attempt before the write even happens.
+            // Fresh temp name + mkdir per attempt — same reasoning as the
+            // async writeInner loop (delete-pending tombstones, swept dirs).
             const tmp = this.tempPath(file);
             try {
+                fs.mkdirSync(path.dirname(file), { recursive: true });
                 fs.writeFileSync(tmp, data, "utf8");
                 fs.renameSync(tmp, file);
                 lastErr = undefined;
@@ -233,9 +234,7 @@ export class StateStore<T> {
                 } catch {
                     // temp never created or already gone
                 }
-                const code = (e as NodeJS.ErrnoException).code;
-                if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") break;
-                if (attempt === this.retryAttempts - 1) break;
+                if (!isTransientFsError(e) || attempt === this.retryAttempts - 1) break;
                 // sync sleep (Atomics.wait) — backoff grows per attempt
                 Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, this.backoffMs(attempt));
             }
@@ -246,19 +245,23 @@ export class StateStore<T> {
             this.removeSpillSync(file);
             return true;
         }
-        // The canonical rename outlived the retry window (Windows lock held by
+        // The canonical write outlived the retry window (Windows lock held by
         // AV/indexer/SMB). Spill to a side file so the data still lands on
         // disk instead of being dropped — loadAll picks the freshest of the
-        // canonical and the spill.
+        // canonical and the spill, with its own transient retry window.
+        const spill = this.spillPathFor(file);
         let spillPath: string | null = null;
-        try {
-            const spill = this.spillPathFor(file);
-            fs.writeFileSync(spill, data, "utf8");
-            spillPath = spill;
-            this.discovered.set(id, spill);
-        } catch {
-            // spillover also failed (dir read-only / disk full) — data at risk
+        for (let attempt = 0; attempt < this.retryAttempts && spillPath === null; attempt++) {
+            try {
+                fs.mkdirSync(path.dirname(spill), { recursive: true });
+                fs.writeFileSync(spill, data, "utf8");
+                spillPath = spill;
+            } catch (e) {
+                if (!isTransientFsError(e) || attempt === this.retryAttempts - 1) break;
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, this.backoffMs(attempt));
+            }
         }
+        if (spillPath) this.discovered.set(id, spillPath);
         this.recordFailure(id, lastErr, spillPath);
         return spillPath !== null;
     }
@@ -374,38 +377,59 @@ export class StateStore<T> {
             throw e;
         }
         const file = this.resolvePath(id, payload);
-        try {
-            await fsp.mkdir(path.dirname(file), { recursive: true });
-        } catch (e) {
-            this.log("warn", `[persist] could not create dir ${path.dirname(file)}: ${errText(e)}`);
-        }
-        const tmp = this.tempPath(file);
-        const env = this.envelope(id, payload);
-        try {
-            await fsp.writeFile(tmp, JSON.stringify(env), "utf8");
-            await this.renameWithRetry(tmp, file);
-            this.discovered.set(id, file);
-            this.clearFailure(id);
-            await this.removeSpill(file);
-        } catch (e) {
-            // Clean up the .tmp orphan so the next write doesn't collide with it.
-            await fsp.unlink(tmp).catch(() => {});
-            // The canonical rename outlived the retry window (Windows lock held
-            // by AV/indexer/SMB). Spill to a side file so the data still lands
-            // on disk instead of being dropped — loadAll picks the freshest of
-            // the canonical and the spill.
-            let spillPath: string | null = null;
+        const data = JSON.stringify(this.envelope(id, payload));
+        let lastErr: unknown;
+        for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
+            // Fresh temp name per attempt: on Windows a failed cleanup can
+            // leave the previous name delete-pending, and creating over a
+            // tombstoned name fails immediately — reusing it would burn every
+            // remaining attempt before the write even happens. mkdir runs per
+            // attempt too: a sweeper may have deleted the directory after the
+            // previous cycle created it.
+            const tmp = this.tempPath(file);
             try {
-                const spill = this.spillPathFor(file);
-                await fsp.writeFile(spill, JSON.stringify(env), "utf8");
-                spillPath = spill;
-                this.discovered.set(id, spill);
-            } catch {
-                // spillover also failed (dir read-only / disk full) — data at risk
+                await fsp.mkdir(path.dirname(file), { recursive: true });
+                await fsp.writeFile(tmp, data, "utf8");
+                await fsp.rename(tmp, file);
+                this.discovered.set(id, file);
+                this.clearFailure(id);
+                await this.removeSpill(file);
+                return;
+            } catch (e) {
+                lastErr = e;
+                // Clean up the .tmp orphan so the next write doesn't collide
+                // with it.
+                await fsp.unlink(tmp).catch(() => {});
+                if (!isTransientFsError(e) || attempt === this.retryAttempts - 1) break;
+                const { promise, resolve } = Promise.withResolvers<void>();
+                setTimeout(resolve, this.backoffMs(attempt));
+                await promise;
             }
-            this.recordFailure(id, e, spillPath);
-            throw e;
         }
+        // The canonical write outlived the retry window (Windows lock held
+        // by AV/indexer/SMB, or a sweeper keeps deleting the fresh temp).
+        // Spill to a side file so the data still lands on disk instead of
+        // being dropped — loadAll picks the freshest of the canonical and
+        // the spill. The spill write gets its own transient retry window for
+        // the same reason (observed failing with ENOENT alongside the
+        // canonical on CI Windows runners).
+        const spill = this.spillPathFor(file);
+        let spillPath: string | null = null;
+        for (let attempt = 0; attempt < this.retryAttempts && spillPath === null; attempt++) {
+            try {
+                await fsp.mkdir(path.dirname(spill), { recursive: true });
+                await fsp.writeFile(spill, data, "utf8");
+                spillPath = spill;
+            } catch (e) {
+                if (!isTransientFsError(e) || attempt === this.retryAttempts - 1) break;
+                const { promise, resolve } = Promise.withResolvers<void>();
+                setTimeout(resolve, this.backoffMs(attempt));
+                await promise;
+            }
+        }
+        if (spillPath) this.discovered.set(id, spillPath);
+        this.recordFailure(id, lastErr, spillPath);
+        throw lastErr;
     }
 
     private envelope(id: string, payload: T): PersistedEnvelope<T> {
@@ -482,28 +506,6 @@ export class StateStore<T> {
 
     private clearFailure(id: string): void {
         this.failCounts.delete(id);
-    }
-
-    /** fs.rename with exponential-backoff retries on Windows transient locks
-     *  (EPERM/EBUSY/EACCES from AV scan, search indexer, SMB). Other errors
-     *  are real and rethrown immediately. */
-    private async renameWithRetry(src: string, dest: string): Promise<void> {
-        let lastErr: unknown;
-        for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
-            try {
-                await fsp.rename(src, dest);
-                return;
-            } catch (e) {
-                lastErr = e;
-                const code = (e as NodeJS.ErrnoException).code;
-                if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") throw e;
-                if (attempt === this.retryAttempts - 1) throw e;
-                const { promise, resolve } = Promise.withResolvers<void>();
-                setTimeout(resolve, this.backoffMs(attempt));
-                await promise;
-            }
-        }
-        throw lastErr;
     }
 
     /** Parse + validate one file. Corrupt or invalid records return null
@@ -590,6 +592,18 @@ function isEnvelopeLike(value: unknown): value is PersistedEnvelope<unknown> {
  *  names stay greppable. */
 export function flatFileNameFor(id: string): string {
     return createHash("sha256").update(id, "utf8").digest("hex").slice(0, 24) + ".json";
+}
+
+/** Transient fs failure codes worth retrying the whole write cycle for:
+ *  - EPERM/EBUSY/EACCES — a lock held on the file/dir (AV scan, search
+ *    indexer, SMB); releases within the backoff window.
+ *  - ENOENT/ENOTDIR — the temp file or its directory VANISHED between
+ *    create and rename (a sweeper deleting fresh files under %TEMP%, seen
+ *    on CI Windows runners), or a delete-pending tombstone from the same
+ *    sweep. Recreating the dir + rewriting a fresh temp heals it. */
+function isTransientFsError(e: unknown): boolean {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code === "EPERM" || code === "EBUSY" || code === "EACCES" || code === "ENOENT" || code === "ENOTDIR";
 }
 
 function errText(e: unknown): string {

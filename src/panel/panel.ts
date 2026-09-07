@@ -25,12 +25,13 @@ export interface StatusPanelInput {
   nudge: NudgeDecision | undefined;
   /** Configured model context window, in tokens. */
   modelContextLimit: number;
-  /** chars/4 estimate of the FULL (unpruned) core-message projection — the
-   *  same estimation scale as the kernel breakdown. When provided, the
-   *  panel derives `Session-only` on that scale (unpruned − sent). Without
-   *  it the line is omitted: subtracting the host's provider-scale number
-   *  from an estimate-scale number invents a third, meaningless scale
-   *  (issue #18 "看板统计的和拆分的有差异"). */
+  /** Estimate of the FULL (unpruned) core-message projection, computed
+   *  with the SAME countTokens the core uses (kernel default = CJK-aware
+   *  defaultCountTokens) — the same estimation scale as the kernel
+   *  breakdown. When provided, the panel derives `Session-only` on that
+   *  scale (unpruned − sent). Without it the line is omitted: subtracting
+   *  the host's provider-scale number from an estimate-scale number
+   *  invents a third, meaningless scale (issue #18 "看板统计的和拆分的有差异"). */
   unprunedTokens?: number;
   /** Per-request prompt-cache usage (from assistant messages' provider-
    *  reported `usage`). Requests without cache reporting are excluded by
@@ -53,11 +54,13 @@ function bar(value: number, total: number, width: number = 20): string {
  *    size INCLUDING compressed originals (summaries stay in the window), so
  *    it shrinks slower than the sent view when compression prunes the
  *    per-request projection.
- *  - Sent view (chars/4 est.): what actually reaches the LLM after
- *    compression (kernel's classification over the pruned projection +
- *    measured system prompt). This is the number compression controls.
- *  - Session-only (chars/4 est.): unpruned projection − sent view; the
- *    compressed originals pruned from every request.
+ *  - Sent view (estimated, kernel countTokens scale): what actually
+ *    reaches the LLM after compression (kernel's classification over the
+ *    pruned projection + measured system prompt). This is the number
+ *    compression controls.
+ *  - Session-only (estimated, kernel countTokens scale): unpruned
+ *    projection − sent view; the compressed originals pruned from every
+ *    request.
  *  Subtracting the host number from an estimate produced numbers that
  *  reconciled with neither scale ("Framework 390K", "session-only 29k vs
  *  112k compressed") — that is what issue #18 reported. */
@@ -69,7 +72,8 @@ export function buildStatusPanel(input: StatusPanelInput): string {
   const classified = bd ? bd.system + bd.tool + bd.summaries + bd.code + bd.text : 0;
   const systemPromptTokens = input.systemPromptTokens;
   const sentTotal = classified + systemPromptTokens;
-  // Same-scale derivation only: both sides are chars/4 estimates. The host
+  // Same-scale derivation only: both sides use the core's countTokens
+  // estimate (kernel default = CJK-aware defaultCountTokens). The host
   // footer's tokenCount (provider-anchored, session-tree) is displayed as
   // its own line and never fed into an arithmetic difference with these.
   const sessionOnly = input.unprunedTokens !== undefined ? Math.max(0, input.unprunedTokens - sentTotal) : 0;

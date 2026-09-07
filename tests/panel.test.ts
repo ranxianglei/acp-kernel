@@ -33,7 +33,7 @@ test("panel separates session accounting from sent view", () => {
     modelContextLimit: 1_000_000,
   });
 
-  assert.match(text, /Context \(session accounting, host footer scale\): 43% \(430k \/ 1\.0M\) — never shrinks/);
+  assert.match(text, /Context \(session accounting, host footer scale\): 43% \(430k \/ 1\.0M\) — includes compressed originals; shrinks slower than the sent view/);
   assert.match(text, /Sent to LLM \(after compression, est\.\): 24k \(2% of limit\)/);
   assert.doesNotMatch(text, /Session-only/, "omitted without unprunedTokens — no cross-scale subtraction");
   assert.match(text, /Token Breakdown \(sent view\):/);
@@ -55,7 +55,7 @@ test("panel renders blocks with topic fallback and version line", () => {
     nextRunId: 1,
   };
   const text = buildStatusPanel({ tokenCount: 1_000, systemPromptTokens: 0, state: state as never, nudge: undefined, modelContextLimit: 200_000 });
-  assert.match(text, /Blocks: 1 active \/ 1 total \(25k tokens compressed\)/);
+  assert.match(text, /Blocks: 1 active \/ 1 total \(25k tokens compressed, cumulative\)/);
   assert.match(text, /\[b1\] T1 25k→\d+.*Plugin discovery and registrat…/);
   assert.doesNotMatch(text, /acp-kernel@/, "no version line when omitted");
 });

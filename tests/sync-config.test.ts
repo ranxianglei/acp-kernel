@@ -50,6 +50,25 @@ test("syncBlocks leaves blocks intact when at least one message remains", () => 
   assert.equal(result.state.blocks[0]!.active, true);
 });
 
+test("syncBlocks keeps expanded (user-decompressed) blocks deactivated when present", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({ blockId: "b1", effectiveMessageIds: ["a", "b"], active: false, expanded: true }),
+  );
+  const result = syncBlocks([msg("a"), msg("b")], state);
+  assert.equal(result.state.blocks[0]!.active, false, "expanded block must stay deactivated");
+  assert.deepEqual(result.deactivated, [], "expanded block is not reported as orphaned");
+});
+
+test("syncBlocks re-activates a deactivated (non-expanded) block when its messages return", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({ blockId: "b1", effectiveMessageIds: ["a", "b"], active: false }),
+  );
+  const result = syncBlocks([msg("a"), msg("b")], state);
+  assert.equal(result.state.blocks[0]!.active, true, "legacy resurrection preserved for non-expanded blocks");
+});
+
 test("syncBlocks does not mutate input state", () => {
   const state = createInitialState();
   state.blocks.push(makeBlock({ blockId: "b1", effectiveMessageIds: ["x"] }));

@@ -11,8 +11,9 @@ export interface StatusPanelInput {
    *  Omit to hide the version line. */
   version?: string;
   /** Host session accounting — the SAME number the host footer displays.
-   *  It is the append-only session tree including compressed originals; it
-   *  never shrinks when compression prunes the per-request view. */
+   *  It includes compressed originals (summaries stay in the window), so it
+   *  shrinks slower than the sent view when compression prunes the
+   *  per-request projection. */
   tokenCount: number;
   /** Measured token count of the host system prompt (host-specific to
    *  obtain; the kernel breakdown does not see it). */
@@ -49,9 +50,10 @@ function bar(value: number, total: number, width: number = 20): string {
 
 /** Render the /acp status panel. Three token numbers, each labeled with
  *  its own scale, never mixed in arithmetic:
- *  - Session accounting (host footer scale): the append-only session tree
- *    INCLUDING compressed originals. It never shrinks — adapter pruning is
- *    a per-request transform view the host cannot see.
+ *  - Session accounting (host footer scale): the host's reported context
+ *    size INCLUDING compressed originals (summaries stay in the window), so
+ *    it shrinks slower than the sent view when compression prunes the
+ *    per-request projection.
  *  - Sent view (estimated, kernel countTokens scale): what actually
  *    reaches the LLM after compression (kernel's classification over the
  *    pruned projection + measured system prompt). This is the number
@@ -88,7 +90,7 @@ export function buildStatusPanel(input: StatusPanelInput): string {
   lines.push("╰─────────────────────────────────────────────╯");
   if (input.version) lines.push(input.version);
   lines.push("");
-  lines.push(`Context (session accounting, host footer scale): ${displayPct}% (${fmt(displayTotal)} / ${fmt(limit)}) — never shrinks; includes compressed originals`);
+  lines.push(`Context (session accounting, host footer scale): ${displayPct}% (${fmt(displayTotal)} / ${fmt(limit)}) — includes compressed originals; shrinks slower than the sent view`);
 
   if (nudge && bd) {
     const growth = bd.growth;
@@ -149,7 +151,7 @@ export function buildStatusPanel(input: StatusPanelInput): string {
 
   if (activeBlocksList.length > 0) {
     lines.push("");
-    lines.push(`Blocks: ${activeBlocksList.length} active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed)`);
+    lines.push(`Blocks: ${activeBlocksList.length} active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed, cumulative)`);
     for (const b of activeBlocksList) {
       const topic = b.topic ? `: ${b.topic}` : `: ${topicFallback(b.summary || "")}`;
       const summaryTok = defaultCountTokens(b.summary || "");
@@ -158,7 +160,7 @@ export function buildStatusPanel(input: StatusPanelInput): string {
     }
   } else if (totalBlocksList.length > 0) {
     lines.push("");
-    lines.push(`Blocks: 0 active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed)`);
+    lines.push(`Blocks: 0 active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed, cumulative)`);
   } else {
     lines.push("");
     lines.push("Blocks: none (nothing compressed yet)");

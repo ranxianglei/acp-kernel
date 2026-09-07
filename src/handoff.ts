@@ -9,10 +9,26 @@ export interface HandoffMeta {
   extraBullets?: string[];
 }
 
+export interface HandoffBlockFull {
+  blockId: string;
+  topic?: string;
+  count: number;
+  fullText: string;
+}
+
 export interface HandoffInput {
   coreMessages: CoreMessage[];
   state: CompressionState;
   full: boolean;
+  /** coreMessages is an already-pruned persisted snapshot (#401 bounded
+   *  folded tail): render it as-is instead of re-running prune() — its
+   *  message ids no longer align with the state ranges, so pruning would
+   *  resurrect dropped summaries at index 0. */
+  folded?: boolean;
+  /** Original messages per active block, recovered from the block content
+   *  cache. Appended after the conversation when full && folded — the
+   *  folded snapshot itself no longer carries the folded ranges' originals. */
+  blocksFull?: HandoffBlockFull[];
   meta: HandoffMeta;
 }
 
@@ -48,10 +64,13 @@ export function renderHandoff(input: HandoffInput): string {
   if (meta.contextTokens) lines.push(`- last context tokens: ~${meta.contextTokens}`);
   lines.push(`- compression blocks: ${state.blocks.length} (active ${state.blocks.filter((b) => b.active).length})`);
   lines.push("");
-  const view = full ? coreMessages : prune(coreMessages, state);
-  lines.push(full
+  const folded = input.folded === true;
+  const view = full || folded ? coreMessages : prune(coreMessages, state);
+  lines.push(full && !folded
     ? `## Full conversation (${coreMessages.length} messages)`
-    : `## Conversation (folded view as the model saw it, ${coreMessages.length} client messages)`);
+    : folded
+      ? `## Conversation (persisted folded snapshot, ${coreMessages.length} messages)`
+      : `## Conversation (folded view as the model saw it, ${coreMessages.length} client messages)`);
   lines.push("");
   if (view.length === 0) {
     lines.push("No conversation messages to export.");
@@ -67,6 +86,16 @@ export function renderHandoff(input: HandoffInput): string {
     lines.push(renderMessage(m));
   }
   lines.push("");
+  if (full && folded) {
+    for (const b of input.blocksFull ?? []) {
+      lines.push(`## Block ${b.blockId}${b.topic ? ` — ${b.topic}` : ""}`);
+      lines.push("");
+      lines.push(`### Original messages (${b.count})`);
+      lines.push("");
+      lines.push(b.fullText.trim());
+      lines.push("");
+    }
+  }
   return lines.join("\n");
 }
 

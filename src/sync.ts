@@ -64,6 +64,14 @@ export function syncBlocks(
       block.active = false;
       continue;
     }
+    // Host-set `expanded` = the user explicitly decompressed this block, so its
+    // deactivated state is intentional. Re-activating it here would re-fold the
+    // already-restored messages next turn (double cost + lost originals). Keep
+    // it inactive; a fresh compress of the same range creates a NEW block.
+    if (block.expanded) {
+      block.active = false;
+      continue;
+    }
     block.active = true;
     // A block whose raw messages were replaced by its rendered summary
     // (pruned view) is still present — the summary IS the block's visible

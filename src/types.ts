@@ -31,6 +31,12 @@ export interface CompressionBlock {
   survivedCount: number;
   generation: BlockGeneration;
   active: boolean;
+  /** Host-set: the user explicitly decompressed (expanded) this block, so its
+   *  deactivated state is intentional and must survive syncBlocks re-activation.
+   *  Absent/false for blocks deactivated by other means (orphan GC, tier
+   *  distillation, consumed-by-parent) — those keep the legacy resurrection
+   *  behavior. */
+  expanded?: boolean;
   durationMs?: number;
   compressCallId?: string;
   startRef?: string;

@@ -63,6 +63,16 @@ acp-kernel/
 3. **Single-owner content** — `assignRefsNode` is the sole writer of message content
 4. **GC-free** — no generational garbage collection; emergency truncation is the safety net
 5. **Platform-agnostic** — no host APIs, no file I/O, no network calls
+6. **Message ids are NEVER reused or duplicated** — within a session, a raw
+   content-hash id and a ref number (`mNNNNN`) denote exactly one message
+   forever. No ref-slot reclamation/recycling of any kind: once a number has
+   been issued it must never be re-issued, even after the message dies
+   (edited/truncated/folded). Capacity pressure is resolved by widening the
+   ref space (`REF_WIDTH`), never by recycling numbers. Rationale: hosts
+   persist refs across turns and summaries cite tags in rendered text — the
+   model can cite any number it has ever seen; a re-issued number silently
+   misattributes on decompress (wrong content, not an error). This principle
+   is why PR #176 (ref reclamation + capacity reuse) was reverted (#191).
 
 ## 3. Development Standards
 

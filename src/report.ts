@@ -108,6 +108,10 @@ export interface StatusReportOptions {
     tool?: string;
     sort?: "size" | "time" | "tool" | "age";
     limit?: number;
+    /** Flip the sorted order (newest/largest first). Default: false. */
+    reverse?: boolean;
+    /** Skip the first N rows of the sorted order (pagination). Default: 0. */
+    offset?: number;
 }
 
 export function buildStatusReport(
@@ -121,20 +125,22 @@ export function buildStatusReport(
     const toolFilter = options.tool;
     const sort = options.sort ?? "size";
     const limit = options.limit ?? 30;
+    const reverse = options.reverse ?? false;
+    const offset = Math.max(0, options.offset ?? 0);
 
     const activeBlocks = state.blocks
         .filter((b) => b.active)
         .sort((a, b) => numericPart(a.blockId) - numericPart(b.blockId));
 
     if (scope === "compressed") {
-        return renderCompressedDrilldown(activeBlocks, state, sort, limit, countTokens);
+        return renderCompressedDrilldown(activeBlocks, state, sort, limit, countTokens, reverse, offset);
     }
 
     const { visible, summaryTokens } = collectVisible(messages, state, countTokens);
 
     if (scope === "uncompressed") {
         if (view === "messages") {
-            return renderMessageDrilldown(visible, toolFilter, sort, limit);
+            return renderMessageDrilldown(visible, toolFilter, sort, limit, reverse, offset);
         }
         return renderUncompressedRanges(visible);
     }
@@ -209,7 +215,7 @@ function renderOverview(
 
     lines.push("");
     lines.push(
-        `Tip: buildStatusReport({scope:"uncompressed", view:"messages", tool:"${topTool ?? "bash"}"}) for per-message listing`,
+        `Tip: buildStatusReport({scope:"uncompressed", view:"messages", sort:"time", reverse:true, tool:"${topTool ?? "bash"}"}) for newest-first per-message listing`,
     );
     return lines.join("\n");
 }
@@ -266,11 +272,26 @@ function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
     return lines.join("\n");
 }
 
+function paginationNote(total: number, offset: number, shownCount: number): string[] {
+    if (total <= shownCount) return [];
+    const lines: string[] = [""];
+    if (shownCount === 0) {
+        lines.push(`Offset ${offset} past end (${total} total).`);
+    } else if (offset > 0) {
+        lines.push(`Showing ${offset + 1}–${offset + shownCount} of ${total}.`);
+    } else {
+        lines.push(`${shownCount} of ${total} shown.`);
+    }
+    return lines;
+}
+
 function renderMessageDrilldown(
     visible: VisibleMessageInfo[],
     toolFilter: string | undefined,
     sort: string,
     limit: number,
+    reverse: boolean,
+    offset: number,
 ): string {
     let filtered = visible;
     if (toolFilter) filtered = filtered.filter((m) => m.tool === toolFilter);
@@ -279,20 +300,19 @@ function renderMessageDrilldown(
     else if (sort === "tool") filtered.sort((a, b) => a.tool.localeCompare(b.tool) || b.tokens - a.tokens);
     else filtered.sort((a, b) => b.tokens - a.tokens);
 
+    if (reverse) filtered.reverse();
+
     const totalTokens = filtered.reduce((s, m) => s + m.tokens, 0);
     const allTokens = visible.reduce((s, m) => s + m.tokens, 0);
     const header = toolFilter
         ? `UNCOMPRESSED — ${toolFilter}: ${formatTokens(totalTokens)} | ${filtered.length} msgs | ${pct(totalTokens, allTokens)}% of visible`
         : `UNCOMPRESSED — ${formatTokens(totalTokens)} | ${filtered.length} msgs`;
-    const lines = [header, `Sorted by ${sort}`, ""];
-    const shown = filtered.slice(0, limit);
+    const lines = [header, `Sorted by ${sort}${reverse ? " (reverse)" : ""}`, ""];
+    const shown = filtered.slice(offset, offset + limit);
     for (const message of shown) {
         lines.push(`  ${message.ref} (${formatTokens(message.tokens)}) ${message.tool}`);
     }
-    if (filtered.length > shown.length) {
-        lines.push("");
-        lines.push(`${shown.length} of ${filtered.length} shown.`);
-    }
+    lines.push(...paginationNote(filtered.length, offset, shown.length));
     return lines.join("\n");
 }
 
@@ -302,6 +322,8 @@ function renderCompressedDrilldown(
     sort: string,
     limit: number,
     countTokens: (t: string) => number,
+    reverse: boolean,
+    offset: number,
 ): string {
     let sorted = [...blocks];
     if (sort === "time") sorted.sort((a, b) => a.createdAt - b.createdAt);
@@ -314,6 +336,8 @@ function renderCompressedDrilldown(
                 b.createdAt - a.createdAt,
         );
 
+    if (reverse) sorted.reverse();
+
     const totalSummary = sorted.reduce((s, b) => s + summaryTokensOf(b, countTokens), 0);
     const totalEffective = sorted.reduce(
         (s, b) => s + effectiveCompressedTokens(b, state, countTokens),
@@ -325,7 +349,7 @@ function renderCompressedDrilldown(
     const breakdown = tierBreakdown(sorted, countTokens);
     if (breakdown) lines.push(`Tier usage: ${breakdown}`);
     lines.push("");
-    const shown = sorted.slice(0, limit);
+    const shown = sorted.slice(offset, offset + limit);
     for (const block of shown) {
         const nested = block.directBlockIds.length > 0 ? ` nested=[${block.directBlockIds.join(",")}]` : "";
         const topic = block.topic ?? "(no topic)";
@@ -335,10 +359,7 @@ function renderCompressedDrilldown(
         );
         lines.push(`    "${topic}"`);
     }
-    if (sorted.length > shown.length) {
-        lines.push("");
-        lines.push(`${shown.length} of ${sorted.length} shown.`);
-    }
+    lines.push(...paginationNote(sorted.length, offset, shown.length));
     return lines.join("\n");
 }
 

@@ -245,6 +245,91 @@ test("buildCompressibleRanges: does NOT split before a group reaches 3 messages"
   assert.equal(ranges.compressible[0]!.count, 3);
 });
 
+// ─── Surface-replacing hosts (#207): array-adjacency segmentation ─────────────
+
+test("buildCompressibleRanges: ref-map holes do NOT fragment ranges (surface-replace host)", () => {
+  // Turn 1 assigns m00001..m00005. A compression then durably replaces b..d on
+  // the surface: they leave the next turn's message array while their refs stay
+  // assigned (append-only map, never pruned). Ref-arithmetic segmentation saw
+  // 5 > 1+1 and emitted two singletons; array adjacency sees a and e as array
+  // neighbors and emits one range.
+  const a = msg("a", "x".repeat(2000));
+  const e = msg("e", "v".repeat(2000));
+  const state = assignAll([a, msg("b", "y"), msg("c", "z"), msg("d", "w"), e]);
+  const ranges = buildCompressibleRanges([a, e], state, config());
+  assert.equal(ranges.compressible.length, 1, "holes in the ref map must not split the range");
+  assert.equal(ranges.compressible[0]!.startRef, "m00001");
+  assert.equal(ranges.compressible[0]!.endRef, "m00005");
+  assert.equal(ranges.compressible[0]!.count, 2);
+});
+
+test("buildCompressibleRanges: mid-array summary node extends the range, never a descending pair", () => {
+  // Surface-replace host inserts the model's summary node at the replaced span's
+  // position. assignRefs gives it a fresh HIGH ref (m00006) while the trailing
+  // message keeps m00005 — ref arithmetic flushed the head and emitted the
+  // nonsense pair m00006..m00005. Array adjacency treats the node as a regular
+  // entry: one ascending range over the whole span.
+  const a = msg("a", "x".repeat(2000), "assistant");
+  const d = msg("d", "w".repeat(2000), "assistant");
+  const e = msg("e", "v".repeat(2000), "assistant");
+  const summary = msg("s", "Summary of the compressed span: did the work.", "assistant");
+  const s1 = assignAll([a, msg("b", "y"), msg("c", "z"), d, e]);
+  const state = assignAll([a, summary, d, e], s1);
+  assert.equal(state.messageRefs.byRaw["s"], "m00006", "summary node gets a fresh high ref");
+  const ranges = buildCompressibleRanges([a, summary, d, e], state, config());
+  assert.equal(ranges.compressible.length, 1, "mid-array summary node must not flush the range");
+  assert.equal(ranges.compressible[0]!.startRef, "m00001");
+  assert.equal(ranges.compressible[0]!.endRef, "m00005");
+  assert.equal(ranges.compressible[0]!.count, 4);
+});
+
+test("buildCompressibleRanges: synthetic (covered) summary node still splits ranges", () => {
+  // A summary node detected via the "[Compressed conversation section]" prefix
+  // (or active-block coverage) is intentionally skipped — a skipped numbered
+  // message between two entries is a real interruption, unlike a numeric hole
+  // where nothing is physically present between them.
+  const a = msg("a", "x".repeat(2000));
+  const e = msg("e", "v".repeat(2000));
+  const synthetic = msg("s", "[Compressed conversation section] earlier work summarized.", "assistant");
+  const s1 = assignAll([a, msg("b", "y"), msg("c", "z"), msg("d", "w"), e]);
+  const state = assignAll([a, synthetic, e], s1);
+  const ranges = buildCompressibleRanges([a, synthetic, e], state, config());
+  assert.equal(ranges.compressible.length, 2, "covered span must not be folded into the new range");
+  assert.equal(ranges.compressible[0]!.startRef, "m00001");
+  assert.equal(ranges.compressible[0]!.endRef, "m00001");
+  assert.equal(ranges.compressible[1]!.startRef, "m00005");
+  assert.equal(ranges.compressible[1]!.endRef, "m00005");
+});
+
+test("buildCompressibleRanges: protected groups segment by array adjacency too", () => {
+  // A compressible message physically between two protected tool-calls splits
+  // them (dense-host behavior preserved); a bare ref-map hole does not.
+  const p1 = toolMsg("p1", "skill");
+  const p2 = toolMsg("p2", "skill");
+  const dense = createInitialState();
+  dense.messageRefs = {
+    byRaw: { p1: "m00001", x: "m00002", p2: "m00003" },
+    byRef: { m00001: "p1", m00002: "x", m00003: "p2" },
+  };
+  const denseRanges = buildCompressibleRanges(
+    [p1, msg("x", "y"), p2],
+    dense,
+    config({ protectedTools: ["skill"] }),
+  );
+  assert.equal(denseRanges.protected.length, 2, "interleaved non-protected message splits protected groups");
+
+  const holed = createInitialState();
+  holed.messageRefs = {
+    byRaw: { p1: "m00001", p2: "m00005" },
+    byRef: { m00001: "p1", m00005: "p2" },
+  };
+  const holedRanges = buildCompressibleRanges([p1, p2], holed, config({ protectedTools: ["skill"] }));
+  assert.equal(holedRanges.protected.length, 1, "hole in the ref map must not split the protected group");
+  assert.equal(holedRanges.protected[0]!.count, 2);
+  assert.equal(holedRanges.protected[0]!.startRef, "m00001");
+  assert.equal(holedRanges.protected[0]!.endRef, "m00005");
+});
+
 // ─── Integration: 19-token bug fix ─────────────────────────────────────────────
 
 test("integration: tiny ranges are suppressed — fixes the 19-token compression bug", () => {

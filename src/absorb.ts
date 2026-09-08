@@ -1,6 +1,12 @@
 import { rawForRef, refForRaw, BLOCKED_REF } from "./refs.js";
 import { ACP_TOOL_NAMES, ABSORB_TOOL_NAME } from "./compress-tools.js";
-import { isMessageProtected, matchToolPattern } from "./protected.js";
+import {
+  collectLatestProtected,
+  isMessageLatestProtected,
+  isMessageProtected,
+  matchToolPattern,
+  type LatestProtected,
+} from "./protected.js";
 import type {
   AbsorbConfig,
   AbsorbRecord,
@@ -74,11 +80,16 @@ function isAcpOrConfiguredTool(
 
 /** True when a tool-result message is in scope for absorption prompting:
  *  a tool-result of a non-ACP, non-excluded, non-protected tool. */
-export function isAbsorbCandidate(msg: CoreMessage, config: Config): boolean {
+export function isAbsorbCandidate(
+  msg: CoreMessage,
+  config: Config,
+  latest?: LatestProtected,
+): boolean {
   if (msg.contentType !== "tool-result" || !msg.toolCallId) return false;
   const cfg = resolveAbsorbConfig(config);
   if (isAcpOrConfiguredTool(msg.toolName, cfg)) return false;
   if (isMessageProtected(msg, config)) return false;
+  if (latest && isMessageLatestProtected(msg, latest)) return false;
   for (const pattern of cfg.excludeTools) {
     if (msg.toolName && matchToolPattern(msg.toolName, pattern)) return false;
   }
@@ -136,8 +147,9 @@ export function appendAbsorbPrompts(
   }
 
   let promptedCount = 0;
+  const latest = collectLatestProtected(messages, config);
   const out = messages.map((msg) => {
-    if (!isAbsorbCandidate(msg, config)) return msg;
+    if (!isAbsorbCandidate(msg, config, latest)) return msg;
     if (absorbedIds.has(msg.id)) return msg;
     const text = msg.text ?? "";
     if (text.includes(ABSORB_PROMPT_MARKER)) return msg;
@@ -284,7 +296,13 @@ export function applyAbsorb(input: AbsorbInput): AbsorbOutcome {
       resultText: `absorb failed: ${target.toolName} is an ACP-managed tool result — it is not absorbable.`,
     };
   }
-  if (isMessageProtected(target, input.config)) {
+  if (
+    isMessageProtected(target, input.config) ||
+    isMessageLatestProtected(
+      target,
+      collectLatestProtected(input.messages, input.config),
+    )
+  ) {
     return {
       state: input.state,
       ok: false,

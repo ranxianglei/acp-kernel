@@ -178,6 +178,12 @@ export interface Config {
   compress: CompressValidationConfig;
   protectedTools: string[];
   isToolProtected?: (toolName: string, toolInputText?: string) => boolean;
+  /** Tool-name patterns (glob suffix allowed) protected in their LATEST
+   *  instance only: the newest matching tool-call and its paired tool-result
+   *  are protected from compression; older instances remain compressible. For
+   *  cumulative-snapshot tools (e.g. todo_list) where only the newest result
+   *  is the source of truth. */
+  protectedLatestTools?: string[];
   preserveRecentMessages: number;
   preserveRecentTokens: number;
   modelContextLimit: number;

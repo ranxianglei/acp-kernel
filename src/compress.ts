@@ -18,7 +18,11 @@ import { appendAbsorbPrompts, hideAbsorbedMessages } from "./absorb.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
 import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
-import { isMessageProtected } from "./protected.js";
+import {
+  collectLatestProtected,
+  isMessageLatestProtected,
+  isMessageProtected,
+} from "./protected.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import { adjustBoundariesForReasoningPairs } from "./reasoning-pairs.js";
 import {
@@ -500,9 +504,16 @@ const assignRefsNode: PipelineNode = {
   name: "assign-refs",
   run(io, ctx) {
     const hasProtection =
-      ctx.config.protectedTools.length > 0 || !!ctx.config.isToolProtected;
+      ctx.config.protectedTools.length > 0 ||
+      !!ctx.config.isToolProtected ||
+      (ctx.config.protectedLatestTools?.length ?? 0) > 0;
+    const latest = hasProtection
+      ? collectLatestProtected(io.messages, ctx.config)
+      : undefined;
     const protectedFn = hasProtection
-      ? (m: CoreMessage) => isMessageProtected(m, ctx.config)
+      ? (m: CoreMessage) =>
+          isMessageProtected(m, ctx.config) ||
+          (latest ? isMessageLatestProtected(m, latest) : false)
       : undefined;
     const refResult = assignRefs(io.messages, {
       existing: io.state.messageRefs,
@@ -992,6 +1003,8 @@ function filterProtectedToolMessages(
   // nothing auto-appended.
   const protectedCallIds = new Set<string>();
   const removedIds = new Set<string>();
+  const latest = collectLatestProtected(messages, config);
+  for (const id of latest.callIds) protectedCallIds.add(id);
   for (const msg of messages) {
     if (isMessageProtected(msg, config) && msg.toolCallId) {
       protectedCallIds.add(msg.toolCallId);
@@ -1001,7 +1014,10 @@ function filterProtectedToolMessages(
   for (const id of directMessageIds) {
     const msg = messages.find((m) => m.id === id);
     if (!msg) continue;
-    if (isMessageProtected(msg, config)) {
+    if (
+      isMessageProtected(msg, config) ||
+      isMessageLatestProtected(msg, latest)
+    ) {
       removedIds.add(id);
       if (msg.toolCallId) protectedCallIds.add(msg.toolCallId);
     }

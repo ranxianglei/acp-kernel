@@ -147,7 +147,13 @@ export {
   getSearchAlgorithm,
   listSearchAlgorithms,
 } from "./search.js";
-export { isMessageProtected, matchToolPattern } from "./protected.js";
+export {
+  collectLatestProtected,
+  isMessageLatestProtected,
+  isMessageProtected,
+  matchToolPattern,
+  type LatestProtected,
+} from "./protected.js";
 export {
   runPipeline,
   makeIO,

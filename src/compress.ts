@@ -72,6 +72,11 @@ export interface ProcessTurnInput {
   state: CompressionState;
   config: Config;
   tokenCount: number;
+  /** Host-side prompt mass the kernel cannot see (replayed reasoning that
+   *  will be sent despite reasoningReplay, provider-mandated metadata, …).
+   *  Folded into every usage/pressure decision downstream. Hosts that pass
+   *  it must do so consistently — cadence baselines persist tokenCount. */
+  extraTokens?: number;
   /**
    * Which messages get an <acp> ref tag injected into their text
    * (the render-refs pipeline node). Refs are ALWAYS assigned regardless
@@ -399,7 +404,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
     }
     const ctx: PipelineContext = {
       config: input.config,
-      tokenCount: input.tokenCount,
+      tokenCount: input.tokenCount + (input.extraTokens ?? 0),
       countTokens,
     };
     const initial: NodeIO = {
@@ -468,6 +473,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
       assignRefsNode,
       syncBlocksNode,
       pruneNode,
+      stripReasoningNode,
       absorbHideNode,
       absorbPromptNode,
       filterNode,
@@ -526,6 +532,41 @@ const pruneNode: PipelineNode = {
   name: "prune",
   run(io) {
     return { ...io, messages: prune(io.messages, io.state) };
+  },
+};
+
+// History thinking is dead weight once its round closes — providers only
+// require reasoning replay for the current unresolved round (Anthropic
+// signature validation, Gemini thought_signature) — and on protected
+// (compress-carrying) messages it is excluded from every compression
+// selection, forming a permanently-incompressible floor that grows with
+// each compression (billion-context-pi #336 / opencode-acp #368).
+const stripReasoningNode: PipelineNode = {
+  name: "strip-reasoning",
+  run(io, ctx) {
+    const policy = ctx.config.reasoningReplay ?? "always";
+    if (policy === "always") return io;
+    const messages = io.messages;
+    if (policy === "never") {
+      const kept = messages.filter((m) => m.contentType !== "reasoning");
+      return kept.length === messages.length ? io : { ...io, messages: kept };
+    }
+    let boundary = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]!;
+      if (m.role === "user" && m.contentType === "text") {
+        boundary = i;
+        break;
+      }
+    }
+    if (boundary < 0) return io;
+    let changed = false;
+    const kept = messages.filter((m, i) => {
+      if (m.contentType !== "reasoning" || i >= boundary) return true;
+      changed = true;
+      return false;
+    });
+    return changed ? { ...io, messages: kept } : io;
   },
 };
 

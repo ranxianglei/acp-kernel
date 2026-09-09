@@ -28,6 +28,7 @@ test("defaultNodes exposes the canonical ordered pipeline", () => {
     "assign-refs",
     "sync-blocks",
     "prune",
+    "strip-reasoning",
     "absorb-hide",
     "absorb-prompt",
     "filter",

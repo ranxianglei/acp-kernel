@@ -83,6 +83,22 @@ interface SummaryAnchor {
   insertAt: number;
 }
 
+// Blocks record the core ids that existed at compression time (`base`,
+// `base#callId`, …). Later projections of the same original message (`base#r0`)
+// share the base id, so coverage is decided on the base: a block that covered
+// any projection of an original message covered all of them.
+function isCovered(id: string, covered: Set<string>): boolean {
+  if (covered.has(id)) return true;
+  const hash = id.indexOf("#");
+  if (hash <= 0) return false;
+  const base = id.substring(0, hash);
+  if (covered.has(base)) return true;
+  for (const coveredId of covered) {
+    if (coveredId.startsWith(`${base}#`)) return true;
+  }
+  return false;
+}
+
 function collectSummaryAnchors(
   state: CompressionState,
   indexById: Map<string, number>,
@@ -141,7 +157,7 @@ function rebuildMessages(
       result.push(messages[index]!);
       continue;
     }
-    if (covered.has(messages[index]!.id)) continue;
+    if (isCovered(messages[index]!.id, covered)) continue;
     // A stale copy of this block's summary from a previously-pruned view:
     // the freshly rendered one above replaces it. Only rendered-summary
     // shaped messages qualify — a host message that merely reuses the

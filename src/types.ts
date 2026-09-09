@@ -168,6 +168,8 @@ export interface CompressValidationConfig {
   minSummaryLength: number;
 }
 
+export type ReasoningReplayPolicy = "always" | "open-round" | "never";
+
 export interface Config {
   tiers: TierConfig;
   nudge: NudgeConfig;
@@ -177,6 +179,18 @@ export interface Config {
   truncate: TruncateConfig;
   compress: CompressValidationConfig;
   protectedTools: string[];
+  /** Reasoning-block replay policy for the visible view. History replay is
+   *  only required by providers for the CURRENT unresolved round (Anthropic
+   *  thinking-signature validation, Gemini thought_signature on tool calls),
+   *  so gating on turn closure is provider-agnostic.
+   *  - "always" (default): keep every reasoning message (legacy behavior).
+   *  - "open-round": drop reasoning from closed history (strictly before the
+   *    last genuine user text message); keep the open round intact.
+   *  - "never": drop all reasoning messages.
+   *  Reasoning that rides on protected (compress-carrying) assistant
+   *  messages is the largest permanently-incompressible floor otherwise
+   *  (billion-context-pi #336 / opencode-acp #368). */
+  reasoningReplay?: ReasoningReplayPolicy;
   isToolProtected?: (toolName: string, toolInputText?: string) => boolean;
   preserveRecentMessages: number;
   preserveRecentTokens: number;

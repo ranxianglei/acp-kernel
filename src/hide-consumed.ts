@@ -19,28 +19,69 @@ function rangeKey(startRef: string, endRef: string): string {
     return `${startRef}::${endRef}`;
 }
 
-function rewriteCompressText(text: string | undefined, liveKeys: Set<string>): string | null {
+function parseCallText(text: string | undefined): { prefix: string; obj: Record<string, unknown>; content: unknown[] } | null {
+    const raw = text ?? "";
+    const start = raw.indexOf("{");
+    if (start < 0) return null;
     let parsed: unknown;
     try {
-        parsed = JSON.parse(text ?? "");
+        parsed = JSON.parse(raw.slice(start));
     } catch {
         return null;
     }
     if (!parsed || typeof parsed !== "object") return null;
-    const obj = parsed as { content?: unknown };
-    const content = obj.content;
-    if (!Array.isArray(content) || content.length === 0) return null;
+    const obj = parsed as Record<string, unknown>;
+    if (!Array.isArray(obj.content) || obj.content.length === 0) return null;
+    return { prefix: raw.slice(0, start), obj, content: obj.content };
+}
+
+function rewriteCompressText(text: string | undefined, liveKeys: Set<string>): string | null {
+    const parsed = parseCallText(text);
+    if (!parsed) return null;
+    const { prefix, obj, content } = parsed;
 
     const kept = content.filter((entry): entry is Record<string, unknown> => {
         if (!entry || typeof entry !== "object") return false;
-        const s = typeof entry.startId === "string" ? entry.startId : typeof entry.messageId === "string" ? entry.messageId : "";
-        const e = typeof entry.endId === "string" ? entry.endId : typeof entry.messageId === "string" ? entry.messageId : "";
-        return liveKeys.has(rangeKey(s, e));
+        const e = entry as Record<string, unknown>;
+        const s = typeof e.startId === "string" ? e.startId : typeof e.messageId === "string" ? e.messageId : "";
+        const end = typeof e.endId === "string" ? e.endId : typeof e.messageId === "string" ? e.messageId : "";
+        return liveKeys.has(rangeKey(s, end));
     });
 
-    if (kept.length === content.length || kept.length === 0) return null;
+    if (kept.length === 0) return null;
 
-    return JSON.stringify({ ...obj, content: kept });
+    return prefix + serializeCompacted(obj, kept).text;
+}
+
+// Live compress-call args duplicate every range's full summary text while
+// the rendered acp_summary message already carries it — on long sessions the
+// duplication alone measured ~22K tokens (billion-context-pi #336). Keep the
+// leading stub for recall; the block remains the durable record.
+const SUMMARY_STUB_CHARS = 200;
+
+function compactEntry(entry: unknown): unknown {
+    if (!entry || typeof entry !== "object") return entry;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.summary !== "string" || e.summary.length <= SUMMARY_STUB_CHARS) return entry;
+    return { ...e, summary: `${e.summary.slice(0, SUMMARY_STUB_CHARS - 1)}…` };
+}
+
+function serializeCompacted(obj: Record<string, unknown>, content: unknown[]): { text: string; changed: boolean } {
+    let changed = false;
+    const compacted = content.map((entry) => {
+        const out = compactEntry(entry);
+        if (out !== entry) changed = true;
+        return out;
+    });
+    return { text: JSON.stringify({ ...obj, content: compacted }), changed };
+}
+
+function compactCompressText(text: string | undefined): string | null {
+    const parsed = parseCallText(text);
+    if (!parsed) return null;
+    const { prefix, obj, content } = parsed;
+    const { text: out, changed } = serializeCompacted(obj, content);
+    return changed ? prefix + out : null;
 }
 
 export function hideConsumedCompressCalls(
@@ -123,6 +164,11 @@ export function hideConsumedCompressCalls(
                     result.push({ ...message, text: rewritten });
                     continue;
                 }
+            }
+            const compacted = compactCompressText(message.text);
+            if (compacted !== null) {
+                result.push({ ...message, text: compacted });
+                continue;
             }
         }
         result.push(message);

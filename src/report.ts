@@ -1,5 +1,6 @@
 import { refForRaw } from "./refs.js";
 import { isToolMessage } from "./recommend.js";
+import { baseIdOf } from "./prune.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "./types.js";
 
 function formatTokens(n: number): string {
@@ -72,7 +73,7 @@ function collectVisible(
     const coveredIds = new Set<string>();
     for (const block of state.blocks) {
         if (!block.active) continue;
-        for (const id of block.effectiveMessageIds) coveredIds.add(id);
+        for (const id of block.effectiveMessageIds) coveredIds.add(baseIdOf(id));
     }
     let summaryTokens = 0;
     for (const block of state.blocks) {
@@ -90,7 +91,7 @@ function collectVisible(
         }
     }
     messages.forEach((message, index) => {
-        if (coveredIds.has(message.id)) return;
+        if (coveredIds.has(baseIdOf(message.id))) return;
         const ref = refForRaw(state.messageRefs, message.id);
         if (!ref) return;
         const tokens = countTokens(message.text ?? "");

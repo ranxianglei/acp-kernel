@@ -19,28 +19,92 @@ function rangeKey(startRef: string, endRef: string): string {
     return `${startRef}::${endRef}`;
 }
 
-function rewriteCompressText(text: string | undefined, liveKeys: Set<string>): string | null {
+// Adapters (pi) persist the rendered ref tag in front of the tool-call text,
+// so the JSON args no longer start at index 0. Locate the first "{" instead of
+// parsing the raw text — the prefix is preserved on output.
+function parseCallText(text: string | undefined): { prefix: string; obj: Record<string, unknown>; content: unknown[]; contentWasString: boolean } | null {
+    const raw = text ?? "";
+    const start = raw.indexOf("{");
+    if (start < 0) return null;
     let parsed: unknown;
     try {
-        parsed = JSON.parse(text ?? "");
+        parsed = JSON.parse(raw.slice(start));
     } catch {
         return null;
     }
     if (!parsed || typeof parsed !== "object") return null;
-    const obj = parsed as { content?: unknown };
-    const content = obj.content;
-    if (!Array.isArray(content) || content.length === 0) return null;
+    const obj = parsed as Record<string, unknown>;
+    let content: unknown[] | null = null;
+    let contentWasString = false;
+    if (Array.isArray(obj.content)) {
+        content = obj.content;
+    } else if (typeof obj.content === "string") {
+        // Non-strict-tool providers (qwen etc.) sometimes stringify the content
+        // array inside the JSON args; the compress tool accepts it, so the
+        // rewrite must too. Measured: ALL 52 calls in the billion-context-pi
+        // #336 storm session used this form (#230).
+        contentWasString = true;
+        try {
+            const inner: unknown = JSON.parse(obj.content);
+            if (Array.isArray(inner)) content = inner;
+        } catch {
+            content = null;
+        }
+    }
+    if (!content || content.length === 0) return null;
+    return { prefix: raw.slice(0, start), obj, content, contentWasString };
+}
+
+function rewriteCompressText(text: string | undefined, liveKeys: Set<string>): string | null {
+    const parsed = parseCallText(text);
+    if (!parsed) return null;
+    const { prefix, obj, content, contentWasString } = parsed;
 
     const kept = content.filter((entry): entry is Record<string, unknown> => {
         if (!entry || typeof entry !== "object") return false;
-        const s = typeof entry.startId === "string" ? entry.startId : typeof entry.messageId === "string" ? entry.messageId : "";
-        const e = typeof entry.endId === "string" ? entry.endId : typeof entry.messageId === "string" ? entry.messageId : "";
-        return liveKeys.has(rangeKey(s, e));
+        const e = entry as Record<string, unknown>;
+        const s = typeof e.startId === "string" ? e.startId : typeof e.messageId === "string" ? e.messageId : "";
+        const end = typeof e.endId === "string" ? e.endId : typeof e.messageId === "string" ? e.messageId : "";
+        return liveKeys.has(rangeKey(s, end));
     });
 
-    if (kept.length === content.length || kept.length === 0) return null;
+    if (kept.length === 0) return null;
 
-    return JSON.stringify({ ...obj, content: kept });
+    return prefix + serializeCompacted(obj, kept, contentWasString).text;
+}
+
+// Live compress-call args duplicate every range's full summary text while the
+// rendered acp_summary message already carries it — on long sessions the
+// duplication alone measured ~22K tokens (billion-context-pi #336). Keep a
+// leading stub for recall; the block remains the durable record.
+const SUMMARY_STUB_CHARS = 200;
+
+function compactEntry(entry: unknown): unknown {
+    if (!entry || typeof entry !== "object") return entry;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.summary !== "string" || e.summary.length <= SUMMARY_STUB_CHARS) return entry;
+    return { ...e, summary: `${e.summary.slice(0, SUMMARY_STUB_CHARS - 1)}…` };
+}
+
+function serializeCompacted(obj: Record<string, unknown>, content: unknown[], contentWasString: boolean): { text: string; changed: boolean } {
+    let changed = false;
+    const compacted = content.map((entry) => {
+        const out = compactEntry(entry);
+        if (out !== entry) changed = true;
+        return out;
+    });
+    // Preserve the original shape: a stringified content array stays a string
+    // so downstream text comparisons and replays are unaffected.
+    const outContent = contentWasString ? JSON.stringify(compacted) : compacted;
+    return { text: JSON.stringify({ ...obj, content: outContent }), changed };
+}
+
+function compactCompressText(text: string | undefined): string | null {
+    const parsed = parseCallText(text);
+    if (!parsed) return null;
+    const { prefix, obj, content, contentWasString } = parsed;
+    const { text: out, changed } = serializeCompacted(obj, content, contentWasString);
+    return changed ? prefix + out : null;
 }
 
 export function hideConsumedCompressCalls(
@@ -123,6 +187,11 @@ export function hideConsumedCompressCalls(
                     result.push({ ...message, text: rewritten });
                     continue;
                 }
+            }
+            const compacted = compactCompressText(message.text);
+            if (compacted !== null) {
+                result.push({ ...message, text: compacted });
+                continue;
             }
         }
         result.push(message);

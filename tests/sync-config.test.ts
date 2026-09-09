@@ -50,6 +50,38 @@ test("syncBlocks leaves blocks intact when at least one message remains", () => 
   assert.equal(result.state.blocks[0]!.active, true);
 });
 
+test("syncBlocks keeps block active when view emits base id for sub-id block (#231)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: ["h_abc#r0", "h_abc#call1"],
+    }),
+  );
+  const result = syncBlocks([msg("h_abc")], state);
+  assert.deepEqual(result.deactivated, []);
+  assert.equal(result.state.blocks[0]!.active, true);
+});
+
+test("syncBlocks keeps block active when view emits sub-ids for base-id block (#231)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({ blockId: "b1", effectiveMessageIds: ["h_abc"] }),
+  );
+  const result = syncBlocks([msg("h_abc#r0")], state);
+  assert.deepEqual(result.deactivated, []);
+  assert.equal(result.state.blocks[0]!.active, true);
+});
+
+test("syncBlocks still deactivates when the base is truly gone (#231)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({ blockId: "b1", effectiveMessageIds: ["h_abc#r0"] }),
+  );
+  const result = syncBlocks([msg("h_other")], state);
+  assert.deepEqual(result.deactivated, ["b1"]);
+});
+
 test("syncBlocks does not mutate input state", () => {
   const state = createInitialState();
   state.blocks.push(makeBlock({ blockId: "b1", effectiveMessageIds: ["x"] }));

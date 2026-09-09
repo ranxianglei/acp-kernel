@@ -1,4 +1,4 @@
-import { summaryMessageId } from "./prune.js";
+import { baseIdOf, summaryMessageId } from "./prune.js";
 import type { CompressionState, CoreMessage } from "./types.js";
 
 export interface SyncResult {
@@ -11,6 +11,8 @@ export function syncBlocks(
   state: CompressionState,
 ): SyncResult {
   const presentIds = new Set(messages.map((message) => message.id));
+  const presentBases = new Set<string>();
+  for (const message of messages) presentBases.add(baseIdOf(message.id));
   const deactivated: string[] = [];
   // Deep-clone (not just `{...state}`) so the caller's input state is never
   // mutated: processTurn stamps `state.nudge.*` and reassigns `messageRefs`,
@@ -70,7 +72,7 @@ export function syncBlocks(
     // representation. Without this, hosts passing pruned views would lose
     // block activity every turn.
     const stillPresent =
-      block.effectiveMessageIds.some((id) => presentIds.has(id)) ||
+      block.effectiveMessageIds.some((id) => presentBases.has(baseIdOf(id))) ||
       presentIds.has(summaryMessageId(block.blockId));
     if (!stillPresent) {
       block.active = false;

@@ -10,10 +10,18 @@
  * processed once; later searches are O(docs × query-terms).
  *
  * Keyed by doc text (immutable). Bounded by total cached source chars —
- * oldest docs are evicted when the cap is exceeded, so a long-lived
- * process serving many sessions cannot grow unboundedly. Hosts that want to
- * release the memory eagerly on session shutdown/switch can call
- * clearDocFeatures() (optional: the cap already bounds it).
+ * least-recently-used docs are evicted when the cap is exceeded (LRU), so a
+ * long-lived process serving many sessions cannot grow unboundedly, and the
+ * docs a host keeps re-querying are the ones retained.
+ *
+ * The default cap (8MB) is a conservative bound for multi-session servers.
+ * A single-session host whose corpus exceeds it would otherwise re-tokenize
+ * (corpus − cap) on EVERY call; call setDocCacheCap() with a value ≥ corpus
+ * size (or Infinity) to cache the whole corpus once and make later calls
+ * O(docs × query-terms).
+ *
+ * Hosts that want to release the memory eagerly on session shutdown/switch
+ * can call clearDocFeatures() (optional: the cap already bounds it).
  */
 
 import { charBigrams, tfMap } from "./tokenizer.js";
@@ -44,7 +52,12 @@ function build(text: string): DocFeatures {
 
 export function docFeatures(text: string): DocFeatures {
     const hit = cache.get(text);
-    if (hit) return hit;
+    if (hit) {
+        // LRU: re-insert at the tail (most-recently-used); eviction takes from the head.
+        cache.delete(text);
+        cache.set(text, hit);
+        return hit;
+    }
     const f = build(text);
     if (text.length > 0 && text.length <= capChars) {
         while (cachedChars + text.length > capChars && cache.size > 0) {
@@ -66,7 +79,9 @@ export function clearDocFeatures(): void {
 
 /**
  * Set the cache cap in source chars. Docs larger than the cap are never
- * cached. Also used by tests to exercise eviction.
+ * cached. Pass a value ≥ the corpus size (or Infinity) to cache the whole
+ * corpus — a single-session host then avoids re-tokenizing on every call.
+ * Also used by tests to exercise eviction.
  */
 export function setDocCacheCap(chars: number): void {
     capChars = Math.max(1, chars);

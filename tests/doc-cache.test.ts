@@ -59,17 +59,48 @@ test("clearDocFeatures: forces a rebuild", () => {
   assert.equal(docCacheInfo().entries, 1);
 });
 
-test("setDocCacheCap: small cap evicts oldest, info tracks occupancy", () => {
+test("setDocCacheCap: small cap evicts least-recently-used, info tracks occupancy", () => {
   clearDocFeatures();
   setDocCacheCap(20);
   try {
     docFeatures("a".repeat(10)); // 10 chars
-    docFeatures("b".repeat(10)); // evicts "a..." (10+10 <= 20 → both fit)
+    docFeatures("b".repeat(10)); // 10+10 <= 20 → both fit, no eviction
     assert.equal(docCacheInfo().entries, 2);
     assert.equal(docCacheInfo().chars, 20);
-    docFeatures("c".repeat(15)); // evicts "a...", then "b..." (15+10 > 20)
+    docFeatures("c".repeat(15)); // 20+15 > 20 → evict LRU head (a), then (b)
     assert.equal(docCacheInfo().entries, 1);
     assert.equal(docCacheInfo().chars, 15);
+  } finally {
+    setDocCacheCap(DEFAULT_CAP);
+    clearDocFeatures();
+  }
+});
+
+test("LRU: re-accessing a doc keeps it alive (FIFO would evict it)", () => {
+  clearDocFeatures();
+  setDocCacheCap(25);
+  try {
+    const a = docFeatures("a".repeat(10)); // cache [a]
+    docFeatures("b".repeat(10));           // cache [a, b]
+    docFeatures("a".repeat(10));           // re-access a → LRU order [b, a]
+    docFeatures("c".repeat(15));           // 20+15>25 → evict LRU head (b); a survives
+    const a2 = docFeatures("a".repeat(10));
+    assert.equal(a2, a, "LRU must keep the re-accessed doc; FIFO would have evicted it");
+  } finally {
+    setDocCacheCap(DEFAULT_CAP);
+    clearDocFeatures();
+  }
+});
+
+test("setDocCacheCap(Infinity): whole corpus cached, no eviction", () => {
+  clearDocFeatures();
+  setDocCacheCap(Infinity);
+  try {
+    docFeatures("a".repeat(100));
+    docFeatures("b".repeat(100));
+    docFeatures("c".repeat(100));
+    assert.equal(docCacheInfo().entries, 3, "no eviction under an Infinity cap");
+    assert.equal(docCacheInfo().chars, 300);
   } finally {
     setDocCacheCap(DEFAULT_CAP);
     clearDocFeatures();

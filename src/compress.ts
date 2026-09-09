@@ -1209,6 +1209,17 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const t2Count = tiers[2]?.targetBlocks.length ?? 0;
   const t3Count = tiers[3]?.targetBlocks.length ?? 0;
 
+  // Count-triggered tier distillation is usage-gated (#237): block COUNT is
+  // a mass proxy for ~10:1-condensed summaries, so the token gates under-rate
+  // it — but below the nudge usage band there is no NEED yet, and firing on
+  // 5 tiny blocks at low usage just burns a model turn (and repetition-prone
+  // models flail against the #3 guard on the suggested rewrite). Token-mass
+  // paths (>= 1.5x threshold) stay ungated: crossing them is need by itself.
+  const tierCountUsageFloor = config.nudge.minContextLimitPct;
+  const t2CountReady =
+    t2Count >= config.tiers.tier2Trigger && usage >= tierCountUsageFloor;
+  const t3CountReady =
+    t3Count >= config.tiers.tier3Trigger && usage >= tierCountUsageFloor;
   if (pressure) {
     // High pressure: pick the tier with the MAX pending so pressure can route
     // to distillation when that reclaims the most tokens. Gated on effective
@@ -1245,8 +1256,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       injectedReason = `T1 effective ${t1Eff} >= ${nudgeGrowthTokens}, growth ${growthSinceReference}, usage ${Math.round(usage * 100)}%`;
     } else if (
       config.tiers.enabled &&
-      (t2Count >= config.tiers.tier2Trigger ||
-        (t2Pen >= tier2Threshold && t2Pen > t1Eff))
+      (t2CountReady || (t2Pen >= tier2Threshold && t2Pen > t1Eff))
     ) {
       const lastShown = state.nudge.lastShownByTier[2] ?? 0;
       const cadenceMet =
@@ -1254,13 +1264,13 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       if (cadenceMet) {
         injectedTier = 2;
         injectedReason =
-          t2Count >= config.tiers.tier2Trigger
+          t2CountReady
             ? `T2 distill ready: ${t2Count} tier-1 blocks >= tier2Trigger ${config.tiers.tier2Trigger} (${t2Pen} tokens), usage ${Math.round(usage * 100)}%`
             : `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
       }
     } else if (
       config.tiers.enabled &&
-      (t3Count >= config.tiers.tier3Trigger ||
+      (t3CountReady ||
         (t3Pen >= tier2Threshold && t3Pen > t2Pen && t3Pen > t1Eff))
     ) {
       const lastShown = state.nudge.lastShownByTier[3] ?? 0;
@@ -1269,7 +1279,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       if (cadenceMet) {
         injectedTier = 3;
         injectedReason =
-          t3Count >= config.tiers.tier3Trigger
+          t3CountReady
             ? `T3 condense ready: ${t3Count} tier-2 blocks >= tier3Trigger ${config.tiers.tier3Trigger} (${t3Pen} tokens), usage ${Math.round(usage * 100)}%`
             : `T3 condense ready: ${tiers[3]!.targetBlocks.length} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
       }
@@ -1293,18 +1303,27 @@ function decideNudge(input: NudgeInput): NudgeDecision {
    } else {
     const tiersList = [1, 2, 3] as const;
     const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
-    const countReady = (t: 1 | 2 | 3) =>
+    const countReadyUngated = (t: 1 | 2 | 3) =>
       t === 2
         ? t2Count >= config.tiers.tier2Trigger
         : t === 3
           ? t3Count >= config.tiers.tier3Trigger
           : false;
+    const countReady = (t: 1 | 2 | 3) =>
+      countReadyUngated(t) && usage >= tierCountUsageFloor;
     const ready = eligible
       .filter((t) => (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens)
       .map((t) => `T${t} ${tiers[t]!.pending}`);
     const readyCount = eligible
-      .filter((t) => (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReady(t))
-      .map((t) => `T${t} ${t === 2 ? t2Count : t3Count} blocks (count)`);
+      .filter(
+        (t) => (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReadyUngated(t),
+      )
+      .map(
+        (t) =>
+          `T${t} ${t === 2 ? t2Count : t3Count} blocks (count${
+            usage >= tierCountUsageFloor ? "" : ", usage-gated"
+          })`,
+      );
     const readyAll = [...ready, ...readyCount];
     const readyHint = readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";
     const blocked = eligible

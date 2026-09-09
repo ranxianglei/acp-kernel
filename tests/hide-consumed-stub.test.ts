@@ -131,3 +131,37 @@ test("tag-prefixed mixed call: consumed sibling entry is still dropped", () => {
     assert.equal(content.content[0]!.startId, "m5");
     assert.equal(content.content[0]!.summary, "live entry summary");
 });
+
+test("parseCallText handles stringified content arrays and preserves the string shape (#230)", () => {
+    const state: CompressionState = {
+        ...createInitialState(),
+        blocks: [
+            block({ blockId: "b1", compressCallId: "call-str", active: true, startRef: "m1", endRef: "m2" }),
+            block({ blockId: "b2", compressCallId: "call-str", active: false, startRef: "m3", endRef: "m4" }),
+        ],
+    };
+    const inner = JSON.stringify([
+        { startId: "m1", endId: "m2", summary: "x".repeat(300) },
+        { startId: "m3", endId: "m4", summary: "y".repeat(300) },
+    ]);
+    const messages: CoreMessage[] = [
+        {
+            id: "m5",
+            role: "assistant",
+            contentType: "tool-call",
+            toolName: "compress",
+            toolCallId: "call-str",
+            text: JSON.stringify({ content: inner }),
+        },
+    ];
+    const result = hideConsumedCompressCalls(state, messages);
+    const kept = result.messages.find((m) => m.toolCallId === "call-str");
+    assert.ok(kept, "live call kept");
+    const parsed = JSON.parse(kept!.text!.replace(/^[^{]*/, "")) as { content: unknown };
+    assert.equal(typeof parsed.content, "string", "string shape preserved");
+    const entries = JSON.parse(parsed.content as string) as { startId: string; summary: string }[];
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]!.startId, "m1");
+    assert.ok(entries[0]!.summary.length <= 200, "summary stubbed");
+    assert.ok(entries[0]!.summary.endsWith("…"));
+});

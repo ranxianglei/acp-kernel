@@ -22,7 +22,7 @@ function rangeKey(startRef: string, endRef: string): string {
 // Adapters (pi) persist the rendered ref tag in front of the tool-call text,
 // so the JSON args no longer start at index 0. Locate the first "{" instead of
 // parsing the raw text — the prefix is preserved on output.
-function parseCallText(text: string | undefined): { prefix: string; obj: Record<string, unknown>; content: unknown[] } | null {
+function parseCallText(text: string | undefined): { prefix: string; obj: Record<string, unknown>; content: unknown[]; contentWasString: boolean } | null {
     const raw = text ?? "";
     const start = raw.indexOf("{");
     if (start < 0) return null;
@@ -34,14 +34,31 @@ function parseCallText(text: string | undefined): { prefix: string; obj: Record<
     }
     if (!parsed || typeof parsed !== "object") return null;
     const obj = parsed as Record<string, unknown>;
-    if (!Array.isArray(obj.content) || obj.content.length === 0) return null;
-    return { prefix: raw.slice(0, start), obj, content: obj.content };
+    let content: unknown[] | null = null;
+    let contentWasString = false;
+    if (Array.isArray(obj.content)) {
+        content = obj.content;
+    } else if (typeof obj.content === "string") {
+        // Non-strict-tool providers (qwen etc.) sometimes stringify the content
+        // array inside the JSON args; the compress tool accepts it, so the
+        // rewrite must too. Measured: ALL 52 calls in the billion-context-pi
+        // #336 storm session used this form (#230).
+        contentWasString = true;
+        try {
+            const inner: unknown = JSON.parse(obj.content);
+            if (Array.isArray(inner)) content = inner;
+        } catch {
+            content = null;
+        }
+    }
+    if (!content || content.length === 0) return null;
+    return { prefix: raw.slice(0, start), obj, content, contentWasString };
 }
 
 function rewriteCompressText(text: string | undefined, liveKeys: Set<string>): string | null {
     const parsed = parseCallText(text);
     if (!parsed) return null;
-    const { prefix, obj, content } = parsed;
+    const { prefix, obj, content, contentWasString } = parsed;
 
     const kept = content.filter((entry): entry is Record<string, unknown> => {
         if (!entry || typeof entry !== "object") return false;
@@ -53,7 +70,7 @@ function rewriteCompressText(text: string | undefined, liveKeys: Set<string>): s
 
     if (kept.length === 0) return null;
 
-    return prefix + serializeCompacted(obj, kept).text;
+    return prefix + serializeCompacted(obj, kept, contentWasString).text;
 }
 
 // Live compress-call args duplicate every range's full summary text while the
@@ -69,21 +86,24 @@ function compactEntry(entry: unknown): unknown {
     return { ...e, summary: `${e.summary.slice(0, SUMMARY_STUB_CHARS - 1)}…` };
 }
 
-function serializeCompacted(obj: Record<string, unknown>, content: unknown[]): { text: string; changed: boolean } {
+function serializeCompacted(obj: Record<string, unknown>, content: unknown[], contentWasString: boolean): { text: string; changed: boolean } {
     let changed = false;
     const compacted = content.map((entry) => {
         const out = compactEntry(entry);
         if (out !== entry) changed = true;
         return out;
     });
-    return { text: JSON.stringify({ ...obj, content: compacted }), changed };
+    // Preserve the original shape: a stringified content array stays a string
+    // so downstream text comparisons and replays are unaffected.
+    const outContent = contentWasString ? JSON.stringify(compacted) : compacted;
+    return { text: JSON.stringify({ ...obj, content: outContent }), changed };
 }
 
 function compactCompressText(text: string | undefined): string | null {
     const parsed = parseCallText(text);
     if (!parsed) return null;
-    const { prefix, obj, content } = parsed;
-    const { text: out, changed } = serializeCompacted(obj, content);
+    const { prefix, obj, content, contentWasString } = parsed;
+    const { text: out, changed } = serializeCompacted(obj, content, contentWasString);
     return changed ? prefix + out : null;
 }
 

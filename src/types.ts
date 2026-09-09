@@ -162,6 +162,14 @@ export interface CompressValidationConfig {
   minSummaryLength: number;
 }
 
+/** Replay policy for `reasoning` messages (see strip-reasoning.ts).
+ *  "always" (default, legacy behavior): every reasoning message stays
+ *  visible. "open-round": reasoning from closed rounds (everything up to and
+ *  including the last real user message) is stripped; only the open round
+ *  keeps its thinking — the one the provider still replays (Anthropic
+ *  signature / Gemini thought_signature). "never": all reasoning stripped. */
+export type ReasoningReplay = "always" | "open-round" | "never";
+
 export interface Config {
   tiers: TierConfig;
   nudge: NudgeConfig;
@@ -178,6 +186,8 @@ export interface Config {
   /** Instant tool-result absorption (see absorb.ts). Absent/disabled = feature off. */
   absorb?: AbsorbConfig;
   messageFilters?: import("./filter/types.js").MessageFiltersConfig;
+  /** Replay policy for reasoning messages. Absent = "always" (legacy). */
+  reasoningReplay?: ReasoningReplay;
 }
 
 export type CompressMode = "range" | "message";

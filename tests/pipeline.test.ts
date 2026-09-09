@@ -27,6 +27,7 @@ test("defaultNodes exposes the canonical ordered pipeline", () => {
   assert.deepEqual(names, [
     "assign-refs",
     "sync-blocks",
+    "strip-reasoning",
     "prune",
     "absorb-hide",
     "absorb-prompt",

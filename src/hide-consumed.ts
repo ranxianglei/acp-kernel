@@ -19,10 +19,43 @@ function rangeKey(startRef: string, endRef: string): string {
     return `${startRef}::${endRef}`;
 }
 
+const LT = "\x3c";
+const GT = "\x3e";
+// Ref-tag prefix render-refs prepends to every tagged message (acpTag in
+// render-refs.ts): `<acp tokens="…" type="…">mNNNNN</acp>\n`. With the
+// default "all" strategy a live compress call's args carry it, so
+// JSON.parse on the raw text always failed and the rewrite never applied.
+const REF_TAG_PREFIX_RE = new RegExp(
+    "^" + LT + "acp [^" + GT + "]*" + GT + "m\\d{1,5}" + LT + "/acp" + GT + "\\n?",
+);
+
+// Live anchor args duplicate the rendered acp_summary message; the full
+// summary text in the args is the duplication, so it is stubbed to a short
+// prefix. The block's rendered summary remains the authoritative copy.
+const SUMMARY_STUB_CHARS = 200;
+
+function stubSummary(entry: Record<string, unknown>): Record<string, unknown> {
+    const summary = entry.summary;
+    if (typeof summary === "string" && summary.length > SUMMARY_STUB_CHARS) {
+        return { ...entry, summary: summary.slice(0, SUMMARY_STUB_CHARS) + "…" };
+    }
+    return entry;
+}
+
+// Field-name precedence mirrors parse-compress-input.ts: canonical
+// startRef/endRef first, then the legacy/drift spellings.
+function entryRef(entry: Record<string, unknown>, ...fields: string[]): string {
+    for (const field of fields) {
+        const value = entry[field];
+        if (typeof value === "string") return value;
+    }
+    return "";
+}
+
 function rewriteCompressText(text: string | undefined, liveKeys: Set<string>): string | null {
     let parsed: unknown;
     try {
-        parsed = JSON.parse(text ?? "");
+        parsed = JSON.parse((text ?? "").replace(REF_TAG_PREFIX_RE, ""));
     } catch {
         return null;
     }
@@ -31,14 +64,16 @@ function rewriteCompressText(text: string | undefined, liveKeys: Set<string>): s
     const content = obj.content;
     if (!Array.isArray(content) || content.length === 0) return null;
 
-    const kept = content.filter((entry): entry is Record<string, unknown> => {
-        if (!entry || typeof entry !== "object") return false;
-        const s = typeof entry.startId === "string" ? entry.startId : typeof entry.messageId === "string" ? entry.messageId : "";
-        const e = typeof entry.endId === "string" ? entry.endId : typeof entry.messageId === "string" ? entry.messageId : "";
-        return liveKeys.has(rangeKey(s, e));
-    });
+    const kept = content
+        .filter((entry): entry is Record<string, unknown> => {
+            if (!entry || typeof entry !== "object") return false;
+            const s = entryRef(entry, "startRef", "startId", "messageId");
+            const e = entryRef(entry, "endRef", "endId", "messageId");
+            return liveKeys.has(rangeKey(s, e));
+        })
+        .map(stubSummary);
 
-    if (kept.length === content.length || kept.length === 0) return null;
+    if (kept.length === 0) return null;
 
     return JSON.stringify({ ...obj, content: kept });
 }

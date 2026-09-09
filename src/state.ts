@@ -42,11 +42,30 @@ export function activeBlocks(state: CompressionState): CompressionBlock[] {
   return state.blocks.filter((block) => block.active);
 }
 
+/**
+ * Host projections may append a `#suffix` to a core message id (e.g.
+ * `base#callId`, `base#r0`) to represent a variant of the same logical
+ * message. Coverage is defined on the base id: a message is covered when any
+ * sibling projection of it is covered by an active block.
+ */
+export function baseMessageId(id: string): string {
+  const hash = id.indexOf("#");
+  return hash === -1 ? id : id.slice(0, hash);
+}
+
+/** True when `id` or any sibling projection of it is in `covered`. */
+export function isIdCovered(covered: Set<string>, id: string): boolean {
+  return covered.has(id) || covered.has(baseMessageId(id));
+}
+
 export function coveredMessageIds(state: CompressionState): Set<string> {
   const covered = new Set<string>();
   for (const block of state.blocks) {
     if (!block.active) continue;
-    for (const id of block.effectiveMessageIds) covered.add(id);
+    for (const id of block.effectiveMessageIds) {
+      covered.add(id);
+      covered.add(baseMessageId(id));
+    }
   }
   return covered;
 }

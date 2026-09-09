@@ -1,7 +1,13 @@
 import { assignRefs, highestUsedIndex, indexToRef } from "./refs.js";
 import { prune, isSummaryMessageId } from "./prune.js";
 import { syncBlocks } from "./sync.js";
-import { advanceSurvival, activeBlocks, blockById } from "./state.js";
+import {
+  advanceSurvival,
+  activeBlocks,
+  baseMessageId,
+  blockById,
+  coveredMessageIds,
+} from "./state.js";
 import { allocateBlockId, allocateRunId, createInitialState } from "./state.js";
 import { defaultCountTokens } from "./tokenize.js";
 import { validateConfig } from "./config.js";
@@ -21,6 +27,7 @@ import type { RenderStrategy } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import { adjustBoundariesForReasoningPairs } from "./reasoning-pairs.js";
+import { stripReasoningByRound } from "./strip-reasoning.js";
 import {
   computeProtectedRefs,
   buildCompressibleRanges,
@@ -72,6 +79,13 @@ export interface ProcessTurnInput {
   state: CompressionState;
   config: Config;
   tokenCount: number;
+  /**
+   * Host-reported context mass the kernel cannot see (wire-level replayed
+   * reasoning, system prompt, provider overhead). Folded into usage and
+   * pressure so the pressure band tracks real provider-side usage instead of
+   * only the kernel-visible view.
+   */
+  extraTokens?: number;
   /**
    * Which messages get an <acp> ref tag injected into their text
    * (the render-refs pipeline node). Refs are ALWAYS assigned regardless
@@ -151,8 +165,13 @@ function danglingMessageRefs(
       state.messageRefs.byRef[parsed.raw] ??
       state.messageRefs.byRef[indexToRef(parsed.numericId)];
     if (!rawId || visible.has(rawId)) continue;
+    const base = baseMessageId(rawId);
     const covered = state.blocks.some(
-      (block) => block.active && block.effectiveMessageIds.includes(rawId),
+      (block) =>
+        block.active &&
+        block.effectiveMessageIds.some(
+          (id) => id === rawId || baseMessageId(id) === base,
+        ),
     );
     if (!covered) dangling.push(parsed.raw);
   }
@@ -184,7 +203,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
         countTokens,
       );
 
-    const preExistingCoverage = collectCoverage(state);
+    const preExistingCoverage = coveredMessageIds(state);
 
     // Classify every requested range ONCE. The result feeds overlap
     // skipSpecs, the minCompressRange pre-check, and the per-range loop —
@@ -399,7 +418,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
     }
     const ctx: PipelineContext = {
       config: input.config,
-      tokenCount: input.tokenCount,
+      tokenCount: input.tokenCount + (input.extraTokens ?? 0),
       countTokens,
     };
     const initial: NodeIO = {
@@ -467,6 +486,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
     const base: PipelineNode[] = [
       assignRefsNode,
       syncBlocksNode,
+      stripReasoningNode,
       pruneNode,
       absorbHideNode,
       absorbPromptNode,
@@ -519,6 +539,28 @@ const syncBlocksNode: PipelineNode = {
     const synced = syncBlocks(io.messages, io.state);
     advanceSurvival(synced.state, ctx.config.promotionThreshold);
     return { ...io, state: synced.state };
+  },
+};
+
+// Runs AFTER sync-blocks (which must see the full message list — a block
+// whose only present ids are reasoning messages would otherwise be
+// deactivated) and BEFORE prune, so stripped reasoning gets no tags, no
+// nudge ranges, and no summary-anchor interference.
+const stripReasoningNode: PipelineNode = {
+  name: "strip-reasoning",
+  enabled: (_io, ctx) =>
+    ctx.config.reasoningReplay === "open-round" ||
+    ctx.config.reasoningReplay === "never",
+  run(io, ctx) {
+    const { messages, stripped } = stripReasoningByRound(
+      io.messages,
+      ctx.config.reasoningReplay!,
+    );
+    return {
+      ...io,
+      messages,
+      effects: { ...io.effects, reasoningStrippedCount: stripped },
+    };
   },
 };
 
@@ -1036,14 +1078,6 @@ function resolveTargetTier(
     if (block && block.tier < minTier) minTier = block.tier;
   }
   return minTier;
-}
-
-function collectCoverage(state: CompressionState): Set<string> {
-  const coverage = new Set<string>();
-  for (const block of activeBlocks(state)) {
-    for (const id of block.effectiveMessageIds) coverage.add(id);
-  }
-  return coverage;
 }
 
 interface NudgeInput {

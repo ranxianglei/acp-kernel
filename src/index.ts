@@ -15,6 +15,8 @@ export {
   coveredMessageIds,
   highestActiveTier,
   advanceSurvival,
+  baseMessageId,
+  isIdCovered,
 } from "./state.js";
 export { defaultConfig, validateConfig } from "./config.js";
 export * from "./compress-tools.js";
@@ -80,6 +82,8 @@ export { renderHandoff, renderMessage, matchSession } from "./handoff.js";
 export type { HandoffInput, HandoffMeta } from "./handoff.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";
 export type { HideConsumedResult } from "./hide-consumed.js";
+export { stripReasoningByRound, isRealUserMessage } from "./strip-reasoning.js";
+export type { StripReasoningResult } from "./strip-reasoning.js";
 export {
   ABSORB_TOOL_NAME,
   ABSORB_TOOL,

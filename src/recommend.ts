@@ -25,6 +25,7 @@ import {
   isMessageProtectedWithPairing,
   isNeverPreserveRecent,
 } from "./protected.js";
+import { baseMessageId } from "./state.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -49,8 +50,15 @@ function isSyntheticOrPruned(
   state: CompressionState,
 ): boolean {
   if (message.text?.startsWith("[Compressed conversation section]")) return true;
+  const base = baseMessageId(message.id);
   for (const block of state.blocks) {
-    if (block.active && block.effectiveMessageIds.includes(message.id)) return true;
+    if (
+      block.active &&
+      block.effectiveMessageIds.some(
+        (id) => id === message.id || baseMessageId(id) === base,
+      )
+    )
+      return true;
   }
   return false;
 }

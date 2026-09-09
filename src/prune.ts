@@ -1,4 +1,4 @@
-import { activeBlocks, coveredMessageIds } from "./state.js";
+import { activeBlocks, coveredMessageIds, isIdCovered } from "./state.js";
 import type { CompressionState, CoreMessage } from "./types.js";
 
 export const SUMMARY_HEADER = "[Compressed conversation section]";
@@ -141,7 +141,7 @@ function rebuildMessages(
       result.push(messages[index]!);
       continue;
     }
-    if (covered.has(messages[index]!.id)) continue;
+    if (isIdCovered(covered, messages[index]!.id)) continue;
     // A stale copy of this block's summary from a previously-pruned view:
     // the freshly rendered one above replaces it. Only rendered-summary
     // shaped messages qualify — a host message that merely reuses the

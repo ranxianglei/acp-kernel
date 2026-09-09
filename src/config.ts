@@ -31,6 +31,7 @@ export function defaultConfig(
     preserveRecentMessages: 5,
     preserveRecentTokens: 5000,
     modelContextLimit,
+    reasoningReplay: "always",
     absorb: {
       enabled: false,
       toolName: "absorb",
@@ -76,6 +77,14 @@ export function validateConfig(config: Config): string[] {
       config.nudge.minPressureBenefitTokens < 0)
   ) {
     errors.push("nudge.minPressureBenefitTokens must be finite and >= 0");
+  }
+  if (
+    config.reasoningReplay !== undefined &&
+    config.reasoningReplay !== "always" &&
+    config.reasoningReplay !== "open-round" &&
+    config.reasoningReplay !== "never"
+  ) {
+    errors.push('reasoningReplay must be "always", "open-round", or "never"');
   }
   if (config.promotionThreshold < 1) {
     errors.push("promotionThreshold must be >= 1");

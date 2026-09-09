@@ -157,6 +157,81 @@ test("prune without summary injection only removes covered messages", () => {
   );
 });
 
+test("prune covers plain base id when block recorded sub-id projections (#231)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({
+      blockId: "b1",
+      summary: "subid summary",
+      effectiveMessageIds: ["h_abc#r0", "h_abc#call1"],
+    }),
+  );
+  const messages = [msg("h_pre"), msg("h_abc"), msg("h_post")];
+  const result = prune(messages, state);
+
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["h_pre", "acp_summary_b1", "h_post"],
+  );
+});
+
+test("prune covers sub-id projections when block recorded plain base id (#231)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({ blockId: "b1", effectiveMessageIds: ["h_abc"] }),
+  );
+  const messages = [
+    msg("h_pre"),
+    msg("h_abc#r0"),
+    msg("h_abc#call1"),
+    msg("h_post"),
+  ];
+  const result = prune(messages, state, { injectSummaries: false });
+
+  assert.deepEqual(result.map((m) => m.id), ["h_pre", "h_post"]);
+});
+
+test("prune covers sibling sub-id projections of the same base (#231)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({ blockId: "b1", effectiveMessageIds: ["h_abc#r0"] }),
+  );
+  const messages = [msg("h_abc#call1", "assistant"), msg("h_post")];
+  const result = prune(messages, state, { injectSummaries: false });
+
+  assert.deepEqual(result.map((m) => m.id), ["h_post"]);
+});
+
+test("prune does not cover a distinct id that extends a covered base (#231)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({ blockId: "b1", effectiveMessageIds: ["h_abc#r0"] }),
+  );
+  const messages = [msg("h_abcde"), msg("h_post")];
+  const result = prune(messages, state, { injectSummaries: false });
+
+  assert.deepEqual(result.map((m) => m.id), ["h_abcde", "h_post"]);
+});
+
+test("prune anchors summary at base id when block recorded sub-ids (#231)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({
+      blockId: "b1",
+      summary: "anchored",
+      effectiveMessageIds: ["h_abc#r0"],
+    }),
+  );
+  const messages = [msg("h_pre"), msg("h_abc"), msg("h_post")];
+  const result = prune(messages, state);
+
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["h_pre", "acp_summary_b1", "h_post"],
+  );
+  assert.ok(result[1]!.text!.includes("anchored"));
+});
+
 test("prune orders multiple summaries by their anchor position", () => {
   const state = createInitialState();
   state.blocks.push(

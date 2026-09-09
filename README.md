@@ -111,7 +111,7 @@ The nudge system tells the model *when* to compress. It implements:
 
 - **Threshold gate**: fires when context usage ≥ `nudge.minContextLimitPct`.
 - **Growth-gating**: a repeat nudge requires positive growth since the baseline (prevents re-firing every turn). `"strong"` force relaxes this.
-- **Tier-distillation triggers**: when active tier-1 blocks pile up past `tiers.tier2Trigger`, emit a tier-2 distillation nudge; tier-3 analogously.
+- **Tier-distillation triggers**: when active tier-1 blocks pile up past `tiers.tier2Trigger`, emit a tier-2 distillation nudge; tier-3 analogously. Count-triggered distillation is gated to the nudge usage band (`nudge.minContextLimitPct`): below it, block counts alone don't justify burning a turn (#237).
 - **Compressible-range computation**: reports the actual compressible ranges (excluding covered + preserved-recent messages) so the model knows what to target.
 - **Baseline reset on compress**: `applyCompression` clears the growth baseline on success, preventing the feedback-loop bug where the nudge re-fires post-compress.
 

@@ -30,6 +30,8 @@ export {
 } from "./refs.js";
 export {
   prune,
+  baseIdOf,
+  isCovered,
   SUMMARY_HEADER,
   summaryMessageId,
   isSummaryMessageId,

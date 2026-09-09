@@ -23,6 +23,28 @@ export function isSummaryMessageId(id: string): boolean {
 }
 
 /**
+ * Base id of a message id: everything before the first `#`. Sub-id
+ * projections (`base#callId`, `base#r0`, …) are alternate renderings of the
+ * same original message, so coverage is decided per original message — id
+ * comparisons normalize to the base (issue #231).
+ */
+export function baseIdOf(id: string): string {
+  const hash = id.indexOf("#");
+  return hash > 0 ? id.substring(0, hash) : id;
+}
+
+/**
+ * True when `id` falls under any covered original message, regardless of
+ * which projection form the block recorded and which the current view emits.
+ * `coveredBases` must be the set of `baseIdOf(c)` over the covered ids,
+ * built once per pass (O(1) per message instead of a scan). The exact
+ * membership test is subsumed: a covered id's own base is in the set.
+ */
+export function isCovered(id: string, coveredBases: Set<string>): boolean {
+  return coveredBases.has(baseIdOf(id));
+}
+
+/**
  * True when a message is a rendered block summary (the exact shape prune
  * emits). The id prefix alone is not sufficient — a host-authored message
  * that happens to carry a reserved id must not be treated as a rendered
@@ -49,28 +71,33 @@ export function prune(
 ): CoreMessage[] {
   const covered = coveredMessageIds(state);
   if (covered.size === 0) return [...messages];
+  const coveredBases = new Set<string>();
+  for (const id of covered) coveredBases.add(baseIdOf(id));
 
   const inject = options.injectSummaries ?? true;
   const firstUserIndex = messages.findIndex(
     (message) => message.role === "user",
   );
 
-  const indexById = new Map<string, number>();
+  const baseIndexById = new Map<string, number>();
   const summaryIndexById = new Map<string, number>();
   messages.forEach((message, index) => {
-    indexById.set(message.id, index);
+    const base = baseIdOf(message.id);
+    const existing = baseIndexById.get(base);
+    if (existing === undefined || index < existing)
+      baseIndexById.set(base, index);
     if (isRenderedSummaryMessage(message))
       summaryIndexById.set(message.id, index);
   });
 
   const anchors = inject
-    ? collectSummaryAnchors(state, indexById, summaryIndexById)
+    ? collectSummaryAnchors(state, baseIndexById, summaryIndexById)
     : [];
 
   return stripOrphanedReasoning(
     stripOrphanedToolResults(
       stripOrphanedToolCalls(
-        rebuildMessages(messages, covered, firstUserIndex, anchors),
+        rebuildMessages(messages, coveredBases, firstUserIndex, anchors),
       ),
     ),
   );
@@ -85,7 +112,7 @@ interface SummaryAnchor {
 
 function collectSummaryAnchors(
   state: CompressionState,
-  indexById: Map<string, number>,
+  baseIndexById: Map<string, number>,
   summaryIndexById: Map<string, number>,
 ): SummaryAnchor[] {
   const anchors: SummaryAnchor[] = [];
@@ -105,7 +132,7 @@ function collectSummaryAnchors(
     }
     let earliest: number | null = null;
     for (const id of block.effectiveMessageIds) {
-      const index = indexById.get(id);
+      const index = baseIndexById.get(baseIdOf(id));
       if (index !== undefined && (earliest === null || index < earliest)) {
         earliest = index;
       }
@@ -123,7 +150,7 @@ function collectSummaryAnchors(
 
 function rebuildMessages(
   messages: CoreMessage[],
-  covered: Set<string>,
+  coveredBases: Set<string>,
   firstUserIndex: number,
   anchors: SummaryAnchor[],
 ): CoreMessage[] {
@@ -141,7 +168,7 @@ function rebuildMessages(
       result.push(messages[index]!);
       continue;
     }
-    if (covered.has(messages[index]!.id)) continue;
+    if (isCovered(messages[index]!.id, coveredBases)) continue;
     // A stale copy of this block's summary from a previously-pruned view:
     // the freshly rendered one above replaces it. Only rendered-summary
     // shaped messages qualify — a host message that merely reuses the

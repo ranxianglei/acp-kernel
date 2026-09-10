@@ -838,34 +838,47 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
 
   // TURN-INTEGRITY GATE (#684): the protected carve above (and the protected
   // tool filter before it) remove individual messages AFTER
-  // applyPairBoundaryAdjustments completed the range, which can split a turn:
-  // the recent-zone carve kept one tool-call of a multi-call turn alive while
-  // its reasoning run and sibling call folded into the block, and the rebuilt
-  // request shipped an assistant tool_calls message without reasoning_content
-  // — DeepSeek thinking mode rejects it with 400 ("reasoning_content ... must
-  // be passed back"). A turn is atomic: if any member survives, every member
-  // survives. Withdraw split turns from the compression set entirely.
+  // applyPairBoundaryAdjustments completed the range, which can split a turn.
+  // The DIRECTIONAL invariant that strict-echo providers enforce: an assistant
+  // tool-call message that survives the fold must keep its reasoning run
+  // (DeepSeek thinking mode: "reasoning_content ... must be passed back").
+  // The reverse split — reasoning + text kept while the call and result fold —
+  // leaves a valid message stream and stays allowed (#564 depends on it), so
+  // only turns whose KEPT side carries a tool-call while the FOLDED side
+  // carries the reasoning are withdrawn, entirely (all members stay visible).
   {
-    const splitTurnIds = new Set<string>();
+    const reasoningIds = new Set<string>();
+    const callIds = new Set<string>();
+    for (const m of input.messages) {
+      if (!m.id) continue;
+      if (m.contentType === "reasoning") reasoningIds.add(m.id);
+      if (m.role === "assistant" && m.contentType === "tool-call") callIds.add(m.id);
+    }
+    const withdrawIds = new Set<string>();
     let splitTurnCount = 0;
     for (const group of computeTurnGroups(input.messages)) {
-      const inFold = group.filter((id) => effectiveMessageIds.has(id));
-      if (inFold.length > 0 && inFold.length < group.length) {
-        splitTurnCount++;
-        for (const id of group) splitTurnIds.add(id);
-      }
+      const foldHasReasoning = group.some(
+        (id) => effectiveMessageIds.has(id) && reasoningIds.has(id),
+      );
+      if (!foldHasReasoning) continue;
+      const keptHasCall = group.some(
+        (id) => !effectiveMessageIds.has(id) && callIds.has(id),
+      );
+      if (!keptHasCall) continue;
+      splitTurnCount++;
+      for (const id of group) withdrawIds.add(id);
     }
-    if (splitTurnIds.size > 0) {
-      for (const id of splitTurnIds) effectiveMessageIds.delete(id);
+    if (withdrawIds.size > 0) {
+      for (const id of withdrawIds) effectiveMessageIds.delete(id);
       const beforeWithdraw = filteredIds.length;
-      filteredIds = filteredIds.filter((id) => !splitTurnIds.has(id));
+      filteredIds = filteredIds.filter((id) => !withdrawIds.has(id));
       if (filteredIds.length === 0 && consumedBlockIds.length === 0) {
         throw new Error(
-          `Range would split ${splitTurnCount} turn(s) at the protected-zone boundary: part of each turn must stay visible, so none of it can fold (reasoning and tool-calls are atomic — providers reject a half turn). Shrink the range to end before the turn starts, or wait until the whole turn ages out of the protected zone.`,
+          `Range would split ${splitTurnCount} turn(s) at the protected-zone boundary: a visible tool-call must keep its reasoning run (strict-echo providers reject a rebuilt request that lost it). Shrink the range to end before the turn starts, or wait until the whole turn ages out of the protected zone.`,
         );
       }
       warnings.push(
-        `Withdrawn ${beforeWithdraw - filteredIds.length} message(s) from compression range to keep ${splitTurnCount} turn(s) atomic (reasoning/tool-call split at the protected boundary).`,
+        `Withdrawn ${beforeWithdraw - filteredIds.length} message(s) from compression range to keep ${splitTurnCount} turn(s) intact (visible tool-call would lose its reasoning run).`,
       );
     }
   }

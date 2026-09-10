@@ -311,7 +311,12 @@ describe("prune stripOrphanedToolCalls (defense-in-depth)", () => {
     assert.ok(!ids.includes("m5"), "compressed tool-result m5 removed");
   });
 
-  it("orphaned tool-result stripped when its call is compressed beyond maxScan", () => {
+  it("orphaned tool-result stripped when its call sits in a pre-gate block (defense-in-depth)", () => {
+    // Since the #684 turn-integrity gate, applyCompression can no longer
+    // create this orphan itself (a turn folds atomically or not at all). The
+    // prune-side strip remains defense-in-depth for states persisted by older
+    // builds and for block-boundary rewrites — so construct the split state
+    // directly: a block whose coverage contains only the tool-call.
     const core = createCore();
     const messages: CoreMessage[] = [
       toolCall("m1", "c1"),
@@ -323,29 +328,34 @@ describe("prune stripOrphanedToolCalls (defense-in-depth)", () => {
 
     const state = createInitialState();
     const stateWithRefs = core.processTurn({ messages, state, config: cfg, tokenCount: 5000 }).state;
+    const refOf = (raw: string) => stateWithRefs.messageRefs.byRaw[raw]!;
 
-    const result = core.applyCompression({
-      ranges: [{
-        startRef: "m00001",
-        endRef: "m00001",
-        summary: "Compress just the tool-call. Result is >20 messages away so extension can't reach it.",
-      }],
-      messages,
-      state: stateWithRefs,
-      config: cfg,
+    stateWithRefs.blocks.push({
+      blockId: "b1",
+      runId: "run1",
+      tier: 1,
+      summary: "Legacy split block covering only the call (pre-#684 state).",
+      directMessageIds: ["m1"],
+      effectiveMessageIds: ["m1"],
+      directBlockIds: [],
+      compressedTokens: 10,
+      createdAt: Date.now(),
+      survivedCount: 0,
+      generation: "young",
+      active: true,
+      startRef: refOf("m1"),
+      endRef: refOf("m1"),
     });
-
-    assert.equal(result.result.blocksCreated, 1);
 
     const pruned = core.processTurn({
       messages,
-      state: result.state,
+      state: stateWithRefs,
       config: cfg,
       tokenCount: 4000,
     }).messages;
 
     const ids = pruned.map((m) => m.id);
-    assert.ok(!ids.includes("m1"), "compressed tool-call m1 removed");
+    assert.ok(!ids.includes("m1"), "blocked tool-call m1 hidden");
     assert.ok(!ids.includes("result"), "orphaned tool-result stripped by defense-in-depth");
   });
 });

@@ -186,3 +186,18 @@ test("buildCompressibleRanges totals include projected thinking", () => {
     defaultCountTokens("alpha beta") + defaultCountTokens("gamma delta") + 4321,
   );
 });
+
+test("ref tag ignores missing or invalid thinking payloads", () => {
+  const state = createInitialState();
+  const messages = [msg("a", "some visible text", "assistant", Number.NaN)];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const rendered = renderVisibleRefs(messages, state, defaultCountTokens);
+  const out = rendered[0]!;
+  const match = /tokens="(\d+)"/.exec(out.text ?? "");
+  assert.ok(match, "ref tag with tokens attribute expected");
+  assert.equal(Number(match![1]), defaultCountTokens("some visible text"));
+});

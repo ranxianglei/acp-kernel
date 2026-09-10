@@ -16,6 +16,17 @@ export function estimateMessageTokens(text: string | undefined): number {
   return defaultCountTokens(text ?? "");
 }
 
+/** Guarded contribution of a host-projected thinking payload to the metered
+ *  message size. Non-finite or non-positive values are treated as absent (0),
+ *  so a bad host value can never poison the accounting. */
+export function thinkingTokenValue(thinking: number | undefined): number {
+  return typeof thinking === "number" &&
+    Number.isFinite(thinking) &&
+    thinking > 0
+    ? thinking
+    : 0;
+}
+
 /** Total metered size of a core message: visible text plus any host-projected
  *  thinking payload (CoreMessage.thinkingTokens). Every per-message counting
  *  site (range recommendations, block compressedTokens, status reports, context
@@ -24,12 +35,9 @@ export function countMessageTokens(
   message: { text?: string; thinkingTokens?: number },
   countTokens: TokenCountFn = defaultCountTokens,
 ): number {
-  const thinking = message.thinkingTokens;
-  const thinkingPart =
-    typeof thinking === "number" && Number.isFinite(thinking) && thinking > 0
-      ? thinking
-      : 0;
-  return countTokens(message.text ?? "") + thinkingPart;
+  return (
+    countTokens(message.text ?? "") + thinkingTokenValue(message.thinkingTokens)
+  );
 }
 
 export function estimateTokensFast(text: string): number {

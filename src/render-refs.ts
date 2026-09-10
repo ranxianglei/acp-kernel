@@ -1,5 +1,6 @@
 import type { CoreMessage, CompressionState, MessageRefMap } from "./types.js";
 import { refForRaw, BLOCKED_REF } from "./refs.js";
+import { thinkingTokenValue } from "./tokenize.js";
 import type { PipelineNode, PipelineContext, NodeIO } from "./pipeline.js";
 
 /**
@@ -77,12 +78,7 @@ function renderMessage(
   const textTokens = snapshot
     ? (snapshot[ref] ?? (snapshot[ref] = countTokens(cleanText)))
     : countTokens(cleanText);
-  const thinking = message.thinkingTokens;
-  const tokens =
-    textTokens +
-    (typeof thinking === "number" && Number.isFinite(thinking) && thinking > 0
-      ? thinking
-      : 0);
+  const tokens = textTokens + thinkingTokenValue(message.thinkingTokens);
   const type = classifyType(message);
   const prefix = acpTag(ref, tokens, type) + "\n";
 

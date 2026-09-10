@@ -57,10 +57,22 @@ export function adjustBoundariesForReasoningPairs(
         companion !== undefined &&
         companion.role === "assistant" &&
         (companion.contentType === "text" ||
-          companion.contentType === "tool-call") &&
-        j + 1 > newEndIndex
+          companion.contentType === "tool-call")
       ) {
-        newEndIndex = j + 1;
+        // Pull the WHOLE assistant burst following the reasoning run, not just
+        // the first companion (#684): a turn may carry several tool-calls, and
+        // pulling one leaves its siblings outside the range. The composed
+        // fixpoint's tool-pair pass then widens for every result.
+        let e = j + 1;
+        while (
+          e + 1 < messages.length &&
+          messages[e + 1]!.role === "assistant" &&
+          (messages[e + 1]!.contentType === "text" ||
+            messages[e + 1]!.contentType === "tool-call")
+        ) {
+          e++;
+        }
+        if (e > newEndIndex) newEndIndex = e;
       }
     }
 

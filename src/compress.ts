@@ -21,6 +21,7 @@ import type { RenderStrategy } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import { adjustBoundariesForReasoningPairs } from "./reasoning-pairs.js";
+import { computeTurnGroups } from "./turn-integrity.js";
 import {
   computeProtectedRefs,
   buildCompressibleRanges,
@@ -833,6 +834,40 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
         ", ",
       )} from compression range (recent/last-user zone).`,
     );
+  }
+
+  // TURN-INTEGRITY GATE (#684): the protected carve above (and the protected
+  // tool filter before it) remove individual messages AFTER
+  // applyPairBoundaryAdjustments completed the range, which can split a turn:
+  // the recent-zone carve kept one tool-call of a multi-call turn alive while
+  // its reasoning run and sibling call folded into the block, and the rebuilt
+  // request shipped an assistant tool_calls message without reasoning_content
+  // — DeepSeek thinking mode rejects it with 400 ("reasoning_content ... must
+  // be passed back"). A turn is atomic: if any member survives, every member
+  // survives. Withdraw split turns from the compression set entirely.
+  {
+    const splitTurnIds = new Set<string>();
+    let splitTurnCount = 0;
+    for (const group of computeTurnGroups(input.messages)) {
+      const inFold = group.filter((id) => effectiveMessageIds.has(id));
+      if (inFold.length > 0 && inFold.length < group.length) {
+        splitTurnCount++;
+        for (const id of group) splitTurnIds.add(id);
+      }
+    }
+    if (splitTurnIds.size > 0) {
+      for (const id of splitTurnIds) effectiveMessageIds.delete(id);
+      const beforeWithdraw = filteredIds.length;
+      filteredIds = filteredIds.filter((id) => !splitTurnIds.has(id));
+      if (filteredIds.length === 0 && consumedBlockIds.length === 0) {
+        throw new Error(
+          `Range would split ${splitTurnCount} turn(s) at the protected-zone boundary: part of each turn must stay visible, so none of it can fold (reasoning and tool-calls are atomic — providers reject a half turn). Shrink the range to end before the turn starts, or wait until the whole turn ages out of the protected zone.`,
+        );
+      }
+      warnings.push(
+        `Withdrawn ${beforeWithdraw - filteredIds.length} message(s) from compression range to keep ${splitTurnCount} turn(s) atomic (reasoning/tool-call split at the protected boundary).`,
+      );
+    }
   }
 
   // Livelock guard (billion-context-pi#199): a message-ref range whose entire

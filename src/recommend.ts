@@ -25,6 +25,7 @@ import {
   isMessageProtectedWithPairing,
   isNeverPreserveRecent,
 } from "./protected.js";
+import { countMessageTokens } from "./tokenize.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ export function computeProtectedRefs(
     if (isNeverPreserveRecent(msg)) continue;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
-    visible.push({ ref, tokens: countTokens(msg.text ?? "") });
+    visible.push({ ref, tokens: countMessageTokens(msg, countTokens) });
   }
 
   // Rule 1: last N messages
@@ -188,7 +189,7 @@ export function buildCompressibleRanges(
       protectedMsgs.push({
         ref,
         gapBefore: skipSinceProtected,
-        tokens: countTokens(msg.text ?? ""),
+        tokens: countMessageTokens(msg, countTokens),
         tools: msg.toolName ? [msg.toolName] : [],
       });
       skipSinceProtected = false;
@@ -205,7 +206,7 @@ export function buildCompressibleRanges(
     compressibleMsgs.push({
       ref,
       gapBefore: skipSinceCompressible,
-      tokens: countTokens(msg.text ?? ""),
+      tokens: countMessageTokens(msg, countTokens),
       chars: (msg.text ?? "").length,
       isTool: isToolMessage(msg),
       isUser: msg.role === "user",

@@ -1,5 +1,6 @@
 import type { CoreMessage, CompressionState, MessageRefMap } from "./types.js";
 import { refForRaw, BLOCKED_REF } from "./refs.js";
+import { thinkingTokenValue } from "./tokenize.js";
 import type { PipelineNode, PipelineContext, NodeIO } from "./pipeline.js";
 
 /**
@@ -72,9 +73,12 @@ function renderMessage(
 
   // Snapshot mode: token count is fixed at first render (stable prefix cache).
   // Live mode (snapshot = null): recompute every render — legacy behavior.
-  const tokens = snapshot
+  // The tag carries the metered total (text + host-projected thinking), so the
+  // size the model sees per message matches block/range/breakdown accounting.
+  const textTokens = snapshot
     ? (snapshot[ref] ?? (snapshot[ref] = countTokens(cleanText)))
     : countTokens(cleanText);
+  const tokens = textTokens + thinkingTokenValue(message.thinkingTokens);
   const type = classifyType(message);
   const prefix = acpTag(ref, tokens, type) + "\n";
 

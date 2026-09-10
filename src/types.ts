@@ -10,6 +10,14 @@ export interface CoreMessage {
   text?: string;
   toolName?: string;
   toolCallId?: string;
+  /** Host-projected token count of the reasoning/thinking payload that rides
+   *  along with this message every request but is NOT part of `text` (e.g. Pi's
+   *  `{type:"thinking"}` parts, which are resent each turn but invisible in the
+   *  visible text projection). Metering-only: never rendered, truncated, or
+   *  indexed. The host MUST attach it to exactly one core per original message
+   *  (e.g. the first emitted core) — split tool-call cores sharing a base id
+   *  must not repeat it or totals are multiplied. */
+  thinkingTokens?: number;
 }
 
 export type CompressionTier = 1 | 2 | 3;

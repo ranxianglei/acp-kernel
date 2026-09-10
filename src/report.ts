@@ -1,5 +1,6 @@
 import { refForRaw } from "./refs.js";
 import { isToolMessage } from "./recommend.js";
+import { countMessageTokens } from "./tokenize.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "./types.js";
 
 function formatTokens(n: number): string {
@@ -93,7 +94,7 @@ function collectVisible(
         if (coveredIds.has(message.id)) return;
         const ref = refForRaw(state.messageRefs, message.id);
         if (!ref) return;
-        const tokens = countTokens(message.text ?? "");
+        const tokens = countMessageTokens(message, countTokens);
         const tool = isToolMessage(message)
             ? message.toolName ?? (message.toolCallId ? toolCallNames.get(message.toolCallId) : undefined) ?? "tool"
             : "text";

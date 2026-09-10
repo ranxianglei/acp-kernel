@@ -47,6 +47,7 @@ export {
   defaultCountTokens,
   estimateTokensFast,
   createBpeTokenizer,
+  countMessageTokens,
 } from "./tokenize.js";
 export type { TokenCountFn } from "./tokenize.js";
 export { renderNudgeText, formatRanges } from "./nudge-text.js";

@@ -72,9 +72,17 @@ function renderMessage(
 
   // Snapshot mode: token count is fixed at first render (stable prefix cache).
   // Live mode (snapshot = null): recompute every render — legacy behavior.
-  const tokens = snapshot
+  // The tag carries the metered total (text + host-projected thinking), so the
+  // size the model sees per message matches block/range/breakdown accounting.
+  const textTokens = snapshot
     ? (snapshot[ref] ?? (snapshot[ref] = countTokens(cleanText)))
     : countTokens(cleanText);
+  const thinking = message.thinkingTokens;
+  const tokens =
+    textTokens +
+    (typeof thinking === "number" && Number.isFinite(thinking) && thinking > 0
+      ? thinking
+      : 0);
   const type = classifyType(message);
   const prefix = acpTag(ref, tokens, type) + "\n";
 

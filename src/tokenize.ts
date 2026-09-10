@@ -16,6 +16,22 @@ export function estimateMessageTokens(text: string | undefined): number {
   return defaultCountTokens(text ?? "");
 }
 
+/** Total metered size of a core message: visible text plus any host-projected
+ *  thinking payload (CoreMessage.thinkingTokens). Every per-message counting
+ *  site (range recommendations, block compressedTokens, status reports, context
+ *  breakdown) goes through this so all surfaces share one caliber. */
+export function countMessageTokens(
+  message: { text?: string; thinkingTokens?: number },
+  countTokens: TokenCountFn = defaultCountTokens,
+): number {
+  const thinking = message.thinkingTokens;
+  const thinkingPart =
+    typeof thinking === "number" && Number.isFinite(thinking) && thinking > 0
+      ? thinking
+      : 0;
+  return countTokens(message.text ?? "") + thinkingPart;
+}
+
 export function estimateTokensFast(text: string): number {
   if (!text) return 0;
   return Math.ceil(text.length / 4);

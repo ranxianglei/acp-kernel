@@ -3,7 +3,7 @@ import { prune, isSummaryMessageId } from "./prune.js";
 import { syncBlocks } from "./sync.js";
 import { advanceSurvival, activeBlocks, blockById } from "./state.js";
 import { allocateBlockId, allocateRunId, createInitialState } from "./state.js";
-import { defaultCountTokens } from "./tokenize.js";
+import { countMessageTokens, defaultCountTokens } from "./tokenize.js";
 import { validateConfig } from "./config.js";
 import {
   BoundaryNotFoundError,
@@ -862,7 +862,9 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   let compressedTokens = 0;
   for (const id of filteredIds) {
     const message = input.messages.find((entry) => entry.id === id);
-    compressedTokens += input.countTokens(message?.text ?? "");
+    compressedTokens += message
+      ? countMessageTokens(message, input.countTokens)
+      : 0;
   }
   for (const consumedId of consumedBlockIds) {
     const consumed = blockById(input.state, consumedId);
@@ -1407,7 +1409,7 @@ function computeContextBreakdown(
     code = 0,
     text = 0;
   for (const msg of messages) {
-    const tokens = count(msg.text ?? "");
+    const tokens = countMessageTokens(msg, count);
     if (msg.text?.startsWith("[Compressed conversation section]")) {
       summaries += tokens;
     } else if (

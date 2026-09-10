@@ -115,4 +115,32 @@ describe("#684 regression: protected carve must not split a turn", () => {
         assert.equal(res.result.errors.length, 1);
         assert.match(res.result.errors[0]!, /split 1 turn/);
     });
+
+    it("#564 shape stays allowed: fold call+result, keep reasoning+text (directional)", () => {
+        const core = createCore();
+        const state = createInitialState();
+        const messages: CoreMessage[] = [
+            user("m1"),
+            reasoning("m2"),
+            { id: "m3", role: "assistant", contentType: "text", text: "TEXT-A " + "x".repeat(200) },
+            toolCall("m4", "ca"),
+            toolResult("m5", "ca"),
+            user("m6"),
+            user("m7"),
+        ];
+        const out = core.processTurn({ messages, state, config: config(), tokenCount: (t) => Math.ceil(t.length / 4) });
+        const res = core.applyCompression({
+            state: out.state,
+            messages,
+            config: config(),
+            protectedMessageIds: new Set(),
+            ranges: [{ startRef: "m00004", endRef: "m00005", summary: "s".repeat(400) }],
+        });
+        assert.equal(res.result.blocksCreated, 1, `call+result must fold; errors=${JSON.stringify(res.result.errors)}`);
+        const block = res.state.blocks.find((b) => b.active);
+        assert.ok(block);
+        assert.ok(block.effectiveMessageIds.includes("m4"));
+        assert.ok(block.effectiveMessageIds.includes("m5"));
+        assert.ok(!res.result.warnings.some((w) => /turn/.test(w)), JSON.stringify(res.result.warnings));
+    });
 });

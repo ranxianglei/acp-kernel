@@ -5,6 +5,7 @@ import {
   activeBlockSpans,
   formatCreatedBlocks,
 } from "../src/block-map.js";
+import { createCore } from "../src/compress.js";
 import {
   buildCompressibleRanges,
   mergeRangesToThreshold,
@@ -115,6 +116,70 @@ test("resolveBlockSpan sorts numerically, not lexicographically", () => {
 test("resolveBlockSpan returns null when nothing resolves", () => {
   const block = makeBlock({ effectiveMessageIds: ["gone"] });
   assert.equal(resolveBlockSpan(block, {}), null);
+});
+
+test("resolveBlockSpan ignores block-ID specs stored by block-boundary calls", () => {
+  const byRaw: Record<string, string> = {
+    a: "m00001",
+    b: "m00020",
+  };
+  const block = makeBlock({
+    tier: 2,
+    effectiveMessageIds: ["a", "b"],
+    startRef: "b1",
+    endRef: "b2",
+  });
+  assert.deepEqual(resolveBlockSpan(block, byRaw), {
+    startRef: "m00001",
+    endRef: "m00020",
+  });
+});
+
+test("resolveBlockSpan ignores mixed m-ref / block-ID specs", () => {
+  const byRaw: Record<string, string> = {
+    a: "m00001",
+    b: "m00020",
+  };
+  const block = makeBlock({
+    effectiveMessageIds: ["a", "b"],
+    startRef: "b1",
+    endRef: "m00020",
+  });
+  assert.deepEqual(resolveBlockSpan(block, byRaw), {
+    startRef: "m00001",
+    endRef: "m00020",
+  });
+});
+
+test("tier-distilled block created via bN..bM boundaries reports an m-ref span", () => {
+  const core = createCore();
+  let state = createInitialState();
+  const messages = Array.from({ length: 20 }, (_, i) =>
+    msg(`id${i + 1}`, `message ${i + 1}`),
+  );
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+  state = core.applyCompression({
+    ranges: [
+      { startRef: "m00001", endRef: "m00010", summary: "first ten" },
+      { startRef: "m00011", endRef: "m00020", summary: "next ten" },
+    ],
+    messages, state, config: config(),
+  }).state;
+  state = core.applyCompression({
+    ranges: [{ startRef: "b1", endRef: "b2", summary: "distilled" }],
+    messages, state, config: config(),
+  }).state;
+  const t2 = state.blocks[state.blocks.length - 1]!;
+  assert.equal(t2.tier, 2);
+  assert.equal(t2.startRef, "b1");
+  assert.equal(t2.endRef, "b2");
+  const spans = activeBlockSpans(state);
+  assert.deepEqual(spans, [
+    { blockId: t2.blockId, tier: 2, startRef: "m00001", endRef: "m00020" },
+  ]);
 });
 
 // ─── activeBlockSpans ─────────────────────────────────────────────────────────

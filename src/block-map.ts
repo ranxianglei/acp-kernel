@@ -10,15 +10,24 @@ function refNum(ref: string): number {
   return m ? parseInt(m[0], 10) : 0;
 }
 
+const M_REF = /^m\d+$/;
+
 /** Resolve a block's current ref span. Prefers the stored startRef/endRef
  *  (assigned at creation from the requested range); falls back to the
  *  min/max of effectiveMessageIds' refs for blocks persisted before those
- *  fields existed. Returns null when no covered message still resolves. */
+ *  fields existed. Stored refs are only trusted when both are message refs —
+ *  block-boundary specs (startId "bN") are stored verbatim on tier-distilled
+ *  blocks and must not render as spans. Returns null when nothing resolves. */
 export function resolveBlockSpan(
   block: CompressionBlock,
   byRaw: MessageRefMap["byRaw"],
 ): { startRef: string; endRef: string } | null {
-  if (block.startRef && block.endRef) {
+  if (
+    block.startRef &&
+    block.endRef &&
+    M_REF.test(block.startRef) &&
+    M_REF.test(block.endRef)
+  ) {
     return { startRef: block.startRef, endRef: block.endRef };
   }
   const refs = block.effectiveMessageIds

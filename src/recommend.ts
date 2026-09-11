@@ -21,7 +21,9 @@ import type {
 } from "./types.js";
 import type { CompressionState } from "./types.js";
 import {
+  collectLatestProtected,
   collectProtectedToolCallIds,
+  isMessageLatestProtected,
   isMessageProtectedWithPairing,
   isNeverPreserveRecent,
 } from "./protected.js";
@@ -165,6 +167,11 @@ export function buildCompressibleRanges(
   // Pairing: a tool-result may carry only toolCallId (no toolName). Collect the
   // callIds of protected tool-calls first, then protect matching results too.
   const protectedCallIds = collectProtectedToolCallIds(messages, config);
+  // Latest-only protected calls: their results are covered by the pairing
+  // union; the calls themselves need the explicit check below (pairing only
+  // matches tool-results).
+  const latest = collectLatestProtected(messages, config);
+  for (const id of latest.callIds) protectedCallIds.add(id);
 
   // Segmentation is array adjacency, never ref arithmetic: surface-replacing
   // hosts leave holes in the ref map (compressed messages leave the array, refs
@@ -185,7 +192,10 @@ export function buildCompressibleRanges(
       continue;
     }
 
-    if (isMessageProtectedWithPairing(msg, config, protectedCallIds)) {
+    if (
+      isMessageProtectedWithPairing(msg, config, protectedCallIds) ||
+      isMessageLatestProtected(msg, latest)
+    ) {
       protectedMsgs.push({
         ref,
         gapBefore: skipSinceProtected,

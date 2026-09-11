@@ -253,6 +253,12 @@ export interface NudgeDecision {
   /** When `tier` is set, the active lower-tier blocks that should be distilled
    *  into a single higher-tier block. Empty when no tier nudge. */
   tierTargetBlocks?: CompressionBlock[];
+  /** All ACTIVE blocks. Rendered as a compact block ledger (id → ref span) so
+   *  the model can reconcile its memory of prior compress coverage against the
+   *  recommended ranges without an acp_status round-trip (#251). */
+  activeBlocks?: CompressionBlock[];
+  /** Ref mapping used to resolve each block's effectiveMessageIds back to m-refs. */
+  messageRefs?: MessageRefMap;
   contextUsage: number;
   tier: CompressionTier | null;
   breakdown: NudgeBreakdown;

@@ -1354,6 +1354,8 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     compressibleRanges: rec?.recommendedRanges ?? [],
     protectedRanges: rec?.contextRanges.protected ?? [],
     tierTargetBlocks: injectedTier ? tiers[injectedTier]!.targetBlocks : [],
+    activeBlocks: activeBlocks(state),
+    messageRefs: state.messageRefs,
     contextUsage: usage,
     tier: injectedTier,
     breakdown: {

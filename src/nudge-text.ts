@@ -1,6 +1,7 @@
-import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock } from "./types.js";
+import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock, MessageRefMap } from "./types.js";
 import { defaultPrompts } from "./prompts.js";
 import type { Prompts } from "./prompts.js";
+import { refToIndex, BLOCKED_REF } from "./refs.js";
 
 export type NudgeVoice = "gentle" | "emergency";
 
@@ -120,9 +121,82 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   return `Compressible ranges (${merged.length}, oldest first):\n${lines.join("\n")}`;
 }
 
+export const MAX_BLOCK_LEDGER_ENTRIES = 8;
+
+function blockIndex(id: string): number {
+  const n = Number(id.slice(1));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function blockSpan(
+  block: CompressionBlock,
+  refs: MessageRefMap | undefined,
+): { start: string; end: string } | null {
+  let loIdx: number | null = null;
+  let hiIdx: number | null = null;
+  let loRef = "";
+  let hiRef = "";
+  for (const rawId of block.effectiveMessageIds) {
+    const ref = refs?.byRaw[rawId];
+    if (!ref || ref === BLOCKED_REF) continue;
+    const idx = refToIndex(ref);
+    if (idx === null) continue;
+    if (loIdx === null || idx < loIdx) {
+      loIdx = idx;
+      loRef = ref;
+    }
+    if (hiIdx === null || idx > hiIdx) {
+      hiIdx = idx;
+      hiRef = ref;
+    }
+  }
+  if (loIdx !== null && hiIdx !== null) return { start: loRef, end: hiRef };
+  // effectiveMessageIds may be unresolvable after fork/rebuild remapping.
+  // Fall back to the stored spec span only when it parses as m-refs —
+  // block-boundary calls store block IDs ("b1") there, which would mislead.
+  if (block.startRef && block.endRef) {
+    const s = refToIndex(block.startRef);
+    const e = refToIndex(block.endRef);
+    if (s !== null && e !== null) {
+      return s <= e
+        ? { start: block.startRef, end: block.endRef }
+        : { start: block.endRef, end: block.startRef };
+    }
+  }
+  return null;
+}
+
+export function formatBlockLedger(
+  blocks: CompressionBlock[],
+  refs?: MessageRefMap,
+  maxEntries: number = MAX_BLOCK_LEDGER_ENTRIES,
+): string {
+  const entries: string[] = [];
+  const sorted = [...blocks].sort((a, b) => blockIndex(a.blockId) - blockIndex(b.blockId));
+  for (const block of sorted) {
+    const span = blockSpan(block, refs);
+    if (!span) continue;
+    const range = span.start === span.end ? span.start : `${span.start}–${span.end}`;
+    entries.push(
+      block.tier >= 2
+        ? `${block.blockId}=tier${block.tier}(${range})`
+        : `${block.blockId}=${range}`,
+    );
+  }
+  if (entries.length === 0) return "";
+  let shown = entries;
+  let olderNote = "";
+  if (entries.length > maxEntries) {
+    shown = entries.slice(entries.length - maxEntries);
+    olderNote = ` (+${entries.length - maxEntries} older)`;
+  }
+  return `Blocks${olderNote}: ${shown.join(" · ")}`;
+}
+
 export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defaultPrompts): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
   const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
+  const ledgerStr = formatBlockLedger(decision.activeBlocks ?? [], decision.messageRefs);
   const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
 
   if (decision.tier !== null && decision.tier >= 2) {
@@ -147,6 +221,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
           ? `Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-2 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 2 distillation rules to the existing summaries, so the whole span is covered and nothing is lost.`
           : `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-3 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 3 condensation rules to the existing summaries, so the whole span is covered and nothing is lost.`,
         blockList,
+        ...(ledgerStr ? [ledgerStr] : []),
         `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
         "",
         prompts.howToCompressRules,
@@ -170,6 +245,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
         "Only use IDs from visible messages above. Compress older work first.",
         "",
         rangesStr,
+        ...(ledgerStr ? [ledgerStr] : []),
       ].join("\n"),
     };
   }
@@ -184,6 +260,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
       prompts.howToCompressRules,
       "",
       rangesStr,
+      ...(ledgerStr ? [ledgerStr] : []),
       "",
       `💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`,
     ].join("\n"),

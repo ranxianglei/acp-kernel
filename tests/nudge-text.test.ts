@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderNudgeText } from "../src/nudge-text.js";
-import type { NudgeDecision, CompressibleRange } from "../src/types.js";
+import { renderNudgeText, formatBlockLedger } from "../src/nudge-text.js";
+import type { NudgeDecision, CompressibleRange, CompressionBlock, MessageRefMap } from "../src/types.js";
 
 function makeRanges(count: number): CompressibleRange[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -173,4 +173,119 @@ test("over-limit renders with emergency voice (MAJOR-2 fix)", () => {
   );
   assert.equal(result.voice, "emergency", "over-limit should use emergency voice, not gentle");
   assert.ok(!result.text.includes("not an overflow warning"), "should NOT contain gentle reassurance");
+});
+
+function makeBlock(blockId: string, rawIds: string[], overrides: Partial<CompressionBlock> = {}): CompressionBlock {
+  return {
+    blockId,
+    runId: "r1",
+    tier: 1,
+    summary: "summary",
+    directMessageIds: rawIds,
+    effectiveMessageIds: rawIds,
+    directBlockIds: [],
+    compressedTokens: 100,
+    createdAt: Date.now(),
+    survivedCount: 0,
+    generation: "young",
+    active: true,
+    ...overrides,
+  };
+}
+
+function makeRefMap(pairs: Array<[rawId: string, ref: string]>): MessageRefMap {
+  const byRaw: Record<string, string> = {};
+  const byRef: Record<string, string> = {};
+  for (const [rawId, ref] of pairs) {
+    byRaw[rawId] = ref;
+    byRef[ref] = rawId;
+  }
+  return { byRaw, byRef };
+}
+
+function rangeRefs(start: number, end: number): Array<[string, string]> {
+  const pairs: Array<[string, string]> = [];
+  for (let i = start; i <= end; i++) {
+    pairs.push([`raw-${i}`, `m${String(i).padStart(5, "0")}`]);
+  }
+  return pairs;
+}
+
+test("block ledger: gentle nudge shows active block id → ref span map (#251)", () => {
+  const refs = makeRefMap([...rangeRefs(1, 43), ...rangeRefs(57, 78)]);
+  const blocks = [makeBlock("b1", rangeRefs(1, 43).map(([r]) => r)), makeBlock("b2", rangeRefs(57, 78).map(([r]) => r))];
+  const result = renderNudgeText(makeDecision({ activeBlocks: blocks, messageRefs: refs }));
+  assert.ok(result.text.includes("Blocks: b1=m00001–m00043 · b2=m00057–m00078"), "should contain full block map");
+  assert.ok(
+    result.text.indexOf("Blocks:") > result.text.indexOf("Compressible ranges"),
+    "ledger should appear after the ranges section",
+  );
+});
+
+test("block ledger: single-message block renders bare ref without en-dash", () => {
+  const refs = makeRefMap([["only", "m00009"]]);
+  const blocks = [makeBlock("b1", ["only"])];
+  assert.equal(formatBlockLedger(blocks, refs), "Blocks: b1=m00009");
+});
+
+test("block ledger: tier-2/tier-3 blocks annotated with tier", () => {
+  const refs = makeRefMap(rangeRefs(1, 78));
+  const t2 = makeBlock("b3", rangeRefs(1, 78).map(([r]) => r), { tier: 2 });
+  const t3 = makeBlock("b4", rangeRefs(1, 78).map(([r]) => r), { tier: 3 });
+  assert.equal(
+    formatBlockLedger([t2, t3], refs),
+    "Blocks: b3=tier2(m00001–m00078) · b4=tier3(m00001–m00078)",
+  );
+  const nudge = renderNudgeText(
+    makeDecision({ tier: 2, activeBlocks: [t2], messageRefs: refs }),
+  );
+  assert.ok(nudge.text.includes("b3=tier2(m00001–m00078)"), "tier nudge should carry the ledger too");
+});
+
+test("block ledger: truncates to newest entries with older count", () => {
+  const pairs: Array<[string, string]> = [];
+  const blocks: CompressionBlock[] = [];
+  for (let i = 1; i <= 11; i++) {
+    const ref = `m${String(i * 10).padStart(5, "0")}`;
+    pairs.push([`raw-${i}`, ref]);
+    blocks.push(makeBlock(`b${i}`, [`raw-${i}`]));
+  }
+  const expected =
+    "Blocks (+3 older): b4=m00040 · b5=m00050 · b6=m00060 · b7=m00070 · b8=m00080 · b9=m00090 · b10=m00100 · b11=m00110";
+  assert.equal(formatBlockLedger(blocks, makeRefMap(pairs)), expected);
+  assert.ok(!expected.includes("b1="), "oldest truncated entries must be dropped");
+});
+
+test("block ledger: no line when there are no blocks or nothing resolvable", () => {
+  assert.equal(formatBlockLedger([]), "");
+  const unresolvable = makeBlock("b1", ["ghost"]);
+  assert.equal(formatBlockLedger([unresolvable], makeRefMap([])), "");
+  const result = renderNudgeText(makeDecision({ activeBlocks: [] }));
+  assert.ok(!result.text.includes("Blocks:"), "no ledger line without blocks");
+});
+
+test("block ledger: falls back to stored spec span only when it parses as m-refs", () => {
+  const orphan = makeBlock("b1", ["ghost"], { startRef: "m00010", endRef: "m00020" });
+  assert.equal(formatBlockLedger([orphan], makeRefMap([])), "Blocks: b1=m00010–m00020");
+  const blockBoundarySpec = makeBlock("b2", ["ghost"], { startRef: "b1", endRef: "b3" });
+  assert.equal(formatBlockLedger([blockBoundarySpec], makeRefMap([])), "");
+});
+
+test("block ledger: BLOCKED refs are skipped, remaining ids still spanned", () => {
+  const refs = makeRefMap([["blocked", "BLOCKED"], ["a", "m00005"], ["b", "m00007"]]);
+  const block = makeBlock("b1", ["blocked", "a", "b"]);
+  assert.equal(formatBlockLedger([block], refs), "Blocks: b1=m00005–m00007");
+  const allBlocked = makeBlock("b2", ["blocked"]);
+  assert.equal(formatBlockLedger([allBlocked], refs), "");
+});
+
+test("block ledger: appears in emergency nudge after ranges", () => {
+  const refs = makeRefMap(rangeRefs(1, 43));
+  const blocks = [makeBlock("b1", rangeRefs(1, 43).map(([r]) => r))];
+  const result = renderNudgeText(
+    makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 }, activeBlocks: blocks, messageRefs: refs }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(result.text.includes("Blocks: b1=m00001–m00043"), "emergency nudge should carry the ledger");
+  assert.ok(result.text.indexOf("Blocks:") > result.text.indexOf("Compressible ranges"));
 });

@@ -169,6 +169,8 @@ type NudgeDecision = {
     shouldInject: boolean;
     reason: string;
     compressibleRanges: { startRef: string; endRef: string; tokens: number }[];
+    activeBlocks?: CompressionBlock[];   // rendered as a compact block ledger (id → ref span) in the nudge text (#251)
+    messageRefs?: MessageRefMap;         // resolves each block's effectiveMessageIds back to m-refs
     contextUsage: number;       // 0..1
     tier: 1 | 2 | 3 | null;     // multi-tier trigger, if any
     breakdown: Record<string, number>;

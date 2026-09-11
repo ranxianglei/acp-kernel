@@ -72,6 +72,12 @@ export function resolvePrompts(
 - `renderNudgeText(decision, prompts = defaultPrompts)` now accepts a `Prompts`
   argument, so an override flows into every nudge tier (gentle / emergency /
   tier-2 / tier-3). The default keeps the one-arg call backward-compatible.
+- The renderer also accepts `options?: { includeGuidance?: boolean }` (default
+  `true`; exported as `RenderNudgeOptions`). Set `false` when the host already
+  delivers the four rules once via system prompt / tool descriptions: exactly
+  those texts are dropped from the nudge body, all per-injection dynamic content
+  survives, and the system-prompt surface is untouched. Field overrides cannot
+  express this split — they change both surfaces at once.
 
 ### Host usage
 

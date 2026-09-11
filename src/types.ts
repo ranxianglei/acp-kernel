@@ -51,6 +51,14 @@ export interface CompressionBlock {
   endRef?: string;
 }
 
+/** A compression block's current ref span, pre-resolved for display. */
+export interface BlockSpan {
+  blockId: string;
+  tier: CompressionTier;
+  startRef: string;
+  endRef: string;
+}
+
 export interface MessageRefMap {
   byRaw: Record<string, string>;
   byRef: Record<string, string>;
@@ -228,6 +236,11 @@ export interface CompressibleRange {
   toolPct: number;
   textPct: number;
   dangerous?: boolean;
+  /** Count of user-role messages inside this range (set by
+   *  buildCompressibleRanges / mergeRangesToThreshold). Summaries must capture
+   *  every user request, so the count tells the model whether it needs a
+   *  per-message listing before compressing. Absent on hand-built ranges. */
+  userMsgs?: number;
 }
 
 export interface ProtectedRange {
@@ -264,6 +277,12 @@ export interface NudgeDecision {
   reason: string;
   compressibleRanges: CompressibleRange[];
   protectedRanges?: ProtectedRange[];
+  /** Active blocks with their current ref spans (creation order), pre-resolved
+   *  by decideNudge so renderers need no raw state. The nudge lists what to
+   *  compress; this ledger tells where existing blocks already stand, so a
+   *  remembered block boundary can be cross-checked without an acp_status
+   *  round-trip (#251). */
+  activeBlockSpans?: BlockSpan[];
   /** When `tier` is set, the active lower-tier blocks that should be distilled
    *  into a single higher-tier block. Empty when no tier nudge. */
   tierTargetBlocks?: CompressionBlock[];

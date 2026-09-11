@@ -52,6 +52,7 @@ export {
 export type { TokenCountFn } from "./tokenize.js";
 export { renderNudgeText, formatRanges } from "./nudge-text.js";
 export type { NudgeVoice, RenderedNudge } from "./nudge-text.js";
+export { resolveBlockSpan, activeBlockSpans, formatCreatedBlocks } from "./block-map.js";
 export {
   COMPRESS_PHILOSOPHY,
   HOW_TO_COMPRESS_RULES,

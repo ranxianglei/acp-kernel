@@ -9,12 +9,30 @@ export interface RenderedNudge {
   text: string;
 }
 
-function efficiencyNote(prompts: Prompts): string {
-  return `This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${prompts.compressPhilosophy}`;
+export interface RenderNudgeOptions {
+  /**
+   * Embed the load-bearing guidance texts (compressPhilosophy, howToCompressRules,
+   * and the active tier's distill/condense rules) in the nudge body. Defaults to
+   * true, so existing callers render byte-identical output. Set to false when the
+   * host already delivers these same texts once via its system prompt or tool
+   * descriptions — re-billing them on every injection is pure repetition. Only
+   * the four guidance texts are dropped; per-injection dynamic content
+   * (breakdown, trigger line, ranges, tier target blocks) survives. The
+   * system-prompt composition path reads {@link Prompts} directly and is
+   * unaffected by this flag — this is how a host keeps guidance in the system
+   * prompt while slimming every nudge.
+   */
+  includeGuidance?: boolean;
 }
 
-function emergencyHeader(prompts: Prompts): string {
-  return `⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n${prompts.compressPhilosophy}`;
+function efficiencyNote(prompts: Prompts, includeGuidance: boolean): string {
+  const note = "This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.";
+  return includeGuidance ? `${note}\n\n${prompts.compressPhilosophy}` : note;
+}
+
+function emergencyHeader(prompts: Prompts, includeGuidance: boolean): string {
+  const header = "⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.";
+  return includeGuidance ? `${header}\n\n${prompts.compressPhilosophy}` : header;
 }
 
 function formatK(n: number): string {
@@ -120,7 +138,12 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   return `Compressible ranges (${merged.length}, oldest first):\n${lines.join("\n")}`;
 }
 
-export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defaultPrompts): RenderedNudge {
+export function renderNudgeText(
+  decision: NudgeDecision,
+  prompts: Prompts = defaultPrompts,
+  options: RenderNudgeOptions = {},
+): RenderedNudge {
+  const includeGuidance = options.includeGuidance ?? true;
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
   const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
   const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
@@ -135,57 +158,39 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
     const triggerLine = isEmergency
       ? `[EMERGENCY — TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"}] Context limit reached — distill NOW into a denser summary to reclaim tokens.`
       : `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`;
-    return {
-      voice,
-      text: [
-        efficiencyNote(prompts),
-        "",
-        breakdownStr,
-        "",
-        triggerLine,
-        isT2
-          ? `Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-2 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 2 distillation rules to the existing summaries, so the whole span is covered and nothing is lost.`
-          : `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-3 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 3 condensation rules to the existing summaries, so the whole span is covered and nothing is lost.`,
-        blockList,
-        `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
-        "",
-        prompts.howToCompressRules,
-        "",
-        isT2 ? prompts.tier2DistillRules : prompts.tier3CondenseRules,
-      ].join("\n"),
-    };
-  }
-
-  if (isEmergency) {
-    return {
-      voice: "emergency",
-      text: [
-        emergencyHeader(prompts),
-        "",
-        breakdownStr,
-        "",
-        prompts.howToCompressRules,
-        "",
-        `{ "topic": "...", "content": [{ "startId": "<ID>", "endId": "<ID>", "summary": "..." }] }`,
-        "Only use IDs from visible messages above. Compress older work first.",
-        "",
-        rangesStr,
-      ].join("\n"),
-    };
-  }
-
-  return {
-    voice: "gentle",
-    text: [
-      efficiencyNote(prompts),
+    const parts = [
+      efficiencyNote(prompts, includeGuidance),
       "",
       breakdownStr,
       "",
-      prompts.howToCompressRules,
+      triggerLine,
+      isT2
+        ? `Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-2 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 2 distillation rules to the existing summaries, so the whole span is covered and nothing is lost.`
+        : `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-3 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 3 condensation rules to the existing summaries, so the whole span is covered and nothing is lost.`,
+      blockList,
+      `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
+    ];
+    if (includeGuidance) {
+      parts.push("", prompts.howToCompressRules, "", isT2 ? prompts.tier2DistillRules : prompts.tier3CondenseRules);
+    }
+    return { voice, text: parts.join("\n") };
+  }
+
+  if (isEmergency) {
+    const parts = [emergencyHeader(prompts, includeGuidance), "", breakdownStr];
+    if (includeGuidance) parts.push("", prompts.howToCompressRules);
+    parts.push(
+      "",
+      `{ "topic": "...", "content": [{ "startId": "<ID>", "endId": "<ID>", "summary": "..." }] }`,
+      "Only use IDs from visible messages above. Compress older work first.",
       "",
       rangesStr,
-      "",
-      `💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`,
-    ].join("\n"),
-  };
+    );
+    return { voice: "emergency", text: parts.join("\n") };
+  }
+
+  const parts = [efficiencyNote(prompts, includeGuidance), "", breakdownStr];
+  if (includeGuidance) parts.push("", prompts.howToCompressRules);
+  parts.push("", rangesStr, "", `💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`);
+  return { voice: "gentle", text: parts.join("\n") };
 }

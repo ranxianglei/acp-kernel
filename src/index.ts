@@ -51,7 +51,7 @@ export {
 } from "./tokenize.js";
 export type { TokenCountFn } from "./tokenize.js";
 export { renderNudgeText, formatRanges } from "./nudge-text.js";
-export type { NudgeVoice, RenderedNudge } from "./nudge-text.js";
+export type { NudgeVoice, RenderedNudge, RenderNudgeOptions } from "./nudge-text.js";
 export {
   COMPRESS_PHILOSOPHY,
   HOW_TO_COMPRESS_RULES,

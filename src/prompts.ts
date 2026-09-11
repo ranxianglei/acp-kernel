@@ -58,6 +58,11 @@ export interface ResolvePromptsOptions {
  * malformed partial never degrades the canonical rules. Resolve once at host
  * startup, then pass the resulting {@link Prompts} to {@link renderNudgeText}
  * and to the adapter's system-prompt composition so both layers stay consistent.
+ *
+ * To keep guidance in the system prompt but drop it from every nudge (hosts that
+ * deliver these texts once at startup), do NOT override fields here — that would
+ * change both surfaces at once. Pass `{ includeGuidance: false }` to
+ * {@link renderNudgeText} instead; the system-prompt path is unaffected by it.
  */
 export function resolvePrompts(
   overrides?: Partial<Prompts>,

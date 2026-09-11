@@ -27,6 +27,21 @@ export interface LegacyAdoption<T> {
     savedAt?: number;
 }
 
+/**
+ * Optional record codec: transforms serialized envelopes between the store
+ * and disk (e.g. compress and/or encrypt at rest). The store is
+ * codec-agnostic — it hands `encode` the exact JSON string it would have
+ * written and passes raw file bytes to `decode`, which must return that same
+ * JSON string or throw, in which case the file is treated as corrupt
+ * (skipped + logged) like any unreadable record. Format detection (magic
+ * bytes, plaintext fallback for unencoded legacy files) is the codec's job,
+ * so mixed trees of legacy plaintext and encoded files load fine.
+ */
+export interface StateStoreCodec {
+    encode(data: string): Buffer | string;
+    decode(buf: Buffer): string;
+}
+
 export interface StateStoreOptions<T> {
     /**
      * Storage root. The kernel deliberately has NO default location: the
@@ -75,6 +90,11 @@ export interface StateStoreOptions<T> {
      */
     validate?: (envelope: PersistedEnvelope<T>) => boolean;
     /**
+     * Optional codec applied around every write (canonical + spill) and
+     * read. See StateStoreCodec. Default: none — files are plain UTF-8 JSON.
+     */
+    codec?: StateStoreCodec;
+    /**
      * Transient-write retry policy (Windows + hostile temp environments).
      * The whole write cycle — mkdir, temp write, rename — is retried with
      * exponential backoff when it fails with a TRANSIENT code: EPERM/EBUSY/
@@ -109,6 +129,8 @@ export interface StateStoreOptions<T> {
  *   temp-file names or reorders writes
  * - debounced scheduleSave coalesces bursts into one write; the record is
  *   built at WRITE time from a builder, so late mutations are picked up
+ * - optional record codec (compress/encrypt at rest): encode on every write,
+ *   decode on every read; a decode failure is corrupt-file semantics
  * - loadAll skips `.tmp-*` orphans, corrupt JSON, and records whose
  *   filename does not match their id — one bad file never blocks boot; it
  *   reconciles a canonical record against its spill by savedAt (freshest wins)
@@ -127,6 +149,7 @@ export class StateStore<T> {
     private readonly legacyFn?: (parsed: unknown) => LegacyAdoption<T> | null;
     private readonly relPathFn?: (id: string, payload: T) => string;
     private readonly validateFn: (envelope: PersistedEnvelope<T>) => boolean;
+    private readonly codec?: StateStoreCodec;
     private readonly retryAttempts: number;
     private readonly retryBaseMs: number;
     private readonly retryMaxMs: number;
@@ -149,6 +172,7 @@ export class StateStore<T> {
         this.relPathFn = opts.relPath;
         this.legacyFn = opts.legacy;
         this.validateFn = opts.validate ?? defaultValidate;
+        this.codec = opts.codec;
         this.retryAttempts = Math.max(1, opts.retryAttempts ?? 6);
         this.retryBaseMs = Math.max(1, opts.retryBaseMs ?? 50);
         this.retryMaxMs = Math.max(this.retryBaseMs, opts.retryMaxMs ?? 1600);
@@ -215,7 +239,7 @@ export class StateStore<T> {
             return false;
         }
         const file = this.resolvePath(id, payload);
-        const data = JSON.stringify(this.envelope(id, payload));
+        const data = this.serialize(id, payload);
         let lastErr: unknown;
         for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
             // Fresh temp name + mkdir per attempt — same reasoning as the
@@ -223,7 +247,7 @@ export class StateStore<T> {
             const tmp = this.tempPath(file);
             try {
                 fs.mkdirSync(path.dirname(file), { recursive: true });
-                fs.writeFileSync(tmp, data, "utf8");
+                fs.writeFileSync(tmp, data);
                 fs.renameSync(tmp, file);
                 lastErr = undefined;
                 break;
@@ -254,7 +278,7 @@ export class StateStore<T> {
         for (let attempt = 0; attempt < this.retryAttempts && spillPath === null; attempt++) {
             try {
                 fs.mkdirSync(path.dirname(spill), { recursive: true });
-                fs.writeFileSync(spill, data, "utf8");
+                fs.writeFileSync(spill, data);
                 spillPath = spill;
             } catch (e) {
                 if (!isTransientFsError(e) || attempt === this.retryAttempts - 1) break;
@@ -377,7 +401,7 @@ export class StateStore<T> {
             throw e;
         }
         const file = this.resolvePath(id, payload);
-        const data = JSON.stringify(this.envelope(id, payload));
+        const data = this.serialize(id, payload);
         let lastErr: unknown;
         for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
             // Fresh temp name per attempt: on Windows a failed cleanup can
@@ -389,7 +413,7 @@ export class StateStore<T> {
             const tmp = this.tempPath(file);
             try {
                 await fsp.mkdir(path.dirname(file), { recursive: true });
-                await fsp.writeFile(tmp, data, "utf8");
+                await fsp.writeFile(tmp, data);
                 await fsp.rename(tmp, file);
                 this.discovered.set(id, file);
                 this.clearFailure(id);
@@ -418,7 +442,7 @@ export class StateStore<T> {
         for (let attempt = 0; attempt < this.retryAttempts && spillPath === null; attempt++) {
             try {
                 await fsp.mkdir(path.dirname(spill), { recursive: true });
-                await fsp.writeFile(spill, data, "utf8");
+                await fsp.writeFile(spill, data);
                 spillPath = spill;
             } catch (e) {
                 if (!isTransientFsError(e) || attempt === this.retryAttempts - 1) break;
@@ -434,6 +458,14 @@ export class StateStore<T> {
 
     private envelope(id: string, payload: T): PersistedEnvelope<T> {
         return { version: this.version, savedAt: Date.now(), id, payload };
+    }
+
+    /** Serialize an envelope for disk, applying the optional codec. Strings
+     *  are written as UTF-8 (the fs default); Buffer results pass through as
+     *  raw bytes. */
+    private serialize(id: string, payload: T): Buffer | string {
+        const json = JSON.stringify(this.envelope(id, payload));
+        return this.codec ? this.codec.encode(json) : json;
     }
 
     /** Absolute path for a record: custom relPath (guarded against path
@@ -513,7 +545,9 @@ export class StateStore<T> {
     private readEnvelope(file: string): PersistedEnvelope<T> | null {
         let parsed: unknown;
         try {
-            parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+            const buf = fs.readFileSync(file);
+            const text = this.codec ? this.codec.decode(buf) : buf.toString("utf8");
+            parsed = JSON.parse(text);
         } catch (e) {
             // A missing candidate path is an expected miss (loadSync probes);
             // only genuinely unreadable/corrupt files get logged.

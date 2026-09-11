@@ -28,8 +28,9 @@ export const hybridAlgorithm: SearchAlgorithm = {
     score(docs: SearchDoc[], query: string): ScoredBlock[] {
         const bm = bm25Algorithm.score(docs, query);
         const fz = fuzzyAlgorithm.score(docs, query);
-        const maxBm = Math.max(...bm.map((r) => r.score), 1e-9);
-        const maxFz = Math.max(...fz.map((r) => r.score), 1e-9);
+        // reduce, not Math.max(...spread): the spread trips V8's argument limit (~65K–125K docs) → RangeError.
+        const maxBm = bm.reduce((m, r) => (r.score > m ? r.score : m), 1e-9);
+        const maxFz = fz.reduce((m, r) => (r.score > m ? r.score : m), 1e-9);
         const bmMap = new Map(bm.map((r) => [r.ref, r.score / maxBm]));
         const fzMap = new Map(fz.map((r) => [r.ref, r.score / maxFz]));
         return docs.map((d) => ({

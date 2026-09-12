@@ -6,6 +6,7 @@ import fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateStore, flatFileNameFor } from "../src/persist/store.js";
+import type { StateStoreCodec } from "../src/persist/store.js";
 import { mergeCompressionState } from "../src/persist/state-merge.js";
 import { createInitialState } from "../src/state.js";
 import type { CompressionState } from "../src/types.js";
@@ -751,6 +752,134 @@ test("flushSync heals an ENOENT sweep the same way", (t) => {
         assert.ok(calls >= 2, "renameSync was retried");
     } finally {
         t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+function xorCodec(): StateStoreCodec {
+    const x = (buf: Buffer): Buffer => {
+        const out = Buffer.alloc(buf.length);
+        for (let i = 0; i < buf.length; i++) out[i] = buf[i] ^ 0x5a;
+        return out;
+    };
+    return { encode: (data) => x(Buffer.from(data, "utf8")), decode: (buf) => x(buf).toString("utf8") };
+}
+
+const ENC_MAGIC = Buffer.from("ENC1", "utf8");
+
+function magicCodec(): StateStoreCodec {
+    const inner = xorCodec();
+    return {
+        encode: (data) => Buffer.concat([ENC_MAGIC, inner.encode(data)]),
+        decode: (buf) => (buf.subarray(0, 4).equals(ENC_MAGIC) ? inner.decode(buf.subarray(4)) : buf.toString("utf8")),
+    };
+}
+
+test("codec round-trips records and keeps files opaque on disk", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { codec: xorCodec() });
+        await s.writeNow("sid-enc", () => ({ label: "secret", count: 7 }));
+        const raw = readFileSync(path.join(dir, flatFileNameFor("sid-enc")));
+        assert.ok(!raw.includes(Buffer.from('"label"')), "on-disk bytes are not plaintext JSON");
+        const hit = s.loadSync("sid-enc");
+        assert.ok(hit);
+        assert.deepEqual(hit.payload, { label: "secret", count: 7 });
+        const all = await s.loadAll();
+        assert.deepEqual(all.get("sid-enc")?.payload, { label: "secret", count: 7 });
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("codec applies to debounced scheduleSave writes", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { codec: xorCodec(), debounceMs: 10 });
+        s.scheduleSave("sid-deb", () => ({ label: "deb", count: 3 }));
+        await s.flushAll();
+        const all = await s.loadAll();
+        assert.deepEqual(all.get("sid-deb")?.payload, { label: "deb", count: 3 });
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("codec applies to spill writes as well", async (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { codec: xorCodec(), retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
+        t.mock.method(fsp, "rename", async () => {
+            throw eperm();
+        });
+        let threw = false;
+        try {
+            await s.writeNow("sid-espill", () => ({ label: "kept", count: 1 }));
+        } catch {
+            threw = true;
+        }
+        assert.equal(threw, true);
+        const raw = readFileSync(path.join(dir, spillNameFor("sid-espill")));
+        assert.ok(!raw.includes(Buffer.from('"label"')), "spill is encoded");
+        const env = JSON.parse(xorCodec().decode(raw)) as { id: string; payload: Payload };
+        assert.equal(env.id, "sid-espill");
+        assert.deepEqual(env.payload, { label: "kept", count: 1 });
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("flushSync spill is encoded too", (t) => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir, { codec: xorCodec(), retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
+        t.mock.method(fs, "renameSync", () => {
+            throw eperm();
+        });
+        const ok = s.flushSync("sid-fsenc", () => ({ label: "sync", count: 9 }));
+        assert.equal(ok, true);
+        const raw = readFileSync(path.join(dir, spillNameFor("sid-fsenc")));
+        assert.ok(!raw.includes(Buffer.from('"label"')), "spill is encoded");
+        const env = JSON.parse(xorCodec().decode(raw)) as { payload: Payload };
+        assert.deepEqual(env.payload, { label: "sync", count: 9 });
+    } finally {
+        t.mock.restoreAll();
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("codec decode failure is treated as a corrupt file, not fatal", async () => {
+    const dir = tmpDir();
+    try {
+        const plain = store(dir);
+        await plain.writeNow("sid-corrupt", () => ({ label: "x", count: 1 }));
+        const logs: Array<{ level: string; msg: string }> = [];
+        const strict = store(dir, {
+            codec: { encode: (d) => d, decode: () => { throw new Error("auth failed"); } },
+            log: (level, msg) => logs.push({ level, msg }),
+        });
+        assert.equal(strict.loadSync("sid-corrupt"), null);
+        const all = await strict.loadAll();
+        assert.equal(all.size, 0);
+        assert.ok(logs.some((l) => l.level === "warn" && l.msg.includes("corrupt")), "logged as corrupt");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("mixed tree: unencoded legacy files and encoded files both load", async () => {
+    const dir = tmpDir();
+    try {
+        const plain = store(dir);
+        await plain.writeNow("sid-old", () => ({ label: "legacy", count: 1 }));
+        const enc = store(dir, { codec: magicCodec() });
+        await enc.writeNow("sid-new", () => ({ label: "encoded", count: 2 }));
+        const fresh = store(dir, { codec: magicCodec() });
+        const all = await fresh.loadAll();
+        assert.deepEqual(all.get("sid-old")?.payload, { label: "legacy", count: 1 });
+        assert.deepEqual(all.get("sid-new")?.payload, { label: "encoded", count: 2 });
+    } finally {
         rmSync(dir, { recursive: true, force: true });
     }
 });

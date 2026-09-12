@@ -48,6 +48,9 @@ acp-kernel/
 │   ├── rebuild.ts            # Fork recovery + state rebuilding
 │   ├── hide.ts               # Hide compressed messages from visible context
 │   ├── keep-markers.ts       # KEEP/REF marker preservation in summaries
+│   ├── prompts.ts            # Prompts (4 load-bearing rules) + defaultPrompts + resolvePrompts
+│   ├── compress-tools.ts     # ACP tool schemas (3 wire shapes) + standing-prompt builders
+│   ├── surface-config.ts     # Surface-text overrides: applySectionOverrides, cloneWithDescriptions, applyAcpToolOverrides
 │   ├── types.ts              # All shared types
 │   └── defaults.ts           # defaultConfig, defaultNodes
 ├── tests/                    # unit + regression tests (node:test)

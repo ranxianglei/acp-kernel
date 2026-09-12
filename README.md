@@ -104,6 +104,32 @@ live-recomputed tags, use `renderVisibleRefs` directly.
 | `rebuildCompressionState` | Fork-recovery: replay historical compress calls |
 | `applyMessageFilters` | Pluggable message-filter framework |
 | `resolveTransformChannel` | Channel-selection policy: an explicit preference wins; the default is the wire channel only when the caller reports it viable |
+| `applySectionOverrides` / `cloneWithDescriptions` / `applyAcpToolOverrides` | Prompt/tool *surface* customization (see below) |
+
+### Prompt/tool surface configuration
+
+The standing compression prompt and the ACP tool schemas split into
+**load-bearing** text (the four `Prompts` rules — see `resolvePrompts`,
+override requires `acknowledgeRisk`) and **surface** text (section headers,
+guidance prose, tool descriptions, parameter descriptions). Surface text is
+safe to customize freely; these helpers implement that:
+
+- `applySectionOverrides(sections, overrides)` — tri-state per section:
+  `string` replaces the section (header + body), `null` removes it, omitted
+  keeps the default. Unknown keys are ignored.
+- `buildCompressSystemPrompt` / `buildCompressTextSystemPrompt` /
+  `buildCompressHybridSystemPrompt` accept an optional
+  `CompressPromptSections` second argument (keys: `acpTags`, `tools`,
+  `summariesInContext`, `textProtocol`, `textTools`, `functionTools`).
+  With no sections argument the output is byte-identical to the
+  pre-override release (regression-tested against fixtures).
+- `cloneWithDescriptions(schema, paramDescriptions)` — returns a deep clone
+  of a JSON tool schema with parameter `description` fields replaced by
+  property name, at any nesting depth. The input is never mutated.
+- `applyAcpToolOverrides(tools, overrides)` — applies per-tool `description`
+  and `paramDescriptions` to any of the three wire shapes (anthropic
+  `input_schema`, openai `function.parameters`, responses flat
+  `parameters`). Shared tool constants are never mutated.
 
 ### Nudge system
 

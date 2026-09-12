@@ -89,7 +89,7 @@ function cloneNode(node: unknown, overrides: Record<string, string>): unknown {
     for (const [name, value] of Object.entries(node as Record<string, unknown>)) {
       const cloned = cloneNode(value, overrides);
       if (
-        name in overrides &&
+        Object.hasOwn(overrides, name) &&
         cloned &&
         typeof cloned === "object" &&
         !Array.isArray(cloned)

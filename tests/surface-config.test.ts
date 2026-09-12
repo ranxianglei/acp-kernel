@@ -138,6 +138,24 @@ test("cloneWithDescriptions never mutates the input", () => {
   assert.equal(JSON.stringify(schema), before);
 });
 
+function protoKeySchema() {
+  return {
+    type: "object",
+    properties: {
+      topic: { type: "string", description: "OLD-TOPIC" },
+      hasOwnProperty: { type: "string", description: "KEEP-ME" },
+    },
+  };
+}
+
+test("cloneWithDescriptions ignores Object.prototype keys absent from overrides", () => {
+  const out = cloneWithDescriptions(protoKeySchema(), {
+    topic: "NEW-TOPIC",
+  }) as ReturnType<typeof protoKeySchema>;
+  assert.equal(out.properties.topic.description, "NEW-TOPIC");
+  assert.equal(out.properties.hasOwnProperty.description, "KEEP-ME");
+});
+
 test("applyAcpToolOverrides handles the anthropic shape (name + input_schema)", () => {
   const out = applyAcpToolOverrides(ACP_TOOLS_ANTHROPIC, {
     compress: {

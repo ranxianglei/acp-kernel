@@ -16,6 +16,7 @@ import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
 import { appendAbsorbPrompts, hideAbsorbedMessages } from "./absorb.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
+import { activeBlockSpans } from "./block-map.js";
 import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
 import { isMessageProtected } from "./protected.js";
@@ -1422,6 +1423,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     reason,
     compressibleRanges: rec?.recommendedRanges ?? [],
     protectedRanges: rec?.contextRanges.protected ?? [],
+    activeBlockSpans: activeBlockSpans(state),
     tierTargetBlocks: injectedTier ? tiers[injectedTier]!.targetBlocks : [],
     contextUsage: usage,
     tier: injectedTier,

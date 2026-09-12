@@ -1,4 +1,4 @@
-import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock } from "./types.js";
+import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock, BlockSpan } from "./types.js";
 import { defaultPrompts } from "./prompts.js";
 import type { Prompts } from "./prompts.js";
 
@@ -48,6 +48,19 @@ function formatTierTargetBlocks(blocks: CompressionBlock[]): string {
   return `Target ${blocks[0]!.tier === 1 ? "tier-1" : "tier-2"} blocks to distill (${blocks.length}):\n${lines.join("\n")}`;
 }
 
+const BLOCK_MAP_MAX_SHOWN = 8;
+
+function formatBlockMap(spans: BlockSpan[]): string {
+  if (spans.length === 0) return "";
+  const hidden = Math.max(0, spans.length - BLOCK_MAP_MAX_SHOWN);
+  const shown = hidden > 0 ? spans.slice(-BLOCK_MAP_MAX_SHOWN) : spans;
+  const items = shown.map(
+    (s) => `${s.blockId}=${s.startRef}–${s.endRef}${s.tier > 1 ? ` t${s.tier}` : ""}`,
+  );
+  const prefix = hidden > 0 ? `…+${hidden} older · ` : "";
+  return `Active blocks (${spans.length}): ${prefix}${items.join(" · ")}`;
+}
+
 export function formatRanges(compressible: CompressibleRange[], protectedRanges: ProtectedRange[]): string {
   if (compressible.length === 0 && protectedRanges.length === 0) {
     return "[No specific ranges detected — compress any consumed content.]";
@@ -59,7 +72,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   // and partly protected, which only the merged view shows correctly.
   interface Merged {
     startRef: string; endRef: string; startNum: number; endNum: number;
-    count: number; tokens: number;
+    count: number; tokens: number; userMsgs: number;
     compressibleTokens: number; compressibleCount: number;
     protectedTokens: number; protectedCount: number; protectedTools: string[];
     toolPct: number; textPct: number; dangerous: boolean;
@@ -72,7 +85,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   for (const r of compressible) {
     entries.push({
       startRef: r.startRef, endRef: r.endRef, startNum: refNum(r.startRef), endNum: refNum(r.endRef),
-      count: r.count, tokens: r.tokens, toolPct: r.toolPct, textPct: r.textPct,
+      count: r.count, tokens: r.tokens, userMsgs: r.userMsgs ?? 0, toolPct: r.toolPct, textPct: r.textPct,
       compressibleTokens: r.tokens, compressibleCount: r.count,
       protectedTokens: 0, protectedCount: 0, protectedTools: [], dangerous: r.dangerous ?? false,
     });
@@ -80,7 +93,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   for (const r of protectedRanges) {
     entries.push({
       startRef: r.startRef, endRef: r.endRef, startNum: refNum(r.startRef), endNum: refNum(r.endRef),
-      count: r.count, tokens: r.tokens, toolPct: 0, textPct: 0,
+      count: r.count, tokens: r.tokens, userMsgs: 0, toolPct: 0, textPct: 0,
       compressibleTokens: 0, compressibleCount: 0,
       protectedTokens: r.tokens, protectedCount: r.count, protectedTools: [...r.tools], dangerous: false,
     });
@@ -95,6 +108,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
       last.endNum = Math.max(last.endNum, e.endNum);
       last.count += e.count;
       last.tokens += e.tokens;
+      last.userMsgs += e.userMsgs;
       last.compressibleTokens += e.compressibleTokens;
       last.compressibleCount += e.compressibleCount;
       last.protectedTokens += e.protectedTokens;
@@ -107,15 +121,17 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
       merged.push({ ...e });
     }
   }
+  const userNote = (n: number): string =>
+    n > 0 ? ` · ${n} user msg${n > 1 ? "s" : ""}` : "";
   const lines = merged.map((e) => {
     const suffix = e.dangerous && e.compressibleTokens > 0 ? "  ⚠️ NOT recommended unless you are certain." : "";
     if (e.protectedTokens > 0 && e.compressibleTokens === 0) {
       return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [PROTECTED: ${e.protectedTools.join(", ")} — not compressible]${suffix}`;
     }
     if (e.protectedTokens > 0 && e.compressibleTokens > 0) {
-      return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [${formatK(e.compressibleTokens)} compressible | ${formatK(e.protectedTokens)} protected: ${e.protectedTools.join(", ")}]${suffix}`;
+      return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [${formatK(e.compressibleTokens)} compressible | ${formatK(e.protectedTokens)} protected: ${e.protectedTools.join(", ")}]${userNote(e.userMsgs)}${suffix}`;
     }
-    return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [tool ${e.toolPct}% | text ${e.textPct}%]${suffix}`;
+    return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [tool ${e.toolPct}% | text ${e.textPct}%]${userNote(e.userMsgs)}${suffix}`;
   });
   return `Compressible ranges (${merged.length}, oldest first):\n${lines.join("\n")}`;
 }
@@ -123,6 +139,7 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
 export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defaultPrompts): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
   const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
+  const blockMapStr = formatBlockMap(decision.activeBlockSpans ?? []);
   const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
 
   if (decision.tier !== null && decision.tier >= 2) {
@@ -170,6 +187,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
         "Only use IDs from visible messages above. Compress older work first.",
         "",
         rangesStr,
+        ...(blockMapStr ? ["", blockMapStr] : []),
       ].join("\n"),
     };
   }
@@ -184,6 +202,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
       prompts.howToCompressRules,
       "",
       rangesStr,
+      ...(blockMapStr ? ["", blockMapStr] : []),
       "",
       `💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`,
     ].join("\n"),

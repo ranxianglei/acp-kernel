@@ -237,12 +237,14 @@ export function buildCompressibleRanges(
         chars: info.chars,
         toolPct: info.isTool ? 100 : 0,
         textPct: info.isTool ? 0 : 100,
+        userMsgs: info.isUser ? 1 : 0,
       };
     } else {
       cur.endRef = info.ref;
       cur.count++;
       cur.tokens += info.tokens;
       cur.chars = (cur.chars ?? 0) + info.chars;
+      if (info.isUser) cur.userMsgs = (cur.userMsgs ?? 0) + 1;
       if (info.isTool) {
         cur.toolPct = Math.round((cur.toolPct * (cur.count - 1) + 100) / cur.count);
       } else {
@@ -304,6 +306,7 @@ function mergeBatch(batch: CompressibleRange[]): CompressibleRange {
     chars,
     toolPct,
     textPct: 100 - toolPct,
+    userMsgs: batch.reduce((s, r) => s + (r.userMsgs ?? 0), 0),
   };
   if (batch.some((r) => r.dangerous === true)) {
     merged.dangerous = true;

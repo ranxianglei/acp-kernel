@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderNudgeText } from "../src/nudge-text.js";
-import type { NudgeDecision, CompressibleRange } from "../src/types.js";
+import type { NudgeDecision, CompressibleRange, BlockSpan } from "../src/types.js";
 
 function makeRanges(count: number): CompressibleRange[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -173,4 +173,69 @@ test("over-limit renders with emergency voice (MAJOR-2 fix)", () => {
   );
   assert.equal(result.voice, "emergency", "over-limit should use emergency voice, not gentle");
   assert.ok(!result.text.includes("not an overflow warning"), "should NOT contain gentle reassurance");
+});
+
+function makeSpans(n: number): BlockSpan[] {
+  return Array.from({ length: n }, (_, i) => ({
+    blockId: `b${i + 1}`,
+    tier: 1,
+    startRef: `m${String(i * 10 + 1).padStart(5, "0")}`,
+    endRef: `m${String(i * 10 + 9).padStart(5, "0")}`,
+  }));
+}
+
+test("gentle nudge renders active block map", () => {
+  const result = renderNudgeText(makeDecision({ activeBlockSpans: makeSpans(2) }));
+  assert.ok(
+    result.text.includes("Active blocks (2): b1=m00001–m00009 · b2=m00011–m00019"),
+    "should list each active block with its ref span",
+  );
+});
+
+test("block map marks non-tier-1 blocks with tier suffix", () => {
+  const spans = [{ ...makeSpans(1)[0]!, tier: 2 }];
+  const result = renderNudgeText(makeDecision({ activeBlockSpans: spans }));
+  assert.ok(result.text.includes("b1=m00001–m00009 t2"));
+});
+
+test("block map truncates beyond 8 blocks, keeping newest", () => {
+  const result = renderNudgeText(makeDecision({ activeBlockSpans: makeSpans(10) }));
+  assert.ok(result.text.includes("Active blocks (10): …+2 older · "), "should show hidden count");
+  assert.ok(!result.text.includes("b1="), "oldest hidden blocks must not be listed");
+  assert.ok(result.text.includes("b8="));
+  assert.ok(result.text.includes("b10="));
+});
+
+test("no block map line when absent or empty", () => {
+  const r1 = renderNudgeText(makeDecision());
+  assert.ok(!r1.text.includes("Active blocks"), "absent activeBlockSpans → no line");
+  const r2 = renderNudgeText(makeDecision({ activeBlockSpans: [] }));
+  assert.ok(!r2.text.includes("Active blocks"), "empty activeBlockSpans → no line");
+});
+
+test("emergency nudge also renders block map", () => {
+  const result = renderNudgeText(
+    makeDecision({
+      contextUsage: 0.99,
+      breakdown: { emergencyOverride: 1 },
+      activeBlockSpans: makeSpans(1),
+    }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(result.text.includes("Active blocks (1): b1=m00001–m00009"));
+});
+
+test("range lines annotate user message count", () => {
+  const ranges: CompressibleRange[] = [
+    { startRef: "m00001", endRef: "m00005", count: 5, tokens: 2000, toolPct: 0.5, textPct: 0.5, userMsgs: 3 },
+    { startRef: "m00010", endRef: "m00011", count: 2, tokens: 500, toolPct: 1, textPct: 0, userMsgs: 1 },
+  ];
+  const result = renderNudgeText(makeDecision({ compressibleRanges: ranges }));
+  assert.ok(result.text.includes("· 3 user msgs"));
+  assert.ok(result.text.includes("· 1 user msg"));
+});
+
+test("no user-msg annotation when count is zero or absent", () => {
+  const result = renderNudgeText(makeDecision());
+  assert.ok(!result.text.includes("user msg"), "makeRanges fixtures carry no userMsgs");
 });

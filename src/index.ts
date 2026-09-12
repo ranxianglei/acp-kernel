@@ -73,6 +73,23 @@ export type {
   ToolPrompts,
   AcpToolLike,
 } from "./surface-config.js";
+export {
+  isValidPackName,
+  sanitizePackSurface,
+  defaultPack,
+  leanPack,
+  builtinSource,
+  createDirPackSource,
+  createPackResolver,
+  defaultPackSources,
+} from "./packs.js";
+export type {
+  PromptPackFile,
+  PackSurface,
+  Pack,
+  PackSource,
+  PackResolver,
+} from "./packs.js";
 export { truncateLargeToolOutputs } from "./truncate-tools.js";
 export type { TruncateOptions, TruncateResult } from "./truncate-tools.js";
 export {

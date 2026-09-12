@@ -93,6 +93,21 @@ test("dir source resolves and lists json packs", () => {
   }
 });
 
+test("dir source: filename is the pack identity — internal name mismatch is ignored", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "acp-packs-id-"));
+  try {
+    writeFileSync(path.join(dir, "team.json"), JSON.stringify({ name: "other", toolPrompts: { compress: { description: "T" } } }));
+    const src = createDirPackSource("project", dir);
+    const pack = src.resolve("team");
+    assert.equal(pack?.name, "team");
+    assert.equal(pack?.surface.toolPrompts?.compress?.description, "T");
+    assert.equal(src.resolve("other"), null, "content-side name is not a resolution key");
+    assert.deepEqual(src.list().map((p) => p.name), ["team"], "list() reports the filename too");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("dir source on missing directory yields empty list and no resolve", () => {
   const src = createDirPackSource("user", path.join(tmpdir(), "acp-no-such-dir"));
   assert.equal(src.resolve("lean"), null);

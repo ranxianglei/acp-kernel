@@ -247,8 +247,12 @@ export function createDirPackSource(id: string, dir: string): PackSource {
     const file = path.join(dir, `${name}.json`);
     const raw = readPackFile(file);
     if (!raw) return null;
+    // Identity is the FILENAME, never the internal `name` field: config refs
+    // (`promptPack: "team"`) point at the file, so a content-side rename must
+    // not change the resolution key or break persistence round-trips. Internal
+    // `name` mismatches are ignored (filename canonical).
     return {
-      name: typeof raw.name === "string" ? raw.name : name,
+      name,
       version: typeof raw.version === "string" ? raw.version : undefined,
       description: typeof raw.description === "string" ? raw.description : undefined,
       surface: sanitizePackSurface(raw),

@@ -4,16 +4,25 @@ import type { Prompts } from "./prompts.js";
 
 export type NudgeVoice = "gentle" | "emergency";
 
+export interface NudgePromptSections {
+  efficiencyNote?: string | null;
+  emergencyHeader?: string | null;
+  t2Guidance?: string | null;
+  t3Guidance?: string | null;
+}
+
 export interface RenderedNudge {
   voice: NudgeVoice;
   text: string;
 }
 
-function efficiencyNote(prompts: Prompts): string {
+function efficiencyNote(prompts: Prompts, sections: NudgePromptSections): string | null {
+  if (sections.efficiencyNote !== undefined) return sections.efficiencyNote;
   return `This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${prompts.compressPhilosophy}`;
 }
 
-function emergencyHeader(prompts: Prompts): string {
+function emergencyHeader(prompts: Prompts, sections: NudgePromptSections): string | null {
+  if (sections.emergencyHeader !== undefined) return sections.emergencyHeader;
   return `⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n${prompts.compressPhilosophy}`;
 }
 
@@ -136,7 +145,22 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   return `Compressible ranges (${merged.length}, oldest first):\n${lines.join("\n")}`;
 }
 
-export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defaultPrompts): RenderedNudge {
+const DEFAULT_T2_GUIDANCE = `Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-2 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 2 distillation rules to the existing summaries, so the whole span is covered and nothing is lost.`;
+
+const DEFAULT_T3_GUIDANCE = `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-3 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 3 condensation rules to the existing summaries, so the whole span is covered and nothing is lost.`;
+
+function tierGuidance(tier: 2 | 3, sections: NudgePromptSections): string | null {
+  const value = tier === 2 ? sections.t2Guidance : sections.t3Guidance;
+  if (value !== undefined) return value;
+  return tier === 2 ? DEFAULT_T2_GUIDANCE : DEFAULT_T3_GUIDANCE;
+}
+
+function compact(parts: string[]): string[] {
+  while (parts.length > 0 && parts[0] === "") parts.shift();
+  return parts;
+}
+
+export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defaultPrompts, sections: NudgePromptSections = {}): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
   const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
   const blockMapStr = formatBlockMap(decision.activeBlockSpans ?? []);
@@ -152,32 +176,33 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
     const triggerLine = isEmergency
       ? `[EMERGENCY — TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"}] Context limit reached — distill NOW into a denser summary to reclaim tokens.`
       : `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`;
+    const guidance = tierGuidance(isT2 ? 2 : 3, sections);
+    const head = efficiencyNote(prompts, sections);
     return {
       voice,
-      text: [
-        efficiencyNote(prompts),
+      text: compact([
+        ...(head === null ? [] : [head]),
         "",
         breakdownStr,
         "",
         triggerLine,
-        isT2
-          ? `Your tier-1 compression summaries have accumulated. Distill them into a single denser tier-2 summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-2 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 2 distillation rules to the existing summaries, so the whole span is covered and nothing is lost.`
-          : `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-3 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 3 condensation rules to the existing summaries, so the whole span is covered and nothing is lost.`,
+        ...(guidance === null ? [] : [guidance]),
         blockList,
         `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
         "",
         prompts.howToCompressRules,
         "",
         isT2 ? prompts.tier2DistillRules : prompts.tier3CondenseRules,
-      ].join("\n"),
+      ]).join("\n"),
     };
   }
 
   if (isEmergency) {
+    const head = emergencyHeader(prompts, sections);
     return {
       voice: "emergency",
-      text: [
-        emergencyHeader(prompts),
+      text: compact([
+        ...(head === null ? [] : [head]),
         "",
         breakdownStr,
         "",
@@ -188,14 +213,15 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
         "",
         rangesStr,
         ...(blockMapStr ? ["", blockMapStr] : []),
-      ].join("\n"),
+      ]).join("\n"),
     };
   }
 
+  const gentleHead = efficiencyNote(prompts, sections);
   return {
     voice: "gentle",
-    text: [
-      efficiencyNote(prompts),
+    text: compact([
+      ...(gentleHead === null ? [] : [gentleHead]),
       "",
       breakdownStr,
       "",
@@ -205,6 +231,6 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
       ...(blockMapStr ? ["", blockMapStr] : []),
       "",
       `💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`,
-    ].join("\n"),
+    ]).join("\n"),
   };
 }

@@ -5,6 +5,7 @@ import { formatCompactTokens } from "./format.js";
 import { topicFallback } from "./topic.js";
 import { viableRanges } from "../viable.js";
 import { cacheHitStats, formatHitRate, type CacheUsageSample } from "./cache.js";
+import { fill, padLabel, renderTitleBox, resolvePanelLabels, type PanelLabels } from "./labels.js";
 
 export interface StatusPanelInput {
   /** Adapter identifier for the header, e.g. "billion-context-omp@0.1.6".
@@ -33,6 +34,10 @@ export interface StatusPanelInput {
    *  the host's provider-scale number from an estimate-scale number
    *  invents a third, meaningless scale (issue #18 "看板统计的和拆分的有差异"). */
   unprunedTokens?: number;
+  /** Localized display labels; every key optional, per-key fallback to the
+   *  English defaults (DEFAULT_PANEL_LABELS). Display-only — model-facing
+   *  text is unaffected. */
+  labels?: Partial<PanelLabels>;
   /** Per-request prompt-cache usage (from assistant messages' provider-
    *  reported `usage`). Requests without cache reporting are excluded by
    *  cacheHitStats; when no counted request remains, the section is
@@ -66,6 +71,7 @@ function bar(value: number, total: number, width: number = 20): string {
  *  112k compressed") — that is what issue #18 reported. */
 export function buildStatusPanel(input: StatusPanelInput): string {
   const { tokenCount, state, nudge, modelContextLimit } = input;
+  const L = resolvePanelLabels(input.labels);
   const fmt = input.fmtTokens ?? formatCompactTokens;
   const bd = nudge?.contextBreakdown;
   const limit = modelContextLimit;
@@ -85,39 +91,39 @@ export function buildStatusPanel(input: StatusPanelInput): string {
 
   const lines: string[] = [];
 
-  lines.push("╭─────────────────────────────────────────────╮");
-  lines.push("│           ACP Context Analysis              │");
-  lines.push("╰─────────────────────────────────────────────╯");
+  lines.push(...renderTitleBox(L.title));
   if (input.version) lines.push(input.version);
   lines.push("");
-  lines.push(`Context (session accounting, host footer scale): ${displayPct}% (${fmt(displayTotal)} / ${fmt(limit)}) — includes compressed originals; shrinks slower than the sent view`);
+  lines.push(fill(L.context, { pct: displayPct, used: fmt(displayTotal), limit: fmt(limit) }));
 
   if (nudge && bd) {
     const growth = bd.growth;
     if (growth > 0 && displayTotal > 0) {
-      lines.push(`Growth: +${fmt(growth)} since last nudge`);
+      lines.push(fill(L.growth, { growth: fmt(growth) }));
     }
     lines.push("");
-    lines.push(`Sent to LLM (after compression, est.): ${fmt(sentTotal)}${limit > 0 ? ` (${sentPct}% of limit)` : ""}`);
+    let sentLine = fill(L.sent, { sent: fmt(sentTotal) });
+    if (limit > 0) sentLine += fill(L.sentOfLimit, { pct: sentPct });
+    lines.push(sentLine);
     if (input.unprunedTokens !== undefined && sessionOnly > 0) {
-      lines.push(`Session-only (compressed originals, est.): ${fmt(sessionOnly)} — pruned from every request; the footer/nudge still count them`);
+      lines.push(fill(L.sessionOnly, { only: fmt(sessionOnly) }));
     }
     lines.push("");
-    lines.push("Token Breakdown (sent view):");
+    lines.push(L.breakdown);
 
     const categories: Array<{ label: string; value: number }> = [
-      { label: "Tool", value: bd.tool },
-      { label: "SysPrompt", value: systemPromptTokens },
-      { label: "Text", value: bd.text },
-      { label: "Code", value: bd.code },
-      { label: "Summaries", value: bd.summaries },
+      { label: L.catTool, value: bd.tool },
+      { label: L.catSysPrompt, value: systemPromptTokens },
+      { label: L.catText, value: bd.text },
+      { label: L.catCode, value: bd.code },
+      { label: L.catSummaries, value: bd.summaries },
     ];
 
     for (const cat of categories) {
       if (cat.value <= 0) continue;
       const pct = sentTotal > 0 ? Math.round((cat.value / sentTotal) * 100) : 0;
       const b = bar(cat.value, sentTotal);
-      lines.push(`  ${cat.label.padEnd(10)} ${b} ${String(pct).padStart(3)}%  ${fmt(cat.value)}`);
+      lines.push(`  ${padLabel(cat.label, 10)} ${b} ${String(pct).padStart(3)}%  ${fmt(cat.value)}`);
     }
   }
 
@@ -126,7 +132,13 @@ export function buildStatusPanel(input: StatusPanelInput): string {
     if (cache.requests > 0 && cache.session !== undefined && cache.last !== undefined) {
       lines.push("");
       lines.push(
-        `Prompt cache (provider-reported): ${formatHitRate(cache.last)} last · ${formatHitRate(cache.session)} session avg — ${fmt(cache.cacheRead)} of ${fmt(cache.billedPrompt)} billed prompt tokens served from cache (${cache.requests} req)`,
+        fill(L.promptCache, {
+          last: formatHitRate(cache.last),
+          session: formatHitRate(cache.session),
+          read: fmt(cache.cacheRead),
+          billed: fmt(cache.billedPrompt),
+          requests: cache.requests,
+        }),
       );
     }
   }
@@ -135,10 +147,10 @@ export function buildStatusPanel(input: StatusPanelInput): string {
 
   if (nudge) {
     if (nudge.shouldInject) {
-      const tierInfo = nudge.tier ? ` [T${nudge.tier} distillation]` : "";
-      lines.push(`Nudge: ACTIVE${tierInfo} — ${nudge.reason}`);
+      const tierInfo = nudge.tier ? fill(L.nudgeTierInfo, { tier: nudge.tier }) : "";
+      lines.push(fill(L.nudgeActive, { tierInfo, reason: nudge.reason }));
     } else {
-      lines.push(`Nudge: idle — ${nudge.reason}`);
+      lines.push(fill(L.nudgeIdle, { reason: nudge.reason }));
     }
   }
 
@@ -151,7 +163,7 @@ export function buildStatusPanel(input: StatusPanelInput): string {
 
   if (activeBlocksList.length > 0) {
     lines.push("");
-    lines.push(`Blocks: ${activeBlocksList.length} active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed, cumulative)`);
+    lines.push(fill(L.blocksHeader, { active: activeBlocksList.length, total: totalBlocksList.length, tokens: fmt(state.stats.tokensCompressed) }));
     for (const b of activeBlocksList) {
       const topic = b.topic ? `: ${b.topic}` : `: ${topicFallback(b.summary || "")}`;
       const summaryTok = defaultCountTokens(b.summary || "");
@@ -160,14 +172,14 @@ export function buildStatusPanel(input: StatusPanelInput): string {
     }
   } else if (totalBlocksList.length > 0) {
     lines.push("");
-    lines.push(`Blocks: 0 active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed, cumulative)`);
+    lines.push(fill(L.blocksHeader, { active: 0, total: totalBlocksList.length, tokens: fmt(state.stats.tokensCompressed) }));
   } else {
     lines.push("");
-    lines.push("Blocks: none (nothing compressed yet)");
+    lines.push(L.blocksNone);
   }
 
   lines.push("");
-  lines.push("Tag visibility: tags injected to LLM only (deep copy), not persisted in session, not shown in terminal.");
+  lines.push(L.tagVisibility);
 
   return lines.join("\n");
 }

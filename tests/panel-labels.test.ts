@@ -202,9 +202,20 @@ test("non-string label values fall back to the English default", () => {
   assert.match(text, /% of limit/);
 });
 
-test("resolvePanelLabels merges only string entries over the defaults", () => {
+test("resolvePanelLabels merges only known string entries over the defaults", () => {
   const r = resolvePanelLabels({ title: undefined, context: "X", blocksNone: null as unknown as string });
   assert.equal(r.title, DEFAULT_PANEL_LABELS.title);
   assert.equal(r.context, "X");
   assert.equal(r.blocksNone, DEFAULT_PANEL_LABELS.blocksNone);
+
+  const r2 = resolvePanelLabels({ title: 42 as unknown as string, growth: new String("G"), tagVisibility: "TV2" });
+  assert.equal(r2.title, DEFAULT_PANEL_LABELS.title);
+  assert.equal(r2.growth, DEFAULT_PANEL_LABELS.growth);
+  assert.equal(r2.tagVisibility, "TV2");
+
+  const typoPack = { typoKey: "x", title: "T" } as unknown as Partial<PanelLabels>;
+  const r3 = resolvePanelLabels(typoPack);
+  assert.equal(r3.title, "T");
+  assert.ok(!("typoKey" in r3));
+  assert.deepEqual(Object.keys(resolvePanelLabels()).sort(), Object.keys(DEFAULT_PANEL_LABELS).sort());
 });

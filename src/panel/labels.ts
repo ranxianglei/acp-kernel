@@ -77,7 +77,7 @@ export function resolvePanelLabels(labels?: Partial<PanelLabels>): PanelLabels {
   if (!labels) return out;
   for (const key of Object.keys(labels) as Array<keyof PanelLabels>) {
     const value = labels[key];
-    if (typeof value === "string") out[key] = value;
+    if (typeof value === "string" && Object.hasOwn(DEFAULT_PANEL_LABELS, key)) out[key] = value;
   }
   return out;
 }

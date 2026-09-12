@@ -5,7 +5,7 @@ import { formatCompactTokens } from "./format.js";
 import { topicFallback } from "./topic.js";
 import { viableRanges } from "../viable.js";
 import { cacheHitStats, formatHitRate, type CacheUsageSample } from "./cache.js";
-import { DEFAULT_PANEL_LABELS, fill, padLabel, renderTitleBox, type PanelLabels } from "./labels.js";
+import { fill, padLabel, renderTitleBox, resolvePanelLabels, type PanelLabels } from "./labels.js";
 
 export interface StatusPanelInput {
   /** Adapter identifier for the header, e.g. "billion-context-omp@0.1.6".
@@ -71,7 +71,7 @@ function bar(value: number, total: number, width: number = 20): string {
  *  112k compressed") — that is what issue #18 reported. */
 export function buildStatusPanel(input: StatusPanelInput): string {
   const { tokenCount, state, nudge, modelContextLimit } = input;
-  const L: PanelLabels = { ...DEFAULT_PANEL_LABELS, ...input.labels };
+  const L = resolvePanelLabels(input.labels);
   const fmt = input.fmtTokens ?? formatCompactTokens;
   const bd = nudge?.contextBreakdown;
   const limit = modelContextLimit;

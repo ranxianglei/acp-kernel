@@ -7,6 +7,7 @@ import {
   fill,
   padLabel,
   renderTitleBox,
+  resolvePanelLabels,
   type PanelLabels,
   type StatusPanelInput,
 } from "../src/panel/index.js";
@@ -191,4 +192,19 @@ test("DEFAULT_PANEL_LABELS keys cover every template used by the panel", () => {
     "tagVisibility",
     "title",
   ]);
+});
+
+test("non-string label values fall back to the English default", () => {
+  const base = fixture();
+  const text = buildStatusPanel({ ...base, labels: { title: undefined, context: "CTX:{pct}", sentOfLimit: null as unknown as string } });
+  assert.ok(text.includes("ACP Context Analysis"), text);
+  assert.ok(text.includes("CTX:43"), text);
+  assert.match(text, /% of limit/);
+});
+
+test("resolvePanelLabels merges only string entries over the defaults", () => {
+  const r = resolvePanelLabels({ title: undefined, context: "X", blocksNone: null as unknown as string });
+  assert.equal(r.title, DEFAULT_PANEL_LABELS.title);
+  assert.equal(r.context, "X");
+  assert.equal(r.blocksNone, DEFAULT_PANEL_LABELS.blocksNone);
 });

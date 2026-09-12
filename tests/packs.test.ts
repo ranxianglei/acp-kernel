@@ -86,6 +86,8 @@ test("dir source resolves and lists json packs", () => {
     assert.equal(src.resolve("../escape"), null);
     const names = src.list().map((p) => p.name);
     assert.deepEqual(names, ["team"]);
+    const { list: listDetached } = src;
+    assert.deepEqual(listDetached().map((p) => p.name), ["team"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

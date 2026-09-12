@@ -242,21 +242,22 @@ function readPackFile(file: string): PromptPackFile | null {
 /** A pack directory source: `<dir>/<name>.json` files. Serves project-local,
  * user-global, and any future installer-managed directory identically. */
 export function createDirPackSource(id: string, dir: string): PackSource {
+  const resolve = (name: string): Pack | null => {
+    if (!isValidPackName(name)) return null;
+    const file = path.join(dir, `${name}.json`);
+    const raw = readPackFile(file);
+    if (!raw) return null;
+    return {
+      name: typeof raw.name === "string" ? raw.name : name,
+      version: typeof raw.version === "string" ? raw.version : undefined,
+      description: typeof raw.description === "string" ? raw.description : undefined,
+      surface: sanitizePackSurface(raw),
+      source: `file:${file}`,
+    };
+  };
   return {
     id,
-    resolve(name: string): Pack | null {
-      if (!isValidPackName(name)) return null;
-      const file = path.join(dir, `${name}.json`);
-      const raw = readPackFile(file);
-      if (!raw) return null;
-      return {
-        name: typeof raw.name === "string" ? raw.name : name,
-        version: typeof raw.version === "string" ? raw.version : undefined,
-        description: typeof raw.description === "string" ? raw.description : undefined,
-        surface: sanitizePackSurface(raw),
-        source: `file:${file}`,
-      };
-    },
+    resolve,
     list(): Pack[] {
       let names: string[];
       try {
@@ -266,8 +267,7 @@ export function createDirPackSource(id: string, dir: string): PackSource {
       }
       const out: Pack[] = [];
       for (const f of names) {
-        const name = f.slice(0, -5);
-        const pack = this.resolve(name);
+        const pack = resolve(f.slice(0, -5));
         if (pack) out.push(pack);
       }
       return out;

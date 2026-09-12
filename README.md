@@ -105,6 +105,7 @@ live-recomputed tags, use `renderVisibleRefs` directly.
 | `applyMessageFilters` | Pluggable message-filter framework |
 | `resolveTransformChannel` | Channel-selection policy: an explicit preference wins; the default is the wire channel only when the caller reports it viable |
 | `applySectionOverrides` / `cloneWithDescriptions` / `applyAcpToolOverrides` | Prompt/tool *surface* customization (see below) |
+| `sanitizePackSurface` / `createPackResolver` / `defaultPackSources` | Prompt packs: named, swappable surface presets resolved over pluggable sources (see below) |
 
 ### Prompt/tool surface configuration
 
@@ -130,6 +131,26 @@ safe to customize freely; these helpers implement that:
   and `paramDescriptions` to any of the three wire shapes (anthropic
   `input_schema`, openai `function.parameters`, responses flat
   `parameters`). Shared tool constants are never mutated.
+
+#### Prompt packs
+
+Named, swappable surface configurations layered on top of the primitives above:
+
+- `Pack` / `PackSurface` / `PackSource` / `PackResolver` — contracts. Sources are
+  consulted in resolver order; first hit wins; sources must be per-turn safe
+  (sync, no throw).
+- `sanitizePackSurface(raw)` — turns a raw pack JSON into a sanitized
+  `PackSurface`: tri-state for section keys (`string` replace / `null` remove /
+  omitted keep), per-tool description + paramDescriptions. Malformed values are
+  dropped. The opaque `adapters.<hostId>` record passes through for host-side
+  validation.
+- Builtins: `default` (identity) and `lean` (one-line tool descriptions;
+  host-specific trims ride under `adapters.<hostId>` as data).
+- `createDirPackSource(id, dir)` serves `<dir>/<name>.json` files;
+  `defaultPackSources({ projectDir, userDirs })` assembles project > user >
+  builtin. Directory paths are host policy.
+- Pack *selection* (which name is active per config cascade) stays adapter-side;
+  the kernel only resolves names.
 
 ### Nudge system
 

@@ -268,12 +268,32 @@ test("dir source roundtrips a pack file", () => {
   }
 });
 
-test("dir source tolerates missing dir and malformed json", () => {
+test("dir source makes the filename authoritative over the inner name field", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "acp-packs-mismatch-"));
+  try {
+    writeFileSync(
+      path.join(dir, "lean.json"),
+      JSON.stringify({ name: "custom", promptSections: { acpTags: "T" } }),
+    );
+    const src = createDirPackSource("project", dir);
+    const pack = src.resolve("lean");
+    assert.ok(pack);
+    assert.equal(pack.name, "lean");
+    assert.deepEqual(src.list().map((p) => p.name), ["lean"]);
+    assert.ok(src.resolve("custom") === null || src.resolve("custom")?.name === "custom");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("dir source tolerates missing dir, malformed json, and non-object files", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "acp-packs-bad-"));
   try {
     writeFileSync(path.join(dir, "bad.json"), "{not json");
+    writeFileSync(path.join(dir, "prim.json"), JSON.stringify(["an", "array"]));
     const src = createDirPackSource("user0", dir);
     assert.equal(src.resolve("bad"), null);
+    assert.equal(src.resolve("prim"), null);
     assert.deepEqual(src.list(), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });

@@ -22,7 +22,13 @@ function readPackFile(file: string): PromptPackFile | null {
 /**
  * A pack directory source: `<dir>/<name>.json` files. One factory serves any
  * directory origin (project-local, user-global, installer-managed); the caller
- * decides which directories exist and their priority order.
+ * decides which directories exist and their priority order. The filename (not
+ * a `name` field inside the file) is authoritative for the pack name, so
+ * every listed pack is resolvable by its listed name. Trust boundary: a
+ * project-local dir lets whoever controls that repo ship surface overrides to
+ * its consumers (inherent to the feature, like `.editorconfig`); content is
+ * still sanitized before use. `resolve` reads from disk on every call — hosts
+ * should resolve once per session and cache.
  */
 export function createDirPackSource(id: string, dir: string): PackSource {
   return {
@@ -33,7 +39,7 @@ export function createDirPackSource(id: string, dir: string): PackSource {
       const raw = readPackFile(file);
       if (!raw) return null;
       return {
-        name: typeof raw.name === "string" ? raw.name : name,
+        name,
         version: typeof raw.version === "string" ? raw.version : undefined,
         description:
           typeof raw.description === "string" ? raw.description : undefined,

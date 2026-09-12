@@ -51,6 +51,12 @@ acp-kernel/
 │   ├── prompts.ts            # Prompts (4 load-bearing rules) + defaultPrompts + resolvePrompts
 │   ├── compress-tools.ts     # ACP tool schemas (3 wire shapes) + standing-prompt builders
 │   ├── surface-config.ts     # Surface-text overrides: applySectionOverrides, cloneWithDescriptions, applyAcpToolOverrides
+│   ├── packs/                # Prompt-pack resolution layer (issue #259)
+│   │   ├── types.ts          # Pack/PackSurface/PackSource contracts + isValidPackName
+│   │   ├── sanitize.ts       # sanitizePackSurface — narrow raw pack JSON onto surface primitives
+│   │   ├── builtin.ts        # builtin registry: default (no overrides), lean
+│   │   ├── dir.ts            # createDirPackSource — <dir>/<name>.json file source
+│   │   └── resolver.ts       # createPackResolver (first non-null wins) + defaultPackSources
 │   ├── types.ts              # All shared types
 │   └── defaults.ts           # defaultConfig, defaultNodes
 ├── tests/                    # unit + regression tests (node:test)

@@ -261,6 +261,11 @@ test("dir source roundtrips a pack file", () => {
       src.list().map((p) => p.name),
       ["mypack"],
     );
+    const { list } = src;
+    assert.deepEqual(
+      list().map((p) => p.name),
+      ["mypack"],
+    );
     assert.equal(src.resolve("missing"), null);
     assert.equal(src.resolve("../evil"), null);
   } finally {
@@ -279,8 +284,14 @@ test("dir source makes the filename authoritative over the inner name field", ()
     const pack = src.resolve("lean");
     assert.ok(pack);
     assert.equal(pack.name, "lean");
-    assert.deepEqual(src.list().map((p) => p.name), ["lean"]);
-    assert.ok(src.resolve("custom") === null || src.resolve("custom")?.name === "custom");
+    assert.deepEqual(
+      src.list().map((p) => p.name),
+      ["lean"],
+    );
+    assert.ok(
+      src.resolve("custom") === null ||
+        src.resolve("custom")?.name === "custom",
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

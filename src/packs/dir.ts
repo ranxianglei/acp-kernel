@@ -31,22 +31,23 @@ function readPackFile(file: string): PromptPackFile | null {
  * should resolve once per session and cache.
  */
 export function createDirPackSource(id: string, dir: string): PackSource {
+  const resolve = (name: string): Pack | null => {
+    if (!isValidPackName(name)) return null;
+    const file = path.join(dir, `${name}.json`);
+    const raw = readPackFile(file);
+    if (!raw) return null;
+    return {
+      name,
+      version: typeof raw.version === "string" ? raw.version : undefined,
+      description:
+        typeof raw.description === "string" ? raw.description : undefined,
+      surface: sanitizePackSurface(raw),
+      source: `file:${file}`,
+    };
+  };
   return {
     id,
-    resolve(name: string): Pack | null {
-      if (!isValidPackName(name)) return null;
-      const file = path.join(dir, `${name}.json`);
-      const raw = readPackFile(file);
-      if (!raw) return null;
-      return {
-        name,
-        version: typeof raw.version === "string" ? raw.version : undefined,
-        description:
-          typeof raw.description === "string" ? raw.description : undefined,
-        surface: sanitizePackSurface(raw),
-        source: `file:${file}`,
-      };
-    },
+    resolve,
     list(): Pack[] {
       let names: string[];
       try {
@@ -56,7 +57,7 @@ export function createDirPackSource(id: string, dir: string): PackSource {
       }
       const out: Pack[] = [];
       for (const file of names) {
-        const pack = this.resolve(file.slice(0, -5));
+        const pack = resolve(file.slice(0, -5));
         if (pack) out.push(pack);
       }
       return out;

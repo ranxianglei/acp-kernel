@@ -131,6 +131,32 @@ safe to customize freely; these helpers implement that:
   `input_schema`, openai `function.parameters`, responses flat
   `parameters`). Shared tool constants are never mutated.
 
+### Prompt packs (`src/packs`)
+
+Named surface presets that bundle the primitives above into reusable packs
+(`Pack` / `PackSurface` / `PackSource` contracts):
+
+- `sanitizePackSurface(raw)` — narrows raw pack JSON onto the surface
+  primitives (`prompts`, `promptSections`, `nudgeSections`, `toolPrompts`).
+  Unknown keys, wrong types, and empty results are dropped, so a bad pack
+  degrades to "no override" and never clobbers a good default. Host-specific
+  data rides under an opaque, shallow-copied `adapters.<hostId>` namespace.
+- `createDirPackSource(id, dir)` — `<dir>/<name>.json` file source; the
+  filename is authoritative for the pack name; tolerant of missing dirs and
+  malformed JSON. Tolerant ≠ trusted: a project-local dir lets whoever
+  controls that repo ship surface overrides (like `.editorconfig`).
+- `builtinSource` — built-in `default` (no overrides) and `lean` (compact
+  ACP-tags section + one-line descriptions for the four ACP tools;
+  compression rules stay default).
+- `createPackResolver(sources)` — first non-null wins; `listPacks()` dedupes
+  by name with the same priority.
+- `defaultPackSources({ projectDir, userDirs })` — project dir > user dirs
+  (in order) > builtins. Directory paths are host policy (the kernel never
+  derives them from cwd/homedir), and pack *selection* (which name is active
+  given a config cascade) stays adapter-side.
+- `isValidPackName(name)` — path-safe identifier check; rejects traversal and
+  dot-leading names before any fs access.
+
 ### Nudge system
 
 The nudge system tells the model *when* to compress. It implements:

@@ -75,11 +75,19 @@ export type {
 } from "./surface-config.js";
 export { sanitizePackSurface } from "./packs/sanitize.js";
 export { isValidPackName } from "./packs/types.js";
-export type { PromptPackFile, PackSurface, Pack, PackSource } from "./packs/types.js";
+export type {
+  PromptPackFile,
+  PackSurface,
+  Pack,
+  PackSource,
+} from "./packs/types.js";
 export { defaultPack, leanPack, builtinSource } from "./packs/builtin.js";
 export { createDirPackSource } from "./packs/dir.js";
 export { createPackResolver, defaultPackSources } from "./packs/resolver.js";
-export type { PackResolver, DefaultPackSourcesOptions } from "./packs/resolver.js";
+export type {
+  PackResolver,
+  DefaultPackSourcesOptions,
+} from "./packs/resolver.js";
 export { truncateLargeToolOutputs } from "./truncate-tools.js";
 export type { TruncateOptions, TruncateResult } from "./truncate-tools.js";
 export {

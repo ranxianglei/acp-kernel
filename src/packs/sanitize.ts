@@ -8,7 +8,7 @@ const PROMPT_RULE_KEYS = [
   "howToCompressRules",
   "tier2DistillRules",
   "tier3CondenseRules",
-] as const;
+] as const satisfies readonly (keyof Prompts)[];
 
 const COMPRESS_SECTION_KEYS = [
   "acpTags",
@@ -17,14 +17,14 @@ const COMPRESS_SECTION_KEYS = [
   "textProtocol",
   "textTools",
   "functionTools",
-] as const;
+] as const satisfies readonly (keyof CompressPromptSections)[];
 
 const NUDGE_SECTION_KEYS = [
   "efficiencyNote",
   "emergencyHeader",
   "t2Guidance",
   "t3Guidance",
-] as const;
+] as const satisfies readonly (keyof NudgePromptSections)[];
 
 function pickSection(
   raw: unknown,

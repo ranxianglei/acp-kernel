@@ -68,6 +68,20 @@ export const DEFAULT_PANEL_LABELS: PanelLabels = {
   tagVisibility: "Tag visibility: tags injected to LLM only (deep copy), not persisted in session, not shown in terminal.",
 };
 
+/** Merge a partial label pack over the English defaults, ignoring entries
+ *  whose value is not a string (explicit `undefined` from a config merge,
+ *  `null`, …). A plain `{ ...defaults, ...pack }` spread lets one undefined
+ *  key blank out its default and crash the display-width renderers. */
+export function resolvePanelLabels(labels?: Partial<PanelLabels>): PanelLabels {
+  const out: PanelLabels = { ...DEFAULT_PANEL_LABELS };
+  if (!labels) return out;
+  for (const key of Object.keys(labels) as Array<keyof PanelLabels>) {
+    const value = labels[key];
+    if (typeof value === "string") out[key] = value;
+  }
+  return out;
+}
+
 /** Substitute `{name}` placeholders from params. Unknown placeholders are
  *  left intact so a typo in a host pack is visible on screen instead of
  *  silently dropping information. */

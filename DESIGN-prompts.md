@@ -1,6 +1,6 @@
 # Customizable Prompts — Design
 
-Status: **Layer 0 shipped** (this PR). Layers 1–3 are design intent, not yet built.
+Status: **Layers 0–1 shipped**. Layers 2–4 are design intent, not yet built.
 
 ## Goal
 
@@ -84,22 +84,79 @@ const prompts = resolvePrompts(userOverrides, { acknowledgeRisk: userAcked });
 // pass to the kernel renderer
 const nudge = renderNudgeText(decision, prompts);
 
-// and to the adapter's own system-prompt composition (Layer 2 will formalize)
+// and to the adapter's own system-prompt composition (Layer 3 will formalize)
 systemPrompt += prompts.compressPhilosophy + prompts.howToCompressRules;
 ```
 
 ### Non-goals for Layer 0
 
-- Surface text (summary header, status-report headers, tool descriptions) is
-  intentionally **not** overridable here. Threading the summary header through
-  `prune.ts` folding is invasive and low-value; status chrome is rarely
-  customized. These belong to later layers.
+- Surface text (standing-prompt sections, tool descriptions, parameter
+  descriptions) is **not** part of `Prompts` — it is covered by Layer 1
+  (`src/surface-config.ts`) without a risk gate.
 - Inline validation error strings (`src/compress.ts`) stay fixed.
 - No config field is added to `Config` / `defaultConfig`; the host holds the
   resolved `Prompts` object and passes it explicitly. This keeps config purely
   numeric and avoids threading prompts through `processTurn`.
 
-## Layer 1 — prompt-set format (design intent)
+## Layer 1 — prompt/tool surface overrides (shipped)
+
+Scope: open all *surface* text — standing-prompt sections, tool descriptions,
+parameter descriptions — to free-form override. No risk gate: surface text is
+presentation, and defaults stay byte-identical when no override is given
+(regression-tested against 0.0.46 fixtures).
+
+### Public API (`src/surface-config.ts`)
+
+```ts
+export type SectionOverride = string | null;
+
+export type CompressPromptSections = {
+  acpTags: SectionOverride;
+  tools: SectionOverride;
+  summariesInContext: SectionOverride;
+  textProtocol: SectionOverride;
+  textTools: SectionOverride;
+  functionTools: SectionOverride;
+};
+
+export function applySectionOverrides(
+  sections: ReadonlyArray<readonly [string, string]>,
+  overrides?: Record<string, SectionOverride>,
+): string[];
+
+export function cloneWithDescriptions(
+  schema: unknown,
+  paramDescriptions: Record<string, string>,
+): unknown;
+
+export function applyAcpToolOverrides<T extends AcpToolLike>(
+  tools: readonly T[],
+  overrides?: ToolPrompts,
+): T[];
+```
+
+- The three standing-prompt builders take an optional second argument:
+  `buildCompressSystemPrompt(prompts?, sections?)` (same for the text/hybrid
+  variants). Tri-state per section: `string` replaces the whole section
+  (header + body), `null` removes it, omitted keeps the default. Keys that do
+  not belong to a given builder are ignored.
+- `cloneWithDescriptions` deep-clones a JSON tool schema and replaces the
+  `description` of every property whose *name* matches, at any nesting depth.
+  Names and structure are fixed — only human-readable text moves.
+- `applyAcpToolOverrides` applies per-tool `description` + `paramDescriptions`
+  to all three wire shapes (anthropic `input_schema`, openai
+  `function.parameters`, responses flat `parameters`). Shared constants are
+  never mutated.
+
+### Consistency invariants
+
+- Tool **names** are not customizable: nudge text and the kernel's own error
+  messages hardcode `compress(...)` / `run acp_status`.
+- The `acpTags` section must keep describing the actual tag format if the host
+  relies on ref tags; replacing it with arbitrary text silently breaks tag
+  awareness.
+
+## Layer 2 — prompt-set format (design intent)
 
 A portable, validated bundle so overrides are declarative rather than code:
 
@@ -120,7 +177,7 @@ Principles:
   so the set declares up front that it knowingly overrides quality-critical
   rules.
 
-## Layer 2 — adapter plumbing (design intent)
+## Layer 3 — adapter plumbing (design intent)
 
 Each adapter reads a prompt-set path from its config and feeds the resolved
 `Prompts` to both the kernel renderer and its own system-prompt composition.
@@ -135,7 +192,7 @@ gains:
 The same format works for every downstream (opencode-acp, omp-acp, …), so a
 prompt set is portable across hosts.
 
-## Layer 3 — third-party prompt packages (design intent)
+## Layer 4 — third-party prompt packages (design intent)
 
 Once the format is stable, a third party publishes an npm package exporting a
 validated prompt set. Install + reference by name:
@@ -158,10 +215,10 @@ The kernel gains a `registerPromptSet` registry, matching the existing
 
 ## Migration / rollout
 
-1. Kernel ships Layer 0 (this PR). No downstream change required — defaults are
-   byte-identical.
-2. Adapters adopt the resolved-`Prompts` object when they want to offer
-   customization (Layer 2), reading the same object for both nudge rendering and
-   system-prompt composition.
-3. Format + packages (Layers 1 & 3) follow once adoption confirms the field set
+1. Kernel ships Layers 0–1 (this PR). No downstream change required — defaults
+   are byte-identical (fixture regression tests).
+2. Adapters adopt the resolved-`Prompts` object plus the surface helpers when
+   they want to offer customization (Layer 3), reading the same object for both
+   nudge rendering and system-prompt composition.
+3. Format + packages (Layers 2 & 4) follow once adoption confirms the field set
    is right.

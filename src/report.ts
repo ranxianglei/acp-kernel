@@ -46,14 +46,19 @@ function tierBreakdown(
     countTokens: (t: string) => number,
 ): string | null {
     const tierTokens: Record<number, number> = {};
+    const tierCounts: Record<number, number> = {};
     for (const block of blocks) {
         tierTokens[block.tier] = (tierTokens[block.tier] ?? 0) + summaryTokensOf(block, countTokens);
+        tierCounts[block.tier] = (tierCounts[block.tier] ?? 0) + 1;
     }
     const tiers = Object.keys(tierTokens).map(Number);
     if (tiers.length <= 1) return null;
+    // Counts, not just tokens: the tier-distillation nudge lists every active
+    // lower-tier block uncapped while the block list below may be truncated —
+    // the count is what lets the model reconcile the two views (#221).
     const parts: string[] = [];
     for (const tier of [1, 2, 3]) {
-        if (tierTokens[tier]) parts.push(`T${tier}: ${formatTokens(tierTokens[tier])}`);
+        if (tierTokens[tier]) parts.push(`T${tier}: ${formatTokens(tierTokens[tier])} (${tierCounts[tier]} blocks)`);
     }
     return parts.join(" | ");
 }
@@ -204,6 +209,11 @@ function renderOverview(
             const eff = effectiveCompressedTokens(block, state, countTokens);
             lines.push(
                 `  ${block.blockId} (${tierLabel(block)})  ${formatTokens(eff)}→${formatTokens(summaryTokensOf(block, countTokens))}  ${block.effectiveMessageIds.length} msgs  "${topic}"`,
+            );
+        }
+        if (blocks.length > limit) {
+            lines.push(
+                `  ... and ${blocks.length - limit} more blocks not shown (scope:"compressed", limit:${blocks.length} for full list)`,
             );
         }
     }

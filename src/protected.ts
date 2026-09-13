@@ -112,3 +112,60 @@ export function isMessageProtectedWithPairing(
   }
   return false;
 }
+
+/** "Latest only" protection set: for each protectedLatestTools pattern, the
+ *  LAST tool-call matching it (in message order) plus its paired result. Older
+ *  instances of the same tool stay compressible. Use for cumulative-snapshot
+ *  tools (e.g. todo_list) where only the newest result is the source of truth
+ *  and every older result is strictly redundant.
+ *
+ *  `callIds` holds the latest calls' toolCallIds (pairing covers the result
+ *  half, including results projected without a toolName); `msgIds` holds
+ *  latest calls that lack a toolCallId (pairing impossible — protect by id). */
+export interface LatestProtected {
+  callIds: Set<string>;
+  msgIds: Set<string>;
+}
+
+export function collectLatestProtected(
+  messages: CoreMessage[],
+  config: Pick<Config, "protectedLatestTools">,
+): LatestProtected {
+  const callIds = new Set<string>();
+  const msgIds = new Set<string>();
+  const patterns = config.protectedLatestTools ?? [];
+  if (patterns.length === 0) return { callIds, msgIds };
+  for (const pattern of patterns) {
+    let last: CoreMessage | undefined;
+    for (const m of messages) {
+      if (
+        m.contentType === "tool-call" &&
+        m.toolName &&
+        matchToolPattern(m.toolName, pattern)
+      ) {
+        last = m;
+      }
+    }
+    if (!last) continue;
+    if (last.toolCallId) callIds.add(last.toolCallId);
+    else msgIds.add(last.id);
+  }
+  return { callIds, msgIds };
+}
+
+/** True when msg is a latest-protected tool-call, or the tool-result paired to
+ *  one (by toolCallId). */
+export function isMessageLatestProtected(
+  msg: CoreMessage,
+  latest: LatestProtected,
+): boolean {
+  if (msg.contentType === "tool-call" && latest.msgIds.has(msg.id)) return true;
+  if (
+    (msg.contentType === "tool-call" || msg.contentType === "tool-result") &&
+    msg.toolCallId &&
+    latest.callIds.has(msg.toolCallId)
+  ) {
+    return true;
+  }
+  return false;
+}

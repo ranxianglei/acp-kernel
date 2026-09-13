@@ -28,6 +28,7 @@ export function defaultConfig(
       minSummaryLength: 50,
     },
     protectedTools: [],
+    protectedLatestTools: [],
     preserveRecentMessages: 5,
     preserveRecentTokens: 5000,
     modelContextLimit,

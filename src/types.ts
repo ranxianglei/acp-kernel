@@ -109,6 +109,14 @@ export interface AbsorbConfig {
   excludeTools: string[];
 }
 
+/** A persistent reminder recorded via the acp_rule tool (see rules.ts).
+ *  Injected into the system prompt every turn by the adapter and hard-protected
+ *  from compression. Ids are never re-issued (see nextRuleId). */
+export interface RuleRecord {
+  id: string;
+  text: string;
+}
+
 export interface CompressionState {
   blocks: CompressionBlock[];
   messageRefs: MessageRefMap;
@@ -122,6 +130,13 @@ export interface CompressionState {
   stats: CompressionStats;
   /** Instant tool-result absorption records. Optional: pre-absorb persisted states lack it. */
   absorbed?: AbsorbRecord[];
+  /** Persistent reminders recorded via acp_rule (see rules.ts). Optional:
+   *  pre-rules persisted states lack it. */
+  rules?: RuleRecord[];
+  /** Monotonic rule-id counter (`rule${n}`). Never reset by remove/clear so an
+   *  issued id is never re-issued with different content. Optional: defaults
+   *  to 1 when absent on older persisted states. */
+  nextRuleId?: number;
   nextBlockId: number;
   nextRunId: number;
 }

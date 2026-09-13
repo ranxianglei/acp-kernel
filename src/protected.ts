@@ -3,9 +3,11 @@ import type { Config, CoreMessage } from "./types.js";
 /** Tools that are ALWAYS protected, regardless of user config. These are ACP's
  *  own metadata tools whose records must remain in context: compress calls
  *  carry the summaries that decompress/search rely on, and the system prompt
- *  treats past compress calls as load-bearing metadata. Letting them be
+ *  treats past compress calls as load-bearing metadata. acp_rule calls record
+ *  persistent user rules that are re-injected every turn — compressing them
+ *  away would silently lose what the rules state. Letting any of these be
  *  compressed away breaks decompress and the "summary is historical" contract. */
-export const ALWAYS_PROTECTED_TOOLS = ["compress"] as const;
+export const ALWAYS_PROTECTED_TOOLS = ["compress", "acp_rule"] as const;
 
 /** Tool results that must NEVER participate in the soft-protected recent zone
  *  (preserveRecentMessages / preserveRecentTokens / last user message).

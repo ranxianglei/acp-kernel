@@ -121,14 +121,65 @@ function collectSummaryAnchors(
   return anchors;
 }
 
+/**
+ * A rendered summary replaces the messages its block covers, so it takes the
+ * position of the earliest covered message. That position can fall inside a
+ * parallel tool burst: a range that covers one call and its result leaves the
+ * burst's other calls visible, and the summary then lands between an assistant
+ * `tool_calls` message and the tool results answering it. Strict upstreams
+ * reject the whole request in that shape ("an assistant message with
+ * 'tool_calls' must be followed by tool messages responding to each
+ * 'tool_call_id'"), so an anchor that would separate a call from its result is
+ * moved past that result.
+ */
+function pairSafeAnchorIndex(messages: CoreMessage[], index: number): number {
+  const resultIndexByCallId = new Map<string, number>();
+  messages.forEach((message, at) => {
+    if (message.contentType !== "tool-result") return;
+    if (typeof message.toolCallId !== "string") return;
+    if (!resultIndexByCallId.has(message.toolCallId)) {
+      resultIndexByCallId.set(message.toolCallId, at);
+    }
+  });
+  let safe = index;
+  // Each move lands just past a result, so the loop reaches a fixed point; the
+  // bound only guards against a malformed message list.
+  for (let guard = 0; guard < messages.length; guard++) {
+    let moved = safe;
+    for (let at = 0; at < safe && at < messages.length; at++) {
+      const message = messages[at]!;
+      if (message.role !== "assistant") continue;
+      if (message.contentType !== "tool-call") continue;
+      if (typeof message.toolCallId !== "string") continue;
+      const resultIndex = resultIndexByCallId.get(message.toolCallId);
+      if (
+        resultIndex !== undefined &&
+        resultIndex >= safe &&
+        resultIndex + 1 > moved
+      ) {
+        moved = resultIndex + 1;
+      }
+    }
+    if (moved === safe) break;
+    safe = moved;
+  }
+  return safe;
+}
+
 function rebuildMessages(
   messages: CoreMessage[],
   covered: Set<string>,
   firstUserIndex: number,
   anchors: SummaryAnchor[],
 ): CoreMessage[] {
+  const safeAnchors = anchors
+    .map((anchor) => ({
+      ...anchor,
+      insertAt: pairSafeAnchorIndex(messages, anchor.insertAt),
+    }))
+    .sort((left, right) => left.insertAt - right.insertAt);
   const result: CoreMessage[] = [];
-  const pending = [...anchors];
+  const pending = [...safeAnchors];
   const anchoredSummaryIds = new Set(
     anchors.map((anchor) => summaryMessageId(anchor.blockId)),
   );

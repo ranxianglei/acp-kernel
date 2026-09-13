@@ -847,13 +847,20 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   // leaves a valid message stream and stays allowed (#564 depends on it), so
   // only turns whose KEPT side carries a tool-call while the FOLDED side
   // carries the reasoning are withdrawn, entirely (all members stay visible).
+  // The same carve can also strip a call and its result onto opposite sides of
+  // the fold. Either half alone is invalid — a visible call whose result folded
+  // is an unanswered tool_call_id, a visible result whose call folded answers
+  // nothing — so those pairs are withdrawn together, both halves staying
+  // visible. Whole pairs may still fold while the turn's reasoning and text
+  // stay visible (#564).
   {
     const reasoningIds = new Set<string>();
     const callIds = new Set<string>();
     for (const m of input.messages) {
       if (!m.id) continue;
       if (m.contentType === "reasoning") reasoningIds.add(m.id);
-      if (m.role === "assistant" && m.contentType === "tool-call") callIds.add(m.id);
+      if (m.role === "assistant" && m.contentType === "tool-call")
+        callIds.add(m.id);
     }
     const withdrawIds = new Set<string>();
     let splitTurnCount = 0;
@@ -869,17 +876,46 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
       splitTurnCount++;
       for (const id of group) withdrawIds.add(id);
     }
+    const resultIdByCallId = new Map<string, string>();
+    for (const m of input.messages) {
+      if (!m.id || m.contentType !== "tool-result") continue;
+      if (typeof m.toolCallId !== "string") continue;
+      if (!resultIdByCallId.has(m.toolCallId)) {
+        resultIdByCallId.set(m.toolCallId, m.id);
+      }
+    }
+    let splitPairCount = 0;
+    for (const m of input.messages) {
+      if (!m.id || m.contentType !== "tool-call") continue;
+      if (typeof m.toolCallId !== "string") continue;
+      const resultId = resultIdByCallId.get(m.toolCallId);
+      if (resultId === undefined) continue;
+      if (effectiveMessageIds.has(m.id) === effectiveMessageIds.has(resultId)) {
+        continue;
+      }
+      withdrawIds.add(m.id);
+      withdrawIds.add(resultId);
+      splitPairCount++;
+    }
     if (withdrawIds.size > 0) {
       for (const id of withdrawIds) effectiveMessageIds.delete(id);
       const beforeWithdraw = filteredIds.length;
       filteredIds = filteredIds.filter((id) => !withdrawIds.has(id));
+      const splitDesc = [
+        splitTurnCount > 0 ? `${splitTurnCount} turn(s)` : null,
+        splitPairCount > 0
+          ? `${splitPairCount} tool call/result pair(s)`
+          : null,
+      ]
+        .filter((part): part is string => part !== null)
+        .join(" and ");
       if (filteredIds.length === 0 && consumedBlockIds.length === 0) {
         throw new Error(
-          `Range would split ${splitTurnCount} turn(s) at the protected-zone boundary: a visible tool-call must keep its reasoning run (strict-echo providers reject a rebuilt request that lost it). Shrink the range to end before the turn starts, or wait until the whole turn ages out of the protected zone.`,
+          `Range would split ${splitDesc} at the protected-zone boundary: a visible tool-call must keep its reasoning run and its results (strict providers reject a rebuilt request that lost either). Shrink the range to end before the turn starts, or wait until the whole turn ages out of the protected zone.`,
         );
       }
       warnings.push(
-        `Withdrawn ${beforeWithdraw - filteredIds.length} message(s) from compression range to keep ${splitTurnCount} turn(s) intact (visible tool-call would lose its reasoning run).`,
+        `Withdrawn ${beforeWithdraw - filteredIds.length} message(s) from compression range to keep ${splitDesc} intact (visible tool-call would lose its reasoning run or its results).`,
       );
     }
   }
@@ -1314,10 +1350,9 @@ function decideNudge(input: NudgeInput): NudgeDecision {
         lastShown === 0 || tokenCount - lastShown >= growthFloor;
       if (cadenceMet) {
         injectedTier = 2;
-        injectedReason =
-          t2CountReady
-            ? `T2 distill ready: ${t2Count} tier-1 blocks >= tier2Trigger ${config.tiers.tier2Trigger} (${t2Pen} tokens), usage ${Math.round(usage * 100)}%`
-            : `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+        injectedReason = t2CountReady
+          ? `T2 distill ready: ${t2Count} tier-1 blocks >= tier2Trigger ${config.tiers.tier2Trigger} (${t2Pen} tokens), usage ${Math.round(usage * 100)}%`
+          : `T2 distill ready: ${tiers[2]!.targetBlocks.length} tier-1 blocks (${t2Pen} tokens) >= ${tier2Threshold} (1.5x) and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
       }
     } else if (
       config.tiers.enabled &&
@@ -1329,10 +1364,9 @@ function decideNudge(input: NudgeInput): NudgeDecision {
         lastShown === 0 || tokenCount - lastShown >= growthFloor;
       if (cadenceMet) {
         injectedTier = 3;
-        injectedReason =
-          t3CountReady
-            ? `T3 condense ready: ${t3Count} tier-2 blocks >= tier3Trigger ${config.tiers.tier3Trigger} (${t3Pen} tokens), usage ${Math.round(usage * 100)}%`
-            : `T3 condense ready: ${tiers[3]!.targetBlocks.length} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
+        injectedReason = t3CountReady
+          ? `T3 condense ready: ${t3Count} tier-2 blocks >= tier3Trigger ${config.tiers.tier3Trigger} (${t3Pen} tokens), usage ${Math.round(usage * 100)}%`
+          : `T3 condense ready: ${tiers[3]!.targetBlocks.length} tier-2 blocks (${t3Pen} tokens) >= ${tier2Threshold} (1.5x) and > T2 ${t2Pen} and > T1 effective ${t1Eff}, usage ${Math.round(usage * 100)}%`;
       }
     }
   }
@@ -1351,7 +1385,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       bestPending === 0
         ? `${label}: usage ${Math.round(usage * 100)}% but no tier has effective compressible content (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — nudge suppressed to avoid offering ranges below minCompressRange`
         : `${label}: usage ${Math.round(usage * 100)}% but max pending ${bestPending} < min benefit ${minPressureBenefit} tokens (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}) — suppressed: rewriting below the benefit floor reclaims almost nothing while usage stays high; truncate.threshold remains the safety valve`;
-   } else {
+  } else {
     const tiersList = [1, 2, 3] as const;
     const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
     const countReadyUngated = (t: 1 | 2 | 3) =>
@@ -1367,7 +1401,8 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       .map((t) => `T${t} ${tiers[t]!.pending}`);
     const readyCount = eligible
       .filter(
-        (t) => (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReadyUngated(t),
+        (t) =>
+          (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReadyUngated(t),
       )
       .map(
         (t) =>
@@ -1376,7 +1411,8 @@ function decideNudge(input: NudgeInput): NudgeDecision {
           })`,
       );
     const readyAll = [...ready, ...readyCount];
-    const readyHint = readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";
+    const readyHint =
+      readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";
     const blocked = eligible
       .filter(
         (t) =>

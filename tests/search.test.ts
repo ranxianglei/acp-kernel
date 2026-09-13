@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import { searchBlocks, searchBlocksAsync, blockDocs, messageDocs } from "../src/search.js";
+import { searchBlocks, searchBlocksAsync, blockDocs, messageDocs, clearDocFeatures } from "../src/search.js";
 import { registerSearchAlgorithm, listSearchAlgorithms } from "../src/search.js";
 import { createInitialState } from "../src/state.js";
 import type { CompressionState, CompressionBlock } from "../src/types.js";
@@ -303,6 +303,24 @@ test("hybrid: OOV doc still recallable via bigram fallback", () => {
     ));
     const r = searchBlocks(docs, "可视化");
     assert.equal(r[0].ref, "b1");
+});
+
+test("hybrid: no RangeError at large doc counts (argument-spread → reduce, #227)", () => {
+    // The old `Math.max(...scores)` spread threw RangeError past V8's argument
+    // limit (~65K–125K docs). 160K is the scale that crashed on Node 22.
+    clearDocFeatures();
+    try {
+        const n = 160_000;
+        const docs: SearchDoc[] = new Array(n);
+        for (let i = 0; i < n; i++) {
+            docs[i] = { kind: "block", ref: `b${i}`, text: `doc ${i} alpha beta`, title: `b${i}`, blockId: `b${i}`, tier: 1, tokens: 10 };
+        }
+        const r = searchBlocks(docs, "alpha", { algorithm: "hybrid", limit: 10 });
+        assert.equal(r.length, 10);
+        assert.ok(r[0].score > 0);
+    } finally {
+        clearDocFeatures();
+    }
 });
 
 // ─────────────────────────────────────────────────────────────────────────

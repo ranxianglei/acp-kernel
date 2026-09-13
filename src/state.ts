@@ -14,6 +14,7 @@ export function createInitialState(): CompressionState {
     },
     stats: { tokensCompressed: 0, compressionCount: 0, absorbedTokens: 0 },
     absorbed: [],
+    rules: [],
     nextBlockId: 1,
     nextRunId: 1,
   };

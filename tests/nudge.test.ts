@@ -750,6 +750,70 @@ test("arbitration: tiers disabled -> count trigger cannot fire T2", () => {
   assert.doesNotMatch(turn.nudge.reason ?? "", /tier2Trigger/);
 });
 
+// #237: the COUNT path can be reached with tiny summary mass (5.8K tokens in
+// the production repro). Below the min usage band there is no pressure, so
+// distilling there burns a model turn + cache for negligible reclaim. The
+// count path is gated on the same band the first-sight mass bypass uses; the
+// token-mass path stays ungated (it already requires a real 1.5x mass).
+test("arbitration: count-triggered T2 stays silent below the min usage band (#237)", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 10000 }).state;
+  // 5 blocks x ~100-token summaries = ~500 pending tokens, far below the
+  // 9000 token gate — only the count path (5 >= tier2Trigger 5) is ready.
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 400) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 43000 });
+  assert.equal(turn.nudge.shouldInject, false, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, null);
+  assert.match(turn.nudge.reason ?? "", /T2 5 blocks \(count, usage-gated\)/);
+});
+
+test("arbitration: count-triggered T3 stays silent below the min usage band (#237)", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 10000 }).state;
+  // 2 tier-1 blocks (below tier2Trigger) + 10 tier-2 blocks with ~100-token
+  // summaries: t3Pen ~1000 << 9000 token gate — only the count path fires.
+  state = {
+    ...state,
+    blocks: [...t1Blocks([["m1"], ["m2"]], 400), ...t2Blocks(10, 400, ["m3"])],
+  };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 43000 });
+  assert.equal(turn.nudge.shouldInject, false, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, null);
+  assert.match(turn.nudge.reason ?? "", /T3 10 blocks \(count, usage-gated\)/);
+});
+
+test("arbitration: count trigger fires AT the min usage band boundary (#237)", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 10000 }).state;
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 400) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 45000 });
+  assert.equal(turn.nudge.shouldInject, true, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, 2);
+  assert.match(turn.nudge.reason ?? "", /5 tier-1 blocks >= tier2Trigger 5/);
+});
+
+test("arbitration: T2 token-mass path still fires below the min usage band (#237 scope)", () => {
+  const core = createCore();
+  const config = buildConfig({ preserveRecentMessages: 30 });
+  const messages = makeMessages(30);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 10000 }).state;
+  // 5 blocks x 7200 chars = 9000 tokens >= tier2Threshold 9000 (1.5x) and
+  // > T1 effective 0: the MASS path is ready. Count is also ready (5 >= 5)
+  // but usage 43% < 45% gates it — the nudge must still fire via mass,
+  // labeled as the mass path.
+  state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 7200) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 43000 });
+  assert.equal(turn.nudge.shouldInject, true, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, 2);
+  assert.match(turn.nudge.reason ?? "", /9000 \(1\.5x\)/);
+});
+
 // #194 first-sight mass bypass: a session that ARRIVES with a huge ready mass
 // (stateless full-history ingest) must not wait a full growth floor of NEW
 // tokens for its first compress. #351: growthReference seeded to the ingest

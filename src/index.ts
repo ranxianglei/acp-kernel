@@ -107,7 +107,7 @@ export type {
   CollectContentOptions,
 } from "./decompress.js";
 export { buildStatusReport, buildRecap } from "./report.js";
-export type { StatusReportOptions } from "./report.js";
+export type { StatusReportOptions, SurfaceMeta } from "./report.js";
 export { renderHandoff, renderMessage, matchSession } from "./handoff.js";
 export type { HandoffInput, HandoffMeta, HandoffBlockFull } from "./handoff.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";

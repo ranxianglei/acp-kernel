@@ -103,12 +103,31 @@ function collectVisible(
     return { visible, summaryTokens };
 }
 
+export interface SurfaceMeta {
+    pack?: string;
+    packVersion?: string;
+    host?: string;
+}
+
 export interface StatusReportOptions {
     scope?: "compressed" | "uncompressed";
     view?: "ranges" | "messages";
     tool?: string;
     sort?: "size" | "time" | "tool" | "age";
     limit?: number;
+    meta?: SurfaceMeta;
+}
+
+// Which pack is active is host policy — the kernel never resolves packs, it
+// only renders what the host declares (#278). Returns null when nothing is
+// declared so reports stay byte-identical.
+function renderSurfaceLine(meta: SurfaceMeta): string | null {
+    const parts: string[] = [];
+    const pack = [meta.pack, meta.packVersion].filter((v) => v !== undefined && v !== "").join(" ");
+    if (pack) parts.push(`pack=${pack}`);
+    if (meta.host) parts.push(`host=${meta.host}`);
+    if (parts.length === 0) return null;
+    return `ACTIVE SURFACE: ${parts.join(" | ")}`;
 }
 
 export function buildStatusReport(
@@ -122,13 +141,15 @@ export function buildStatusReport(
     const toolFilter = options.tool;
     const sort = options.sort ?? "size";
     const limit = options.limit ?? 30;
+    const surface = options.meta ? renderSurfaceLine(options.meta) : null;
 
     const activeBlocks = state.blocks
         .filter((b) => b.active)
         .sort((a, b) => numericPart(a.blockId) - numericPart(b.blockId));
 
     if (scope === "compressed") {
-        return renderCompressedDrilldown(activeBlocks, state, sort, limit, countTokens);
+        const report = renderCompressedDrilldown(activeBlocks, state, sort, limit, countTokens);
+        return surface ? `${surface}\n\n${report}` : report;
     }
 
     const { visible, summaryTokens } = collectVisible(messages, state, countTokens);
@@ -140,7 +161,8 @@ export function buildStatusReport(
         return renderUncompressedRanges(visible);
     }
 
-    return renderOverview(visible, summaryTokens, activeBlocks, state, countTokens, limit);
+    const report = renderOverview(visible, summaryTokens, activeBlocks, state, countTokens, limit);
+    return surface ? `${surface}\n\n${report}` : report;
 }
 
 function renderOverview(

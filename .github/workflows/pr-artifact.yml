@@ -25,6 +25,7 @@ jobs:
             - run: npm run build
 
             - name: Publish to npm with PR tag
+              if: github.event.pull_request.head.repo.full_name == github.repository
               run: |
                   PR_NUMBER="${{ github.event.pull_request.number }}"
                   RUN_NUMBER="${{ github.run_number }}"

@@ -124,15 +124,38 @@ function collectSummaryAnchors(
 /**
  * A rendered summary replaces the messages its block covers, so it takes the
  * position of the earliest covered message. That position can fall inside a
- * parallel tool burst: a range that covers one call and its result leaves the
- * burst's other calls visible, and the summary then lands between an assistant
- * `tool_calls` message and the tool results answering it. Strict upstreams
- * reject the whole request in that shape ("an assistant message with
- * 'tool_calls' must be followed by tool messages responding to each
- * 'tool_call_id'"), so an anchor that would separate a call from its result is
- * moved past that result.
+ * unit the provider validates as a whole, and a summary may never be placed
+ * inside such a unit:
+ *
+ * - A parallel tool burst: a range that covers one call and its result leaves
+ *   the burst's other calls visible, and the summary then lands between an
+ *   assistant `tool_calls` message and the tool results answering it. Strict
+ *   upstreams reject the whole request in that shape ("an assistant message
+ *   with 'tool_calls' must be followed by tool messages responding to each
+ *   'tool_call_id'"), so an anchor that would separate a call from its result
+ *   is moved past that result.
+ * - A single assistant message: consecutive assistant cores (a reasoning run,
+ *   its text and its tool calls) merge into one wire message. An anchor landing
+ *   between them splits the message, and its tool calls then reach the provider
+ *   without the reasoning run they were produced with — DeepSeek thinking mode
+ *   rejects that ("The `reasoning_content` in the thinking mode must be passed
+ *   back to the API"), so an anchor inside an assistant run is moved back to the
+ *   run's start.
  */
 function pairSafeAnchorIndex(messages: CoreMessage[], index: number): number {
+  let safe = index;
+  // Only assistant cores that reach the wire matter; a covered core between
+  // them is dropped, and the runs then merge in the rendered view. Both steps
+  // below therefore walk the input, where the covered ids are still present.
+  while (
+    safe > 0 &&
+    safe < messages.length &&
+    messages[safe - 1]!.role === "assistant" &&
+    messages[safe]!.role === "assistant"
+  ) {
+    safe--;
+  }
+
   const resultIndexByCallId = new Map<string, number>();
   messages.forEach((message, at) => {
     if (message.contentType !== "tool-result") return;
@@ -141,7 +164,6 @@ function pairSafeAnchorIndex(messages: CoreMessage[], index: number): number {
       resultIndexByCallId.set(message.toolCallId, at);
     }
   });
-  let safe = index;
   // Each move lands just past a result, so the loop reaches a fixed point; the
   // bound only guards against a malformed message list.
   for (let guard = 0; guard < messages.length; guard++) {

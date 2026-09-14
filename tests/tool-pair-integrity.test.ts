@@ -83,6 +83,42 @@ function unansweredToolCalls(rendered: CoreMessage[]): string[] {
   return violations;
 }
 
+function reasoning(id: string): CoreMessage {
+  return {
+    id,
+    role: "assistant",
+    contentType: "reasoning",
+    text: `think-${id} ` + "t".repeat(200),
+  };
+}
+function assistantText(id: string): CoreMessage {
+  return {
+    id,
+    role: "assistant",
+    contentType: "text",
+    text: `say-${id} ` + "s".repeat(200),
+  };
+}
+
+const SUMMARY_ID_PREFIX = "acp_summary_";
+
+/**
+ * A rendered summary placed between two assistant cores splits one assistant
+ * wire message: consecutive assistant cores (reasoning, text, tool calls)
+ * merge into a single message, so the calls would reach a strict-echo provider
+ * without the reasoning run they were produced with ("The `reasoning_content`
+ * in the thinking mode must be passed back to the API").
+ */
+function splitsAssistantRun(rendered: CoreMessage[]): boolean {
+  return rendered.some((m, at) => {
+    if (!m.id.startsWith(SUMMARY_ID_PREFIX)) return false;
+    return (
+      rendered[at - 1]?.role === "assistant" &&
+      rendered[at + 1]?.role === "assistant"
+    );
+  });
+}
+
 describe("tool-pair integrity", () => {
   it("keeps the summary out of a parallel burst's call/result span", () => {
     const core = createCore();
@@ -141,8 +177,12 @@ describe("tool-pair integrity", () => {
       `surviving grep result kept: ${JSON.stringify(viewIds)}`,
     );
     assert.ok(
-      summaryIndex > grepResultIndex,
-      `summary must land after the surviving grep result, not between call and result: ${JSON.stringify(viewIds)}`,
+      !(summaryIndex > grepCallIndex && summaryIndex < grepResultIndex),
+      `summary must not land inside the surviving call/result span: ${JSON.stringify(viewIds)}`,
+    );
+    assert.ok(
+      !splitsAssistantRun(view.messages),
+      `summary must not split an assistant message: ${JSON.stringify(viewIds)}`,
     );
     assert.deepEqual(unansweredToolCalls(view.messages), []);
   });
@@ -228,6 +268,75 @@ describe("tool-pair integrity", () => {
     assert.ok(
       visible.has("m2") && visible.has("m3"),
       `pair stays visible: ${JSON.stringify([...visible])}`,
+    );
+    assert.deepEqual(unansweredToolCalls(view.messages), []);
+  });
+
+  it("keeps the summary out of an assistant turn's reasoning run", () => {
+    const core = createCore();
+    // One turn, five parallel calls, results in completion order — the shape
+    // omp produces. The fold covers the two read pairs and leaves the grep
+    // pair visible, so the summary anchor lands inside the turn.
+    const messages: CoreMessage[] = [
+      user("m1"),
+      reasoning("m2"),
+      assistantText("m3"),
+      toolCall("m4", "c-r1", "read"),
+      toolCall("m5", "c-g", "grep"),
+      toolCall("m6", "c-r2", "read"),
+      toolResult("m7", "c-r1", "read"),
+      toolResult("m8", "c-r2", "read"),
+      toolResult("m9", "c-g", "grep"),
+      user("m10"),
+    ];
+    const out = core.processTurn({
+      messages,
+      state: createInitialState(),
+      config: config(),
+      tokenCount: (t) => Math.ceil(t.length / 4),
+    });
+    const refs = out.state.messageRefs.byRaw;
+    const res = core.applyCompression({
+      state: out.state,
+      messages,
+      config: config(),
+      protectedMessageIds: new Set([refs["m5"]!, refs["m9"]!]),
+      ranges: [
+        { startRef: "m00004", endRef: "m00009", summary: "S".repeat(400) },
+      ],
+    });
+    assert.equal(
+      res.result.blocksCreated,
+      1,
+      `errors=${JSON.stringify(res.result.errors)}`,
+    );
+    const block = res.state.blocks.find((b) => b.active);
+    assert.ok(block);
+    assert.deepEqual(
+      [...block.effectiveMessageIds].sort(),
+      ["m4", "m6", "m7", "m8"],
+      "the read pairs fold, the protected grep pair stays",
+    );
+
+    const view = core.processTurn({
+      messages,
+      state: res.state,
+      config: config(),
+      tokenCount: (t) => Math.ceil(t.length / 4),
+    });
+    const viewIds = view.messages.map((m) => m.id);
+    const summaryIndex = viewIds.indexOf(summaryMessageId(block.blockId));
+    assert.ok(
+      summaryIndex >= 0,
+      `summary rendered: ${JSON.stringify(viewIds)}`,
+    );
+    assert.ok(
+      summaryIndex < viewIds.indexOf("m2"),
+      `summary must precede the turn it starts inside of: ${JSON.stringify(viewIds)}`,
+    );
+    assert.ok(
+      !splitsAssistantRun(view.messages),
+      `summary must not split an assistant message: ${JSON.stringify(viewIds)}`,
     );
     assert.deepEqual(unansweredToolCalls(view.messages), []);
   });

@@ -1,3 +1,4 @@
+import { clampPrefix } from "./truncate.js";
 import { refForRaw } from "./refs.js";
 import { isToolMessage } from "./recommend.js";
 import { countMessageTokens } from "./tokenize.js";
@@ -401,7 +402,7 @@ export function buildRecap(
     const lines = [`Active compression blocks (${activeBlocks.length}):`];
     for (const block of activeBlocks) {
         const range = `${block.effectiveMessageIds.length} messages`;
-        const preview = block.summary.slice(0, 200);
+        const preview = clampPrefix(block.summary, 200);
         lines.push(`\n${block.blockId} | ${range} | "${block.topic ?? "(none)"}"`);
         lines.push(`  ${preview}${block.summary.length > 200 ? "..." : ""}`);
     }

@@ -16,6 +16,7 @@ import type { CompressionState, CompressionBlock } from "../types.js";
 import { getSearchAlgorithm } from "./registry.js";
 import type { SearchDoc, ScoredBlock, MessageInput } from "./types.js";
 import type { SearchResult, SearchOptions, RoleWeights } from "./types.js";
+import { clampPrefix, clampWindow } from "../truncate.js";
 import { DEFAULT_ALGORITHM, DEFAULT_ROLE_WEIGHTS } from "./types.js";
 
 /** Build SearchDoc[] from all blocks (active AND inactive) of the state. */
@@ -44,7 +45,7 @@ export function messageDocs(msgs: MessageInput[]): SearchDoc[] {
         kind: "message",
         ref: m.ref,
         text: m.text,
-        title: `${m.role}: ${m.text.slice(0, 60)}`,
+        title: `${m.role}: ${clampPrefix(m.text, 60)}`,
         role: m.role,
         blockId: m.blockId,
         tier: m.tier,
@@ -141,7 +142,7 @@ export async function searchBlocksAsync(docs: SearchDoc[], query: string, option
 function makePreview(text: string, query: string, len: number): string {
     if (!text) return "";
     const terms = query.toLowerCase().trim().split(/\s+/).filter((t) => t.length > 1);
-    if (terms.length === 0) return text.slice(0, len);
+    if (terms.length === 0) return clampPrefix(text, len);
 
     const lower = text.toLowerCase();
     let hitIdx = -1;
@@ -153,12 +154,12 @@ function makePreview(text: string, query: string, len: number): string {
         }
     }
 
-    if (hitIdx < 0) return text.slice(0, len);
+    if (hitIdx < 0) return clampPrefix(text, len);
 
     const half = Math.max(0, Math.floor(len / 2) - 10);
     const start = Math.max(0, hitIdx - half);
     const end = Math.min(text.length, start + len);
     const prefix = start > 0 ? "…" : "";
     const suffix = end < text.length ? "…" : "";
-    return prefix + text.slice(start, end).trim() + suffix;
+    return prefix + clampWindow(text, start, end).trim() + suffix;
 }

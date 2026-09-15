@@ -22,6 +22,7 @@
 // written entry is dropped, never guessed. Diagnostics are data, not logs:
 // adapters decide where to emit them (log line, debug event, tool text).
 
+import { clampPrefix } from "./truncate.js";
 import type { CompressRangeSpec } from "./types.js";
 
 export type CompressParseKind =
@@ -324,7 +325,7 @@ export function deriveTopicFromSummary(summary: string): string | undefined {
     const source = heading !== null ? heading[1]! : (summary.split("\n").find((l) => l.trim().length > 0) ?? "");
     const text = source.trim().replace(/^[\u2022\-*]\s+/, "");
     if (text.length === 0) return undefined;
-    return text.length > 60 ? text.slice(0, 60).trimEnd() : text;
+    return text.length > 60 ? clampPrefix(text, 60).trimEnd() : text;
 }
 
 /** Split a bare string content (not a JSON array) into line-form entries: a

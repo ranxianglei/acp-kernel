@@ -1,3 +1,4 @@
+import { clampPrefix } from "./truncate.js";
 import type { CompressionState, CoreMessage } from "./types.js";
 
 // Orphaned compress calls (no matching block — failed attempts, or historical
@@ -83,7 +84,7 @@ function compactEntry(entry: unknown): unknown {
     if (!entry || typeof entry !== "object") return entry;
     const e = entry as Record<string, unknown>;
     if (typeof e.summary !== "string" || e.summary.length <= SUMMARY_STUB_CHARS) return entry;
-    return { ...e, summary: `${e.summary.slice(0, SUMMARY_STUB_CHARS - 1)}…` };
+    return { ...e, summary: `${clampPrefix(e.summary, SUMMARY_STUB_CHARS - 1)}…` };
 }
 
 function serializeCompacted(obj: Record<string, unknown>, content: unknown[], contentWasString: boolean): { text: string; changed: boolean } {

@@ -184,3 +184,49 @@ All source changes require review by **at least 2 separate agents** before merge
 - `test:` test changes
 - `docs:` documentation
 - `release:` version bump
+
+## 7. Review & Auto-Merge Discipline
+
+> Distilled from a full-history audit of this repo + siblings ([billion-context#801](https://github.com/ranxianglei/billion-context/issues/801)). Full cited material: [AUTO-MERGE-GUARDRAILS.md](./AUTO-MERGE-GUARDRAILS.md). This is the CORE library: it OWNS the compression-block model and the wire-artifact format every adapter depends on, so its auto-merge surface is the narrowest of the three repos. Complements §6 Code Review (≥2 agents) by defining when a bugfix may skip the human round-trip.
+
+### 7.1 Before you start
+- **Duplicate screening first** (open AND closed). Link existing work, don't start parallel work.
+- **One issue = one scope.** Never bundle unrelated changes or mass whitespace/reformatting.
+- **Open a PR, never just push a branch.**
+
+### 7.2 Review discipline
+- **Rebase to CURRENT master** before claiming mergeable; after rebase re-run typecheck + test + build + format:check.
+- **Pipeline nodes are shared hotspots** — if another open PR rewrites the same node/module, resolve by union of intent, then prove with tests.
+- **Done = evidence**; tests stay pure (no I/O / network / mocks of kernel internals).
+- **Deterministic tests** — no env/port luck.
+
+### 7.3 Kernel-owned contracts (first-class; ALWAYS human-gated)
+The invariants every adapter relies on. Changing ANY of these is cross-repo + prefix-cache-affecting by construction and MUST stay human (and follow cross-repo sequencing — kernel ships first):
+1. **Message-id / ref immutability** (§2 principle 6) — no slot reclamation/recycling; widen `REF_WIDTH`. A re-issued number silently misattributes on decompress.
+2. **Wire-artifact format** — the ACP compression tag wrapping `mNNNNN`, the `acp_summary` structure, block refs, and rendered-tag token counts being SNAPSHOTS frozen at first render.
+3. **Single-owner content** (§2 principle 3) — `assignRefsNode` is the sole writer of message content.
+4. **Lossless round-trip** (wire codec) — `deriveMessageId` stability, empty `reasoning_content` preserved (#289), raw control chars survive (#274), unparseable bodies pass through untransformed.
+5. **Tool call/result atomicity** in prune/compress/fold (#286/#287/#293).
+6. **Protected-tool filtering** (hard-excluded from compression — Bug 39) and soft recent-zone semantics (excluded but does not fail the range).
+7. **The four load-bearing Prompts rules** (overriding one requires `acknowledgeRisk`).
+8. **Pipeline node ordering** (the canonical 9-node sequence) and nudge invariants (growth-gating, tier-trigger gating #237/#162, baseline reset on compress).
+
+Plus structural constraints that stay human: zero runtime deps (§2 principle 1 — no new dep without sign-off), platform-agnostic (§2 principle 5 — no host API / file I/O / network creep), and the state schema (explicit in/out; changing its shape is cross-repo).
+
+### 7.4 Auto-merge gate (narrowest of the three repos)
+A bugfix may **auto-merge** only if ALL hold:
+1. Scoped to ONE pipeline node or standalone module; no change to node ordering or pipeline shape.
+2. A pure regression test reproduces the bug and now passes.
+3. Green on the rebased head (typecheck + test + build + format:check).
+4. Touches NO §7.3 contract or structural constraint.
+5. Pure `fix:` — no new capability surface.
+6. Clean diff: no unrelated changes, no mass whitespace/reformat, no generated/lock churn.
+7. References its issue via `Fixes #N`.
+
+**Must stay human:** any §7.3 contract, any structural constraint, wire/message-shape changes, config/schema, state format, cross-repo dependencies, feat/refactor/architecture, security, or any default-value change (a product decision). Because a contract change is cross-repo by construction, it ALSO follows the manual cross-repo rule: release acp-kernel first, verify `npm view acp-kernel version`, then bump the adapters.
+
+### 7.5 Reviewer focus — the "重灾区"
+Of merged PRs that drew review, ≈25% needed a 2nd+ round. Dominant drivers:
+1. **Stale-base / concurrent-file churn** on shared pipeline nodes.
+2. **Incomplete first pass** — the repro passes but round-trip fidelity, tool-pair atomicity, or a doc-vs-default drift is missed.
+Also check explicitly: does the fix preserve lossless round-trip and tool-pair atomicity? Do docs still match the actual code defaults (#163)?

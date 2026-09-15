@@ -26,9 +26,9 @@ import {
 } from "../src/compress-tools.js";
 
 test("ACP tool sets classify every ACP tool by mutation semantics", () => {
-  assert.deepEqual([...ACP_TOOL_NAMES].sort(), ["acp_status", "compress", "decompress", "search_context"]);
+  assert.deepEqual([...ACP_TOOL_NAMES].sort(), ["acp_cache", "acp_status", "compress", "decompress", "search_context"]);
   assert.deepEqual([...ACP_MUTATING_TOOLS].sort(), ["compress", "decompress"]);
-  assert.deepEqual([...ACP_READONLY_TOOLS].sort(), ["acp_status", "search_context"]);
+  assert.deepEqual([...ACP_READONLY_TOOLS].sort(), ["acp_cache", "acp_status", "search_context"]);
 });
 
 test("tool arrays expose compress in every wire format", () => {

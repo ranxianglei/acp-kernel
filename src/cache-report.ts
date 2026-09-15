@@ -1,0 +1,523 @@
+/**
+ * Prompt-cache reconciliation (billion-context#800).
+ *
+ * The provider-reported per-request usage IS the grand ledger (总账) — this
+ * module never invents numbers; it splits every request's cache miss into
+ * three additive buckets so the totals reconcile exactly by construction:
+ *
+ *   missed_i = input_i − cached_i
+ *            = newContent_i   content newly appended since the previous request
+ *                            (legit fresh — not an invalidation at all)
+ *            + compRepay_i    re-payment forced by compression folds (the
+ *                            prefix diverged at the fold's first start point)
+ *            + ttlRepay_i     residual: misses inside the stable prefix →
+ *                            TTL expiry / provider-side eviction
+ *
+ * No estimate participates in the closure: newContent is clamped to observed
+ * growth, compRepay is clamped to BOTH the remaining miss and the structural
+ * excess implied by the fold divergence point, ttlRepay is whatever remains.
+ * Hence, for ANY inputs:
+ *
+ *   Σ input = Σ cached + Σ newContent + Σ compRepay + Σ ttlRepay        (exact)
+ *
+ * `decomposeSample` is the single implementation used both by
+ * `buildCacheReport` (batch) and by hosts that stream-record aggregates
+ * incrementally — one code path, one accounting semantics.
+ */
+
+export interface CacheSample {
+  /** Epoch ms when the usage report was observed. */
+  at: number;
+  /** Total prompt tokens billed for this request — NORMALIZED so cached is
+   *  INCLUDED (Anthropic input_tokens excludes cached; OpenAI includes it). */
+  input: number;
+  /** Provider-reported cache-hit tokens (0 when the provider reports none). */
+  cached: number;
+  output?: number;
+}
+
+export interface FoldEvent {
+  /** Epoch ms when the fold was applied (between two requests). */
+  at: number;
+  /** S: tokens removed from the view by this fold. */
+  tokensCompressed: number;
+  /** σ: rendered summary size in tokens (or actual summary output tokens). */
+  summaryTokens?: number;
+  /** X: token offset of the earliest divergence point inside the post-fold
+   *  view ≈ expected post-fold hit prefix. Host-computed estimate — used
+   *  only as a clamp bound, never in the closure. */
+  firstFoldStartTokens?: number;
+  /** V: pre-fold view size. */
+  viewBefore?: number;
+  /** V′: post-fold view size. */
+  viewAfter?: number;
+}
+
+/** Normalized price multipliers over the input-token unit (p_in = 1).
+ *  w = cacheWrite/input, r = cacheRead/input, q = output/input. */
+export interface PriceProfile {
+  w?: number;
+  r?: number;
+  q?: number;
+}
+
+export interface SampleDecomposition {
+  missed: number;
+  newContent: number;
+  compRepay: number;
+  ttlRepay: number;
+  /** Index into `pendingFolds` of the fold credited with compRepay, or null. */
+  foldIndex: number | null;
+}
+
+/** Split one request's miss into the three buckets.
+ *
+ * @param prev         previous sample (null for the first observed request)
+ * @param cur          current sample
+ * @param pendingFolds folds applied after `prev` and no later than `cur`
+ */
+export function decomposeSample(
+  prev: CacheSample | null,
+  cur: CacheSample,
+  pendingFolds: readonly FoldEvent[],
+): SampleDecomposition {
+  const missed = Math.max(0, cur.input - cur.cached);
+  const growth = prev ? Math.max(0, cur.input - prev.input) : 0;
+  const newContent = Math.min(missed, growth);
+  const remainder = missed - newContent;
+  let compRepay = 0;
+  let foldIndex: number | null = null;
+  if (remainder > 0 && pendingFolds.length > 0) {
+    // The combined rewrite diverges at the EARLIEST fold start point.
+    let bestX = Infinity;
+    let owner = -1;
+    for (let i = 0; i < pendingFolds.length; i++) {
+      const f = pendingFolds[i]!;
+      const x = f.firstFoldStartTokens ?? f.viewAfter ?? 0;
+      if (x < bestX) {
+        bestX = x;
+        owner = i;
+      }
+    }
+    // Everything after the divergence point must be re-paid; subtract the
+    // legitimate fresh append that also lives there.
+    const structuralExcess = Math.max(0, cur.input - bestX - newContent);
+    compRepay = Math.min(remainder, structuralExcess);
+    if (compRepay > 0) foldIndex = owner;
+  }
+  return {
+    missed,
+    newContent,
+    compRepay,
+    ttlRepay: remainder - compRepay,
+    foldIndex,
+  };
+}
+
+export interface CacheTotals {
+  requests: number;
+  input: number;
+  cached: number;
+  output: number;
+  /** cached / input × 100 (0 when input = 0). */
+  hitPct: number;
+  newContent: number;
+  compRepay: number;
+  ttlRepay: number;
+  /** input − cached − (newContent + compRepay + ttlRepay); 0 by construction. */
+  residual: number;
+  balanced: boolean;
+}
+
+export interface FoldEconomics {
+  /** 1-based chronological fold sequence. */
+  seq: number;
+  at: number;
+  /** S: tokens compressed. */
+  S: number;
+  /** σ: summary tokens (0 when unknown). */
+  sigma: number;
+  /** V′: post-fold view size (null when unknown). */
+  Vprime: number | null;
+  /** Measured hit rate (0–100) of the first post-fold request, else null. */
+  hPct: number | null;
+  /** Measured compression re-pay (tokens) attributed to this fold. */
+  T: number;
+  /** Requests observed after this fold. */
+  requestsAfter: number;
+  /** (S−σ) × requestsAfter — tokens not billed because of this fold
+   *  (regrowth eats back into it; estimate, not part of the closure). */
+  savedSoFar: number;
+  /** Sample count until the next fold, null for the last fold. */
+  turnsToNextFold: number | null;
+  /** Pure token delta (price-independent): T + σ − S. <0 means the fold
+   *  removed more raw tokens than it forced us to send back. */
+  netTokenDelta: number;
+  /** One-time cost in input-token-equivalent units (billion-context#359):
+   *  (w−r)·T + q·σ − r·S, using the effective price profile. */
+  oneTimeCostUnits: number;
+  /** Per-turn saving in input-token-equivalent units: (S−σ)·r. */
+  perTurnSavingUnits: number;
+  /** Breakeven turns n* = max(0,oneTimeCost)/perTurnSaving; null when S ≤ σ. */
+  breakevenTurns: number | null;
+  /** paidBack: measured cadence reached the breakeven point.
+   *  null while unobservable (no post-fold request yet / S ≤ σ). */
+  paidBack: boolean | null;
+}
+
+export interface EconomicsSummary {
+  folds: number;
+  /** Σ (S−σ)×requestsAfter across folds (additive: each fold removes its own
+   *  tokens from every later view). */
+  grossSaved: number;
+  /** Σ T — measured compression re-pay. */
+  repayCost: number;
+  /** Σ σ — summary generation cost (output tokens). */
+  summaryCost: number;
+  /** grossSaved − repayCost − summaryCost. */
+  netTokens: number;
+  paidBackCount: number;
+  notPaidBackCount: number;
+  unobservedCount: number;
+}
+
+export interface CacheReportLine {
+  /** 1-based request sequence. */
+  seq: number;
+  at: number;
+  input: number;
+  cached: number;
+  output: number;
+  hitPct: number;
+  missed: number;
+  newContent: number;
+  compRepay: number;
+  ttlRepay: number;
+  /** Global fold seq credited with compRepay, or null. */
+  foldSeq: number | null;
+}
+
+export interface CacheReportOptions {
+  priceProfile?: PriceProfile;
+  /** Max line items kept in `lines` (newest retained). Default 512. */
+  maxLines?: number;
+}
+
+export interface CacheReport {
+  generatedAt: number;
+  /** Effective price profile used for the weighted economics fields. */
+  profile: Required<PriceProfile>;
+  totals: CacheTotals;
+  economics: EconomicsSummary;
+  folds: FoldEconomics[];
+  lines: CacheReportLine[];
+  /** Older lines excluded from `lines` (totals still cover them). */
+  linesOmitted: number;
+}
+
+function hitPct(input: number, cached: number): number {
+  return input > 0 ? (cached / input) * 100 : 0;
+}
+
+/** Measured counters for one fold. Streaming hosts accumulate these
+ * incrementally; buildCacheReport derives them from raw samples. */
+export interface FoldEconomicsInput {
+  seq: number;
+  at: number;
+  /** S — tokens removed from the view by the fold. */
+  S: number;
+  /** σ — summary tokens that replaced them (0 when unknown). */
+  sigma: number;
+  Vprime?: number | null;
+  /** Measured hit rate (0-100) of the first post-fold sample. */
+  hPct: number | null;
+  /** T — measured compRepay attributed to this fold. */
+  T: number;
+  requestsAfter: number;
+  /** Measured turns until the next fold; null while still running. */
+  turnsToNextFold: number | null;
+}
+
+export function computeFoldEconomics(
+  f: FoldEconomicsInput,
+  price?: PriceProfile,
+): FoldEconomics {
+  const w = price?.w ?? 1.0;
+  const r = price?.r ?? 0.1;
+  const q = price?.q ?? 4.0;
+  const netTokenDelta = f.T + f.sigma - f.S;
+  const savingPerTurn = f.S - f.sigma;
+  const oneTimeCostUnits = (w - r) * f.T + q * f.sigma - r * f.S;
+  const perTurnSavingUnits = savingPerTurn * r;
+  const breakevenTurns =
+    perTurnSavingUnits > 0
+      ? Math.max(0, oneTimeCostUnits) / perTurnSavingUnits
+      : null;
+  const paidBack =
+    f.turnsToNextFold !== null && breakevenTurns !== null
+      ? f.turnsToNextFold >= breakevenTurns
+      : null;
+  return {
+    seq: f.seq,
+    at: f.at,
+    S: f.S,
+    sigma: f.sigma,
+    Vprime: f.Vprime ?? null,
+    hPct: f.hPct,
+    T: f.T,
+    requestsAfter: f.requestsAfter,
+    savedSoFar: Math.max(0, savingPerTurn) * f.requestsAfter,
+    turnsToNextFold: f.turnsToNextFold,
+    netTokenDelta,
+    oneTimeCostUnits: round1(oneTimeCostUnits),
+    perTurnSavingUnits: round1(perTurnSavingUnits),
+    breakevenTurns,
+    paidBack,
+  };
+}
+
+export function summarizeFoldEconomics(
+  foldEcon: readonly FoldEconomics[],
+): EconomicsSummary {
+  const econ: EconomicsSummary = {
+    folds: foldEcon.length,
+    grossSaved: foldEcon.reduce((n, e) => n + e.savedSoFar, 0),
+    repayCost: foldEcon.reduce((n, e) => n + e.T, 0),
+    summaryCost: foldEcon.reduce((n, e) => n + e.sigma, 0),
+    netTokens: 0,
+    paidBackCount: 0,
+    notPaidBackCount: 0,
+    unobservedCount: 0,
+  };
+  econ.netTokens = econ.grossSaved - econ.repayCost - econ.summaryCost;
+  for (const e of foldEcon) {
+    if (e.paidBack === true) econ.paidBackCount++;
+    else if (e.paidBack === false) econ.notPaidBackCount++;
+    else econ.unobservedCount++;
+  }
+  return econ;
+}
+
+export function buildCacheReport(
+  samplesIn: readonly CacheSample[],
+  foldsIn: readonly FoldEvent[],
+  opts: CacheReportOptions = {},
+): CacheReport {
+  const samples = [...samplesIn].sort((a, b) => a.at - b.at);
+  const folds = [...foldsIn].sort(
+    (a, b) => a.at - b.at || a.tokensCompressed - b.tokensCompressed,
+  );
+  const maxLines = opts.maxLines && opts.maxLines > 0 ? opts.maxLines : 512;
+  const price = opts.priceProfile;
+  const w = price?.w ?? 1.0;
+  const r = price?.r ?? 0.1;
+  const q = price?.q ?? 4.0;
+
+  type Dec = SampleDecomposition & { foldSeq: number | null };
+  const decs: Dec[] = [];
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i]!;
+    const prev = i > 0 ? samples[i - 1]! : null;
+    const prevAt = prev ? prev.at : Number.NEGATIVE_INFINITY;
+    const pending: FoldEvent[] = [];
+    let pendingBase = 0;
+    for (let j = 0; j < folds.length; j++) {
+      const fj = folds[j]!;
+      if (fj.at <= prevAt) continue;
+      if (fj.at > s.at) break;
+      if (pending.length === 0) pendingBase = j;
+      pending.push(fj);
+    }
+    const d = decomposeSample(prev, s, pending);
+    decs.push({
+      ...d,
+      foldSeq: d.foldIndex !== null ? pendingBase + d.foldIndex + 1 : null,
+    });
+  }
+
+  const totals: CacheTotals = {
+    requests: samples.length,
+    input: 0,
+    cached: 0,
+    output: 0,
+    hitPct: 0,
+    newContent: 0,
+    compRepay: 0,
+    ttlRepay: 0,
+    residual: 0,
+    balanced: true,
+  };
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i]!;
+    const d = decs[i]!;
+    totals.input += s.input;
+    totals.cached += s.cached;
+    totals.output += s.output ?? 0;
+    totals.newContent += d.newContent;
+    totals.compRepay += d.compRepay;
+    totals.ttlRepay += d.ttlRepay;
+  }
+  totals.hitPct = round1(hitPct(totals.input, totals.cached));
+  totals.residual =
+    totals.input -
+    totals.cached -
+    (totals.newContent + totals.compRepay + totals.ttlRepay);
+  totals.balanced = totals.residual === 0;
+
+  const lines: CacheReportLine[] = samples.map((s, i) => {
+    const { foldIndex, ...rest } = decs[i]!;
+    return {
+      seq: i + 1,
+      at: s.at,
+      input: s.input,
+      cached: s.cached,
+      output: s.output ?? 0,
+      hitPct: round1(hitPct(s.input, s.cached)),
+      ...rest,
+    };
+  });
+  const linesOmitted = Math.max(0, lines.length - maxLines);
+  const visibleLines = lines.slice(linesOmitted);
+
+  const foldEcon: FoldEconomics[] = folds.map((f, j) => {
+    const seq = j + 1;
+    const S = f.tokensCompressed;
+    const sigma = f.summaryTokens ?? 0;
+    const T = decs.reduce(
+      (n, d) => (d.foldSeq === seq ? n + d.compRepay : n),
+      0,
+    );
+    // First sample strictly after the fold = the request that materialized it.
+    let hPct: number | null = null;
+    let requestsAfter = 0;
+    for (const s of samples) {
+      if (s.at <= f.at) continue;
+      requestsAfter++;
+      if (hPct === null) hPct = round1(hitPct(s.input, s.cached));
+    }
+    const nextAt = j + 1 < folds.length ? folds[j + 1]?.at : undefined;
+    const turnsToNextFold =
+      nextAt !== undefined
+        ? samples.filter((s) => s.at > f.at && s.at <= nextAt).length
+        : null;
+    return computeFoldEconomics(
+      {
+        seq,
+        at: f.at,
+        S,
+        sigma,
+        Vprime: f.viewAfter,
+        hPct,
+        T,
+        requestsAfter,
+        turnsToNextFold,
+      },
+      { w, r, q },
+    );
+  });
+
+  const econ = summarizeFoldEconomics(foldEcon);
+
+  return {
+    generatedAt: Date.now(),
+    profile: { w, r, q },
+    totals,
+    economics: econ,
+    folds: foldEcon,
+    lines: visibleLines,
+    linesOmitted,
+  };
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+function fmtTok(n: number): string {
+  const v = Math.round(n);
+  return v >= 1_000_000
+    ? `${(v / 1_000_000).toFixed(2)}M`
+    : v >= 10_000
+      ? `${(v / 1000).toFixed(1)}K`
+      : String(v);
+}
+
+function fmtTime(at: number): string {
+  const d = new Date(at);
+  const p = (x: number) => String(x).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** Render the report as compact, model- and human-readable text.
+ *  The identity line is always printed so a broken implementation cannot hide. */
+export function formatCacheReport(
+  report: CacheReport,
+  sessionLabel?: string,
+): string {
+  const t = report.totals;
+  const out: string[] = [];
+  out.push(
+    `ACP CACHE REPORT${sessionLabel ? ` (${sessionLabel})` : ""} — ${t.requests} requests`,
+  );
+  out.push("");
+  out.push("GRAND LEDGER");
+  out.push(`  total input    ${fmtTok(t.input)} tok`);
+  out.push(
+    `  total cached   ${fmtTok(t.cached)} tok  (hit ${t.hitPct.toFixed(1)}%)`,
+  );
+  out.push(`  total output   ${fmtTok(t.output)} tok`);
+  out.push(
+    `  miss breakdown (input − cached = ${fmtTok(Math.max(0, t.input - t.cached))} tok):`,
+  );
+  out.push(
+    `    new content     ${fmtTok(t.newContent)} tok  (fresh append — not an invalidation)`,
+  );
+  out.push(`    compress re-pay ${fmtTok(t.compRepay)} tok  (caused by folds)`);
+  out.push(
+    `    ttl/other       ${fmtTok(t.ttlRepay)} tok  (stable-prefix misses: TTL expiry / eviction)`,
+  );
+  out.push(
+    `  identity check   ${t.balanced ? "OK" : "BROKEN"} — ${fmtTok(t.input)} = ${fmtTok(t.cached)} + ${fmtTok(t.newContent)} + ${fmtTok(t.compRepay)} + ${fmtTok(t.ttlRepay)} (residual ${t.residual})`,
+  );
+  const e = report.economics;
+  if (e.folds > 0) {
+    const p = report.profile;
+    out.push("");
+    out.push(`FOLD ECONOMICS (${e.folds} folds @ w=${p.w} r=${p.r} q=${p.q})`);
+    out.push(
+      `  gross saved ${fmtTok(e.grossSaved)} tok · repay cost ${fmtTok(e.repayCost)} tok · summary cost ${fmtTok(e.summaryCost)} tok → net ${e.netTokens >= 0 ? "+" : ""}${fmtTok(e.netTokens)} tok`,
+    );
+    out.push(
+      `  verdict: ${e.paidBackCount} paid back, ${e.notPaidBackCount} not paid back, ${e.unobservedCount} unobserved`,
+    );
+    for (const f of report.folds) {
+      const nstar =
+        f.breakevenTurns === null ? "n/a" : f.breakevenTurns.toFixed(1);
+      const k = f.turnsToNextFold === null ? "—" : String(f.turnsToNextFold);
+      const verdict =
+        f.paidBack === null ? "?" : f.paidBack ? "PAID BACK" : "NOT PAID BACK";
+      const h = f.hPct === null ? "n/a" : `${f.hPct.toFixed(1)}%`;
+      out.push(
+        `  #${f.seq} ${fmtTime(f.at)} S=${fmtTok(f.S)} σ=${fmtTok(f.sigma)} h=${h} T=${fmtTok(f.T)} ΔC₁=${fmtTok(f.oneTimeCostUnits)} Δs=${fmtTok(f.perTurnSavingUnits)}/turn n*=${nstar} k=${k} → ${verdict}`,
+      );
+    }
+  }
+  if (report.lines.length > 0) {
+    out.push("");
+    if (report.linesOmitted > 0)
+      out.push(
+        `LINE ITEMS (last ${report.lines.length} of ${report.lines.length + report.linesOmitted}):`,
+      );
+    else out.push("LINE ITEMS:");
+    out.push(
+      "  #     time      input  cached    hit%      new    comp     ttl  fold",
+    );
+    for (const l of report.lines) {
+      const fold = l.foldSeq !== null ? `#${l.foldSeq}` : "";
+      out.push(
+        `  ${String(l.seq).padStart(4)}  ${fmtTime(l.at)}  ${fmtTok(l.input).padStart(7)}  ${fmtTok(l.cached).padStart(7)}  ${l.hitPct.toFixed(1).padStart(5)}%  ${fmtTok(l.newContent).padStart(6)}  ${fmtTok(l.compRepay).padStart(6)}  ${fmtTok(l.ttlRepay).padStart(6)}  ${fold}`,
+      );
+    }
+  }
+  return out.join("\n");
+}

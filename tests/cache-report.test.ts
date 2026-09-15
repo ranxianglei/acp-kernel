@@ -1,0 +1,314 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  buildCacheReport,
+  computeFoldEconomics,
+  decomposeSample,
+  formatCacheReport,
+  type CacheSample,
+  type FoldEvent,
+} from "../src/cache-report.js";
+import {
+  ACP_CACHE_TOOL_NAME,
+  ACP_CACHE_TOOL_OPENAI,
+  ACP_CACHE_TOOL,
+  ACP_CACHE_TOOL_RESPONSES,
+  ACP_TOOLS_OPENAI,
+  ACP_TOOLS_ANTHROPIC,
+  ACP_TOOLS_RESPONSES,
+  ACP_READONLY_TOOLS_RESPONSES,
+  ACP_TOOL_NAMES,
+  ACP_READONLY_TOOLS,
+} from "../src/compress-tools.js";
+
+const T0 = Date.parse("2026-09-15T10:00:00Z");
+const min = 60_000;
+
+function sample(
+  atOffsetMin: number,
+  input: number,
+  cached: number,
+  output = 0,
+): CacheSample {
+  return { at: T0 + atOffsetMin * min, input, cached, output };
+}
+
+test("identity holds for arbitrary inputs (property-style)", () => {
+  let seed = 42;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const samples: CacheSample[] = [];
+  const folds: FoldEvent[] = [];
+  let t = 0;
+  for (let i = 0; i < 300; i++) {
+    t += 1 + Math.floor(rand() * 5);
+    const input = Math.floor(5_000 + rand() * 90_000);
+    const cached = Math.floor(rand() * (input + 1));
+    samples.push({ at: T0 + t * min, input, cached });
+    if (rand() < 0.2) {
+      folds.push({
+        at: T0 + (t - 0.5) * min,
+        tokensCompressed: Math.floor(5_000 + rand() * 50_000),
+        firstFoldStartTokens: Math.floor(rand() * 20_000),
+      });
+    }
+  }
+  const r = buildCacheReport(samples, folds);
+  assert.equal(r.totals.balanced, true);
+  assert.equal(r.totals.residual, 0);
+  assert.equal(
+    r.totals.input,
+    r.totals.cached +
+      r.totals.newContent +
+      r.totals.compRepay +
+      r.totals.ttlRepay,
+  );
+  for (const l of r.lines) {
+    assert.ok(l.newContent >= 0 && l.compRepay >= 0 && l.ttlRepay >= 0);
+    assert.equal(l.missed, l.newContent + l.compRepay + l.ttlRepay);
+    assert.equal(l.missed, Math.max(0, l.input - l.cached));
+  }
+});
+
+test("pure-append session: growth is new content; cold start is residual", () => {
+  // No baseline before the first request → its whole miss lands in the
+  // residual bucket by design (documented cold-start semantics).
+  const samples = [
+    sample(0, 1000, 0),
+    sample(1, 2000, 1000),
+    sample(2, 3000, 2000),
+  ];
+  const r = buildCacheReport(samples, []);
+  assert.equal(r.totals.newContent, 1000 + 1000);
+  assert.equal(r.totals.compRepay, 0);
+  assert.equal(r.totals.ttlRepay, 1000);
+  assert.equal(r.totals.balanced, true);
+});
+
+test("no folds, cold cache: miss attributed to ttl/other", () => {
+  const samples = [sample(0, 1000, 1000), sample(30, 1000, 400)];
+  const r = buildCacheReport(samples, []);
+  const last = r.lines[r.lines.length - 1];
+  assert.equal(last.missed, 600);
+  assert.equal(last.newContent, 0);
+  assert.equal(last.compRepay, 0);
+  assert.equal(last.ttlRepay, 600);
+});
+
+test("fold cliff: structural excess credited to the fold, remainder to ttl", () => {
+  // Request A: 10K in, 9K cached. Fold removes S=5K, divergence at X=3K,
+  // post-fold view V'=5.5K. Request B: 6K in (5.5K view + 500 fresh... note
+  // growth is negative so newContent=0), only 1K cached (TTL ate part too).
+  const samples = [sample(0, 10_000, 9_000), sample(1, 6_000, 1_000)];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 5_000,
+      firstFoldStartTokens: 3_000,
+      viewBefore: 10_000,
+      viewAfter: 5_500,
+    },
+  ];
+  const r = buildCacheReport(samples, folds);
+  const b = r.lines[1];
+  assert.equal(b.missed, 5_000);
+  assert.equal(b.newContent, 0);
+  assert.equal(b.compRepay, 3_000); // 6000 − 3000(X) − 0
+  assert.equal(b.ttlRepay, 2_000);
+  assert.equal(b.foldSeq, 1);
+  const f = r.folds[0];
+  assert.equal(f.T, 3_000);
+  assert.equal(f.hPct, round1((1_000 / 6_000) * 100));
+  assert.ok(f.breakevenTurns !== null && f.breakevenTurns > 0);
+});
+
+test("multiple folds in one window: earliest divergence point wins", () => {
+  const samples = [sample(0, 10_000, 9_000), sample(1, 7_000, 2_000)];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.3 * min,
+      tokensCompressed: 2_000,
+      firstFoldStartTokens: 5_000,
+    },
+    {
+      at: T0 + 0.7 * min,
+      tokensCompressed: 3_000,
+      firstFoldStartTokens: 2_000,
+    },
+  ];
+  const r = buildCacheReport(samples, folds);
+  const b = r.lines[1];
+  // excess = 7000 − 2000(min X) = 5000; missed = 5000 → all comp, owner #2
+  assert.equal(b.compRepay, 5_000);
+  assert.equal(b.ttlRepay, 0);
+  assert.equal(b.foldSeq, 2);
+  assert.equal(r.folds[1].T, 5_000);
+});
+
+test("fold without post-fold request is unobserved", () => {
+  const samples = [sample(0, 10_000, 9_000)];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 5_000,
+      firstFoldStartTokens: 3_000,
+    },
+  ];
+  const r = buildCacheReport(samples, folds);
+  const f = r.folds[0];
+  assert.equal(f.hPct, null);
+  assert.equal(f.T, 0);
+  assert.equal(f.paidBack, null);
+  assert.equal(r.economics.unobservedCount, 1);
+});
+
+test("breakeven verdict: measured cadence vs n*", () => {
+  // S=50K σ=2K, X=5K. Post-fold request: input 22667, cached 7000 → missed
+  // 15667 = compRepay (excess 17667 clamps to it). Defaults w=1,r=0.1,q=4:
+  // ΔC₁ = 0.9·15667 + 4·2000 − 0.1·50000 ≈ 17100 ; Δs = 48000·0.1 = 4800 → n*≈3.6
+  const samples = [sample(0, 70_000, 60_000), sample(1, 22_667, 7_000)];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 50_000,
+      summaryTokens: 2_000,
+      firstFoldStartTokens: 5_000,
+      viewBefore: 70_000,
+      viewAfter: 20_000,
+    },
+  ];
+  const r = buildCacheReport(samples, folds);
+  const f = r.folds[0];
+  assert.equal(f.S, 50_000);
+  assert.ok(f.T > 0);
+  assert.ok(
+    f.breakevenTurns !== null && f.breakevenTurns > 0 && f.breakevenTurns < 10,
+  );
+  assert.equal(f.turnsToNextFold, null);
+  assert.equal(f.paidBack, null);
+});
+
+test("economics summary aggregates fold economics", () => {
+  const samples = [
+    sample(0, 70_000, 60_000),
+    sample(1, 22_000, 5_000),
+    sample(2, 24_000, 22_000),
+    sample(3, 26_000, 24_000),
+  ];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 50_000,
+      summaryTokens: 2_000,
+      firstFoldStartTokens: 5_000,
+    },
+  ];
+  const r = buildCacheReport(samples, folds);
+  const e = r.economics;
+  assert.equal(e.folds, 1);
+  assert.equal(e.summaryCost, 2_000);
+  assert.equal(e.grossSaved, (50_000 - 2_000) * 3);
+  assert.equal(e.netTokens, e.grossSaved - e.repayCost - e.summaryCost);
+  assert.equal(e.paidBackCount + e.notPaidBackCount + e.unobservedCount, 1);
+});
+
+test("line retention: maxLines keeps newest, totals keep everything", () => {
+  const samples: CacheSample[] = [];
+  for (let i = 0; i < 10; i++) samples.push(sample(i, 1_000 + i * 100, 0));
+  const r = buildCacheReport(samples, [], { maxLines: 3 });
+  assert.equal(r.lines.length, 3);
+  assert.equal(r.linesOmitted, 7);
+  assert.equal(r.lines[0].seq, 8);
+  assert.equal(r.totals.requests, 10);
+  assert.equal(
+    r.totals.input,
+    samples.reduce((n, s) => n + s.input, 0),
+  );
+});
+
+test("decomposeSample: no pending folds → all remainder is ttl", () => {
+  const d = decomposeSample(
+    sample(0, 10_000, 9_000),
+    sample(1, 10_500, 4_000),
+    [],
+  );
+  assert.equal(d.newContent, 500);
+  assert.equal(d.compRepay, 0);
+  assert.equal(d.ttlRepay, 6_000);
+  assert.equal(d.foldIndex, null);
+});
+
+test("decomposeSample: cached beyond divergence still clamps cleanly", () => {
+  const prev = sample(0, 10_000, 9_000);
+  const cur = sample(1, 6_000, 4_000); // cached > X=3000
+  const d = decomposeSample(prev, cur, [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 5_000,
+      firstFoldStartTokens: 3_000,
+    },
+  ]);
+  assert.equal(d.missed, 2_000);
+  assert.equal(d.compRepay, 2_000);
+  assert.equal(d.ttlRepay, 0);
+});
+
+test("formatter emits identity line and sections", () => {
+  const samples = [sample(0, 10_000, 9_000), sample(1, 6_000, 1_000)];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 5_000,
+      firstFoldStartTokens: 3_000,
+      viewAfter: 5_500,
+    },
+  ];
+  const text = formatCacheReport(buildCacheReport(samples, folds), "sess-1");
+  assert.match(text, /ACP CACHE REPORT \(sess-1\)/);
+  assert.match(text, /GRAND LEDGER/);
+  assert.match(text, /identity check   OK/);
+  assert.match(text, /FOLD ECONOMICS/);
+  assert.match(text, /LINE ITEMS/);
+  assert.match(text, /PAID BACK|NOT PAID BACK|\?/);
+});
+
+test("acp_cache tool definitions registered across wires", () => {
+  assert.equal(ACP_CACHE_TOOL_NAME, "acp_cache");
+  assert.equal(ACP_CACHE_TOOL_OPENAI.function.name, "acp_cache");
+  assert.equal(ACP_CACHE_TOOL.name, "acp_cache");
+  assert.equal(ACP_CACHE_TOOL_RESPONSES.name, "acp_cache");
+  assert.ok(ACP_TOOLS_OPENAI.some((t) => t.function.name === "acp_cache"));
+  assert.ok(ACP_TOOLS_ANTHROPIC.some((t) => t.name === "acp_cache"));
+  assert.ok(ACP_TOOLS_RESPONSES.some((t) => t.name === "acp_cache"));
+  assert.ok(ACP_READONLY_TOOLS_RESPONSES.some((t) => t.name === "acp_cache"));
+  assert.ok(ACP_TOOL_NAMES.has("acp_cache"));
+  assert.ok(ACP_READONLY_TOOLS.has("acp_cache"));
+  assert.ok(!ACP_CACHE_TOOL_OPENAI.function.description.includes("loop"));
+});
+
+test("computeFoldEconomics matches #359 formulas under default profile", () => {
+  const e = computeFoldEconomics({
+    seq: 1,
+    at: 1_000_000,
+    S: 50_000,
+    sigma: 2_000,
+    hPct: 33,
+    T: 17_000,
+    requestsAfter: 21,
+    turnsToNextFold: 21,
+  });
+  // ΔC₁ = (w-r)T + qσ - rS = 0.9*17000 + 4*2000 - 0.1*50000 = 18300
+  assert.equal(e.oneTimeCostUnits, 18_300);
+  // Δs = (S-σ)r = 48000 * 0.1 = 4800
+  assert.equal(e.perTurnSavingUnits, 4_800);
+  assert.ok(Math.abs(e.breakevenTurns! - 18_300 / 4_800) < 1e-9);
+  assert.equal(e.paidBack, true);
+  assert.equal(e.savedSoFar, 48_000 * 21);
+  assert.equal(e.netTokenDelta, 17_000 + 2_000 - 50_000);
+});
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}

@@ -51,8 +51,16 @@ export {
 } from "./tokenize.js";
 export type { TokenCountFn } from "./tokenize.js";
 export { renderNudgeText, formatRanges } from "./nudge-text.js";
-export type { NudgeVoice, RenderedNudge, NudgePromptSections } from "./nudge-text.js";
-export { resolveBlockSpan, activeBlockSpans, formatCreatedBlocks } from "./block-map.js";
+export type {
+  NudgeVoice,
+  RenderedNudge,
+  NudgePromptSections,
+} from "./nudge-text.js";
+export {
+  resolveBlockSpan,
+  activeBlockSpans,
+  formatCreatedBlocks,
+} from "./block-map.js";
 export {
   COMPRESS_PHILOSOPHY,
   HOW_TO_COMPRESS_RULES,
@@ -108,6 +116,26 @@ export type {
 } from "./decompress.js";
 export { buildStatusReport, buildRecap } from "./report.js";
 export type { StatusReportOptions, StatusReportMeta } from "./report.js";
+export {
+  buildCacheReport,
+  computeFoldEconomics,
+  decomposeSample,
+  formatCacheReport,
+  summarizeFoldEconomics,
+} from "./cache-report.js";
+export type {
+  CacheSample,
+  FoldEvent,
+  FoldEconomicsInput,
+  PriceProfile,
+  SampleDecomposition,
+  CacheTotals,
+  FoldEconomics,
+  EconomicsSummary,
+  CacheReportLine,
+  CacheReportOptions,
+  CacheReport,
+} from "./cache-report.js";
 export { renderHandoff, renderMessage, matchSession } from "./handoff.js";
 export type { HandoffInput, HandoffMeta, HandoffBlockFull } from "./handoff.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";
@@ -138,7 +166,11 @@ export type {
 export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
 export { parseCompressArgs } from "./parse-compress-input.js";
-export type { CompressParseDiagnostics, CompressParseKind, ParsedCompressInput } from "./parse-compress-input.js";
+export type {
+  CompressParseDiagnostics,
+  CompressParseKind,
+  ParsedCompressInput,
+} from "./parse-compress-input.js";
 export {
   renderVisibleRefs,
   renderRefsNode,

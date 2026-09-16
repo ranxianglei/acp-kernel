@@ -60,34 +60,6 @@ export class BoundaryNotFoundError extends Error {
   }
 }
 
-/**
- * Thrown when both boundary refs resolve but startId lands after endId.
- * Reported as an explicit parameter error instead of being silently
- * swapped: a swapped range looks like valid (often tiny) content, so
- * downstream gates misdiagnose it as "content too small" and the model
- * keeps combining messages instead of fixing its ref order (#310).
- */
-export class BoundaryReversedError extends Error {
-  readonly code = "BOUNDARY_REVERSED";
-  readonly startRef: string;
-  readonly endRef: string;
-  readonly normalizedCharCount: number;
-
-  constructor(
-    startRef: string,
-    endRef: string,
-    normalizedCharCount: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "BoundaryReversedError";
-    this.code = "BOUNDARY_REVERSED";
-    this.startRef = startRef;
-    this.endRef = endRef;
-    this.normalizedCharCount = normalizedCharCount;
-  }
-}
-
 export interface ResolveBoundariesInput {
   startRef: string;
   endRef: string;
@@ -103,6 +75,7 @@ export interface ResolvedRange {
   boundaryKind: BoundaryKind;
   protectedGaps: number[];
   snappedBoundaries: string[];
+  reversedNote?: string;
 }
 
 export function resolveBoundaries(
@@ -136,22 +109,16 @@ export function resolveBoundaries(
     "end",
   );
   if (endAnchor.snapped) snappedBoundaries.push(endAnchor.snapped);
-  const startIndex = startAnchor.index;
-  const endIndex = endAnchor.index;
+  let startIndex = startAnchor.index;
+  let endIndex = endAnchor.index;
 
+  let reversedNote: string | undefined;
   if (startIndex > endIndex) {
-    let normalizedChars = 0;
-    for (let index = endIndex; index <= startIndex; index++) {
-      const message = input.messages[index];
-      if (message && !isRenderedSummaryMessage(message))
-        normalizedChars += message.text?.length ?? 0;
-    }
-    throw new BoundaryReversedError(
-      start.raw,
-      end.raw,
-      normalizedChars,
-      `startId="${start.raw}" resolves after endId="${end.raw}" — the refs appear reversed: swap startId and endId. Normalized range ${end.raw}..${start.raw} contains ${normalizedChars} chars.`,
-    );
+    // Direction is notational — startId/endId select exactly one region, so
+    // normalizing by swap loses nothing; but the model must see that its
+    // input was rewritten (#310).
+    [startIndex, endIndex] = [endIndex, startIndex];
+    reversedNote = `note: refs were given reversed (${start.raw}→${end.raw}), normalized to ${end.raw}..${start.raw}`;
   }
 
   const messageIds: string[] = [];
@@ -188,6 +155,7 @@ export function resolveBoundaries(
     boundaryKind,
     protectedGaps,
     snappedBoundaries,
+    reversedNote,
   };
 }
 

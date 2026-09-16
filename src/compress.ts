@@ -174,6 +174,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
     let tokensCompressed = 0;
     const errors: string[] = [];
     const warnings: string[] = [];
+    const notes: string[] = [];
 
     // Default to the soft-protected zone (recent-N + last user message) when the
     // caller doesn't pass an explicit set. This makes applyCompression safe by
@@ -311,7 +312,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
         const danglingRefs = consumedRanges.flatMap((spec) =>
           danglingMessageRefs(state, input.messages, spec),
         );
-        const gateMessage =
+        let gateMessage =
           resolvableCount === 0 &&
           consumedRanges.length === 0 &&
           unknownCount > 0
@@ -320,7 +321,34 @@ export function createCore(ports: Ports = {}): CompressionCore {
               ? danglingRefs.length > 0
                 ? `Requested range(s) cannot be anchored (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
                 : `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — those refs no longer point to directly compressible content: the range is covered by active block(s) or the block ref(s) are stale (distilled or consumed). ${diagnostics} Run acp_status, then call the compress tool again using only the CURRENT compressible ranges it reports.${liveHint}`
-              : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
+              : countedRanges > 0
+                ? `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`
+                : null;
+        if (gateMessage === null) {
+          // No range was counted (every spec failed classification, e.g.
+          // unparseable refs). The per-range errors name the real cause; a
+          // "too small" verdict here would mislead the model into combining
+          // more messages instead of fixing its refs (#310).
+          return {
+            state: input.state,
+            result: {
+              blocksCreated: 0,
+              tokensCompressed: 0,
+              errors: [...classificationErrors],
+              warnings: [],
+            },
+          };
+        }
+        const reversalNotes: string[] = [];
+        for (const [spec, resolution] of classifications) {
+          if (resolution.status === "ok" && !skipSpecs.has(spec)) {
+            const note = resolution.resolved.reversedNote;
+            if (note) reversalNotes.push(note);
+          }
+        }
+        if (reversalNotes.length > 0) {
+          gateMessage += ` ${reversalNotes.join(" ")}`;
+        }
         return {
           state: input.state,
           result: {
@@ -348,6 +376,8 @@ export function createCore(ports: Ports = {}): CompressionCore {
         continue;
       }
       warnings.push(...resolution.resolved.snappedBoundaries);
+      const note = resolution.resolved.reversedNote;
+      if (note) notes.push(note);
       try {
         const outcome = applySingleRange({
           spec,
@@ -393,7 +423,13 @@ export function createCore(ports: Ports = {}): CompressionCore {
 
     return {
       state,
-      result: { blocksCreated, tokensCompressed, errors, warnings },
+      result: {
+        blocksCreated,
+        tokensCompressed,
+        errors,
+        warnings,
+        ...(notes.length > 0 ? { notes } : {}),
+      },
     };
   }
 

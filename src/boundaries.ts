@@ -75,6 +75,7 @@ export interface ResolvedRange {
   boundaryKind: BoundaryKind;
   protectedGaps: number[];
   snappedBoundaries: string[];
+  reversedNote?: string;
 }
 
 export function resolveBoundaries(
@@ -111,8 +112,13 @@ export function resolveBoundaries(
   let startIndex = startAnchor.index;
   let endIndex = endAnchor.index;
 
+  let reversedNote: string | undefined;
   if (startIndex > endIndex) {
+    // Direction is notational — startId/endId select exactly one region, so
+    // normalizing by swap loses nothing; but the model must see that its
+    // input was rewritten (#310).
     [startIndex, endIndex] = [endIndex, startIndex];
+    reversedNote = `note: refs were given reversed (${start.raw}→${end.raw}), normalized to ${end.raw}..${start.raw}`;
   }
 
   const messageIds: string[] = [];
@@ -149,6 +155,7 @@ export function resolveBoundaries(
     boundaryKind,
     protectedGaps,
     snappedBoundaries,
+    reversedNote,
   };
 }
 

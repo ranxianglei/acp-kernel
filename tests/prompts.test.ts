@@ -159,6 +159,7 @@ test("defaultPrompts is frozen (immutable singleton)", () => {
 test("renderNudgeText two-arg default equals one-arg call for every mode (back-compat)", () => {
   const modes = [
     makeDecision({ contextUsage: 0.5 }),
+    makeDecision({ contextUsage: 0.85, breakdown: { overLimit: 1 } }),
     makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }),
     makeDecision({ tier: 2 }),
     makeDecision({ tier: 3 }),
@@ -175,6 +176,9 @@ test("renderNudgeText default output embeds the full rule text verbatim (byte-st
   const gentle = renderNudgeText(makeDecision({ contextUsage: 0.5 }));
   assert.ok(gentle.text.includes(COMPRESS_PHILOSOPHY));
   assert.ok(gentle.text.includes(HOW_TO_COMPRESS_RULES));
+  const overLimit = renderNudgeText(makeDecision({ contextUsage: 0.85, breakdown: { overLimit: 1 } }));
+  assert.ok(overLimit.text.includes(COMPRESS_PHILOSOPHY));
+  assert.ok(overLimit.text.includes(HOW_TO_COMPRESS_RULES));
   const emergency = renderNudgeText(
     makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }),
   );

@@ -6,6 +6,7 @@ export type NudgeVoice = "gentle" | "emergency";
 
 export interface NudgePromptSections {
   efficiencyNote?: string | null;
+  pressureHeader?: string | null;
   emergencyHeader?: string | null;
   t2Guidance?: string | null;
   t3Guidance?: string | null;
@@ -19,6 +20,11 @@ export interface RenderedNudge {
 function efficiencyNote(prompts: Prompts, sections: NudgePromptSections): string | null {
   if (sections.efficiencyNote !== undefined) return sections.efficiencyNote;
   return `This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${prompts.compressPhilosophy}`;
+}
+
+function pressureHeader(prompts: Prompts, sections: NudgePromptSections): string | null {
+  if (sections.pressureHeader !== undefined) return sections.pressureHeader;
+  return `⚠️ Context pressure high — compress now to stay under the limit. Prioritize consumed tool outputs.\n\n${prompts.compressPhilosophy}`;
 }
 
 function emergencyHeader(prompts: Prompts, sections: NudgePromptSections): string | null {
@@ -164,7 +170,11 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
   const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
   const blockMapStr = formatBlockMap(decision.activeBlockSpans ?? []);
-  const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
+  // Three usage bands (decideNudge): gentle / over-limit / emergency.
+  // Voice stays binary ("emergency" = pressure band or above), but the
+  // wording must not claim the limit is reached until it actually is (#312).
+  const isEmergency = !!decision.breakdown?.emergencyOverride;
+  const isOverLimit = isEmergency || !!decision.breakdown?.overLimit;
 
   if (decision.tier !== null && decision.tier >= 2) {
     const isT2 = decision.tier === 2;
@@ -172,12 +182,16 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
     const blockList = formatTierTargetBlocks(targets);
     const startId = targets[0]?.blockId ?? "b1";
     const endId = targets[targets.length - 1]?.blockId ?? "b5";
-    const voice: NudgeVoice = isEmergency ? "emergency" : "gentle";
+    const voice: NudgeVoice = isOverLimit ? "emergency" : "gentle";
     const triggerLine = isEmergency
       ? `[EMERGENCY — TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"}] Context limit reached — distill NOW into a denser summary to reclaim tokens.`
-      : `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`;
+      : isOverLimit
+        ? `[OVER-LIMIT — TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"}] Context pressure high — distill now to reclaim tokens.`
+        : `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`;
     const guidance = tierGuidance(isT2 ? 2 : 3, sections);
-    const head = efficiencyNote(prompts, sections);
+    const head = isOverLimit
+      ? (isEmergency ? emergencyHeader(prompts, sections) : pressureHeader(prompts, sections))
+      : efficiencyNote(prompts, sections);
     return {
       voice,
       text: compact([
@@ -197,8 +211,8 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
     };
   }
 
-  if (isEmergency) {
-    const head = emergencyHeader(prompts, sections);
+  if (isOverLimit) {
+    const head = isEmergency ? emergencyHeader(prompts, sections) : pressureHeader(prompts, sections);
     return {
       voice: "emergency",
       text: compact([

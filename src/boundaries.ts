@@ -60,6 +60,34 @@ export class BoundaryNotFoundError extends Error {
   }
 }
 
+/**
+ * Thrown when both boundary refs resolve but startId lands after endId.
+ * Reported as an explicit parameter error instead of being silently
+ * swapped: a swapped range looks like valid (often tiny) content, so
+ * downstream gates misdiagnose it as "content too small" and the model
+ * keeps combining messages instead of fixing its ref order (#310).
+ */
+export class BoundaryReversedError extends Error {
+  readonly code = "BOUNDARY_REVERSED";
+  readonly startRef: string;
+  readonly endRef: string;
+  readonly normalizedCharCount: number;
+
+  constructor(
+    startRef: string,
+    endRef: string,
+    normalizedCharCount: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "BoundaryReversedError";
+    this.code = "BOUNDARY_REVERSED";
+    this.startRef = startRef;
+    this.endRef = endRef;
+    this.normalizedCharCount = normalizedCharCount;
+  }
+}
+
 export interface ResolveBoundariesInput {
   startRef: string;
   endRef: string;
@@ -108,11 +136,22 @@ export function resolveBoundaries(
     "end",
   );
   if (endAnchor.snapped) snappedBoundaries.push(endAnchor.snapped);
-  let startIndex = startAnchor.index;
-  let endIndex = endAnchor.index;
+  const startIndex = startAnchor.index;
+  const endIndex = endAnchor.index;
 
   if (startIndex > endIndex) {
-    [startIndex, endIndex] = [endIndex, startIndex];
+    let normalizedChars = 0;
+    for (let index = endIndex; index <= startIndex; index++) {
+      const message = input.messages[index];
+      if (message && !isRenderedSummaryMessage(message))
+        normalizedChars += message.text?.length ?? 0;
+    }
+    throw new BoundaryReversedError(
+      start.raw,
+      end.raw,
+      normalizedChars,
+      `startId="${start.raw}" resolves after endId="${end.raw}" — the refs appear reversed: swap startId and endId. Normalized range ${end.raw}..${start.raw} contains ${normalizedChars} chars.`,
+    );
   }
 
   const messageIds: string[] = [];

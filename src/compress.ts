@@ -373,7 +373,24 @@ export function createCore(ports: Ports = {}): CompressionCore {
               ? danglingRefs.length > 0
                 ? `Requested range(s) cannot be anchored (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
                 : `Requested range(s) already compressed (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — ${coverDetail}. Nothing new to compress in that window. ${diagnostics} Continue the task, or run acp_status and target one of the CURRENT compressible ranges it reports.${tierActionHint(input.config, state)}`
-              : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
+              : countedRanges > 0
+                ? `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`
+                : null;
+        if (gateMessage === null) {
+          // No range was counted (every spec failed classification, e.g.
+          // reversed refs). The per-range errors name the real cause; a
+          // "too small" verdict here would mislead the model into combining
+          // more messages instead of fixing its refs (#310).
+          return {
+            state: input.state,
+            result: {
+              blocksCreated: 0,
+              tokensCompressed: 0,
+              errors: [...classificationErrors],
+              warnings: [],
+            },
+          };
+        }
         return {
           state: input.state,
           result: {

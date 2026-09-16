@@ -226,6 +226,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
     let tokensCompressed = 0;
     const errors: string[] = [];
     const warnings: string[] = [];
+    const notes: string[] = [];
 
     // Default to the soft-protected zone (recent-N + last user message) when the
     // caller doesn't pass an explicit set. This makes applyCompression safe by
@@ -364,7 +365,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
         const danglingRefs = consumedRanges.flatMap((spec) =>
           danglingMessageRefs(state, input.messages, spec),
         );
-        const gateMessage =
+        let gateMessage =
           resolvableCount === 0 &&
           consumedRanges.length === 0 &&
           unknownCount > 0
@@ -378,7 +379,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
                 : null;
         if (gateMessage === null) {
           // No range was counted (every spec failed classification, e.g.
-          // reversed refs). The per-range errors name the real cause; a
+          // unparseable refs). The per-range errors name the real cause; a
           // "too small" verdict here would mislead the model into combining
           // more messages instead of fixing its refs (#310).
           return {
@@ -390,6 +391,16 @@ export function createCore(ports: Ports = {}): CompressionCore {
               warnings: [],
             },
           };
+        }
+        const reversalNotes: string[] = [];
+        for (const [spec, resolution] of classifications) {
+          if (resolution.status === "ok" && !skipSpecs.has(spec)) {
+            const note = resolution.resolved.reversedNote;
+            if (note) reversalNotes.push(note);
+          }
+        }
+        if (reversalNotes.length > 0) {
+          gateMessage += ` ${reversalNotes.join(" ")}`;
         }
         return {
           state: input.state,
@@ -418,6 +429,8 @@ export function createCore(ports: Ports = {}): CompressionCore {
         continue;
       }
       warnings.push(...resolution.resolved.snappedBoundaries);
+      const note = resolution.resolved.reversedNote;
+      if (note) notes.push(note);
       try {
         const outcome = applySingleRange({
           spec,
@@ -463,7 +476,13 @@ export function createCore(ports: Ports = {}): CompressionCore {
 
     return {
       state,
-      result: { blocksCreated, tokensCompressed, errors, warnings },
+      result: {
+        blocksCreated,
+        tokensCompressed,
+        errors,
+        warnings,
+        ...(notes.length > 0 ? { notes } : {}),
+      },
     };
   }
 

@@ -417,6 +417,11 @@ export interface ApplyCompressionResult {
      *  The compression still succeeded; the host should surface these to the
      *  model so it understands what was skipped. */
     warnings: string[];
+    /** Kernel-side rewrites of the model's input (e.g. reversed refs
+     *  normalized to ascending order), for hosts to render into the tool
+     *  result so the model knows its input was changed (#310). Omitted when
+     *  empty. */
+    notes?: string[];
   };
 }
 

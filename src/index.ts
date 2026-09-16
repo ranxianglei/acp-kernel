@@ -40,7 +40,6 @@ export {
   resolveBoundaries,
   parseBoundary,
   BoundaryNotFoundError,
-  BoundaryReversedError,
   visibleBlockAnchor,
   blockVisibleInRange,
 } from "./boundaries.js";

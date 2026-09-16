@@ -1,11 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCore } from "../src/compress.js";
-import {
-  resolveBoundaries,
-  BoundaryNotFoundError,
-  BoundaryReversedError,
-} from "../src/boundaries.js";
+import { resolveBoundaries, BoundaryNotFoundError } from "../src/boundaries.js";
 import { createInitialState } from "../src/state.js";
 import { prune } from "../src/prune.js";
 import { assignRefs } from "../src/refs.js";
@@ -117,7 +113,7 @@ test("prune after applyCompression removes covered messages and injects summary"
   assert.ok(pruned[1]!.text!.includes("intro recap"));
 });
 
-test("resolveBoundaries throws BoundaryReversedError instead of swapping", () => {
+test("resolveBoundaries normalizes reversed refs and records a transparency note", () => {
   const state = createInitialState();
   const messages = [msg("a", "x"), msg("b", "y"), msg("c", "z")];
   state.messageRefs = assignRefs(messages, {
@@ -125,31 +121,30 @@ test("resolveBoundaries throws BoundaryReversedError instead of swapping", () =>
     nextIndex: 1,
   }).map;
 
-  assert.throws(
-    () =>
-      resolveBoundaries({
-        startRef: "m00003",
-        endRef: "m00001",
-        messages,
-        state,
-      }),
-    (error: unknown) => {
-      assert.ok(error instanceof BoundaryReversedError);
-      assert.equal(error.code, "BOUNDARY_REVERSED");
-      assert.equal(error.startRef, "m00003");
-      assert.equal(error.endRef, "m00001");
-      assert.equal(error.normalizedCharCount, 3);
-      assert.match(
-        error.message,
-        /startId="m00003" resolves after endId="m00001"/,
-      );
-      assert.match(error.message, /m00001\.\.m00003 contains 3 chars/);
-      return true;
-    },
+  const reversed = resolveBoundaries({
+    startRef: "m00003",
+    endRef: "m00001",
+    messages,
+    state,
+  });
+  assert.equal(reversed.startIndex, 0);
+  assert.equal(reversed.endIndex, 2);
+  assert.deepEqual(reversed.messageIds, ["a", "b", "c"]);
+  assert.equal(
+    reversed.reversedNote,
+    "note: refs were given reversed (m00003→m00001), normalized to m00001..m00003",
   );
+
+  const forward = resolveBoundaries({
+    startRef: "m00001",
+    endRef: "m00003",
+    messages,
+    state,
+  });
+  assert.equal(forward.reversedNote, undefined);
 });
 
-test("applyCompression rejects reversed boundaries without fabricating 'too small'", () => {
+test("gate verdict carries the reversal note instead of hiding it", () => {
   const core = createCore();
   const state = createInitialState();
   const messages = [msg("a", "x"), msg("b", "y"), msg("c", "z")];
@@ -174,12 +169,18 @@ test("applyCompression rejects reversed boundaries without fabricating 'too smal
   assert.equal(result.result.blocksCreated, 0);
   assert.equal(result.state.blocks.length, 0);
   assert.equal(result.result.errors.length, 1);
-  assert.match(result.result.errors[0]!, /reversed/);
-  assert.match(result.result.errors[0]!, /contains 3 chars/);
-  assert.doesNotMatch(result.result.errors[0]!, /too small/i);
+  assert.match(
+    result.result.errors[0]!,
+    /too small \(3 chars across 1 range\(s\), min 5000\)/,
+  );
+  assert.match(
+    result.result.errors[0]!,
+    /note: refs were given reversed \(m00003→m00001\), normalized to m00001\.\.m00003/,
+  );
+  assert.equal(result.result.notes, undefined);
 });
 
-test("large reversed ranges are rejected too (no silent swap-compress)", () => {
+test("successful compression of a reversed range reports the rewrite in notes", () => {
   const core = createCore();
   const state = createInitialState();
   const big = "w".repeat(1000);
@@ -209,14 +210,13 @@ test("large reversed ranges are rejected too (no silent swap-compress)", () => {
     }),
   });
 
-  assert.equal(result.result.blocksCreated, 0);
-  assert.equal(result.state.blocks.length, 0);
-  assert.equal(result.result.errors.length, 1);
-  assert.match(result.result.errors[0]!, /reversed/);
-  assert.match(result.result.errors[0]!, /contains 6000 chars/);
+  assert.equal(result.result.blocksCreated, 1);
+  assert.deepEqual(result.result.notes, [
+    "note: refs were given reversed (m00006→m00001), normalized to m00001..m00006",
+  ]);
 });
 
-test("mixed batch reports both the too-small verdict and the reversed-ref error", () => {
+test("mixed batch appends the reversal note to the too-small verdict", () => {
   const core = createCore();
   const state = createInitialState();
   const messages = [
@@ -248,17 +248,43 @@ test("mixed batch reports both the too-small verdict and the reversed-ref error"
   });
 
   assert.equal(result.result.blocksCreated, 0);
-  assert.equal(result.result.errors.length, 2);
-  assert.ok(
-    result.result.errors.some((e) =>
-      /too small \(2 chars across 1 range\(s\), min 5000\)/.test(e),
-    ),
+  assert.equal(result.result.errors.length, 1);
+  assert.match(
+    result.result.errors[0]!,
+    /too small \(4 chars across 2 range\(s\), min 5000\)/,
   );
-  assert.ok(
-    result.result.errors.some((e) =>
-      /range m00005\.\.m00004: .*reversed/.test(e),
-    ),
+  assert.match(
+    result.result.errors[0]!,
+    /note: refs were given reversed \(m00005→m00004\), normalized to m00004\.\.m00005/,
   );
+});
+
+test("all-invalid batch reports per-range errors without fabricating a size verdict", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [msg("a", "x"), msg("b", "y"), msg("c", "z")];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "foo", endRef: "bar", summary: "bad" }],
+    messages,
+    state,
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
+  });
+
+  assert.equal(result.result.blocksCreated, 0);
+  assert.equal(result.result.errors.length, 1);
+  assert.match(result.result.errors[0]!, /Invalid boundary ref\(s\)/);
+  assert.doesNotMatch(result.result.errors.join("\n"), /too small/i);
 });
 
 test("block-boundary compression produces T2 and consumes matching T1 blocks", () => {

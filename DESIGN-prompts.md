@@ -44,8 +44,8 @@ passes everywhere, so both layers render the same customized text.
 ## Layer 0 — kernel override interface (shipped)
 
 > Nudge surface sections (companion to this layer): `renderNudgeText` accepts a
-> third argument `NudgePromptSections` — `efficiencyNote` / `emergencyHeader` /
-> `t2Guidance` / `t3Guidance` with the same tri-state semantics
+> third argument `NudgePromptSections` — `efficiencyNote` / `pressureHeader` /
+> `emergencyHeader` / `t2Guidance` / `t3Guidance` with the same tri-state semantics
 > (`string` = replace, `null` = remove, omitted = default). These are the
 > guidance-class nudge texts (surface, no risk gate); trigger lines, renderer
 > labels and tool feedback stay contract-locked. See `src/nudge-text.ts`.

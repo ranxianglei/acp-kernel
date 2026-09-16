@@ -4,7 +4,7 @@ import { resolvePrompts } from "../src/prompts.js";
 import { renderNudgeText } from "../src/nudge-text.js";
 
 const decision = (
-  opts: { emergency?: boolean; tier?: 2 | 3 | null } = {},
+  opts: { overLimit?: boolean; emergency?: boolean; tier?: 2 | 3 | null } = {},
 ): Parameters<typeof renderNudgeText>[0] => ({
   shouldInject: true,
   reason: "test",
@@ -21,8 +21,8 @@ const decision = (
     nudgeGrowthTokens: 500,
     growthFloor: 200,
     hasPendingNudge: 0,
-    overLimit: opts.emergency ? 1 : 0,
-    emergencyOverride: 0,
+    overLimit: opts.overLimit || opts.emergency ? 1 : 0,
+    emergencyOverride: opts.emergency ? 1 : 0,
     pendingT1: 0,
     pendingT2: 0,
     pendingT3: 0,
@@ -118,4 +118,27 @@ test("custom prompts still flow through default framings", () => {
   const gentle = renderNudgeText(decision(), prompts);
   assert.ok(gentle.text.includes("MY-PHILOSOPHY"));
   assert.ok(gentle.text.includes("MY-RULES"));
+});
+
+test("over-limit (below emergency) renders the pressure header (#312)", () => {
+  const over = renderNudgeText(decision({ overLimit: true }));
+  assert.equal(over.voice, "emergency");
+  assert.ok(over.text.includes("⚠️ Context pressure high"));
+  assert.ok(!over.text.includes("Context limit reached"));
+  assert.ok(!over.text.includes("efficiency nudge"));
+});
+
+test("pressureHeader override: string replaces the section, null removes it (#312)", () => {
+  const replaced = renderNudgeText(decision({ overLimit: true }), undefined, {
+    pressureHeader: "PRESSURE-CUSTOM.",
+  });
+  assert.ok(replaced.text.includes("PRESSURE-CUSTOM."));
+  assert.ok(!replaced.text.includes("Context pressure high"));
+  assert.ok(!replaced.text.includes("Compression Philosophy"));
+  const removed = renderNudgeText(decision({ overLimit: true }), undefined, {
+    pressureHeader: null,
+  });
+  assert.ok(!removed.text.includes("Context pressure high"));
+  assert.ok(removed.text.startsWith("Context breakdown:"));
+  assert.ok(!removed.text.includes("\n\n\n"));
 });

@@ -175,6 +175,50 @@ test("over-limit renders with emergency voice (MAJOR-2 fix)", () => {
   assert.ok(!result.text.includes("not an overflow warning"), "should NOT contain gentle reassurance");
 });
 
+test("over-limit uses pressure wording, not 'limit reached' (#312)", () => {
+  const result = renderNudgeText(
+    makeDecision({
+      contextUsage: 0.85,
+      breakdown: { overLimit: 1 },
+    }),
+  );
+  assert.ok(result.text.includes("Context pressure high"), "pressure band must use the pressure header");
+  assert.ok(!result.text.includes("Context limit reached"), "must not claim the limit is reached");
+  assert.ok(!result.text.includes("85%"), "no usage percentage in the pressure band");
+});
+
+test("emergency keeps 'limit reached' wording and drops the pressure header (#312)", () => {
+  const result = renderNudgeText(
+    makeDecision({
+      contextUsage: 0.99,
+      breakdown: { overLimit: 1, emergencyOverride: 1 },
+    }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(result.text.includes("Context limit reached"));
+  assert.ok(!result.text.includes("Context pressure high"));
+});
+
+test("over-limit + tier 2: emergency voice, OVER-LIMIT trigger line (#312)", () => {
+  const result = renderNudgeText(makeDecision({ tier: 2, breakdown: { overLimit: 1 } }));
+  assert.equal(result.voice, "emergency");
+  assert.ok(
+    result.text.includes("[OVER-LIMIT — TIER 2 DISTILLATION] Context pressure high — distill now to reclaim tokens."),
+  );
+  assert.ok(!result.text.includes("Context limit reached"));
+  assert.ok(!result.text.includes("not an overflow warning"), "tier branch must not lead with the gentle note in the pressure band");
+});
+
+test("emergency + tier 2 keeps the EMERGENCY trigger line (#312)", () => {
+  const result = renderNudgeText(
+    makeDecision({ tier: 2, breakdown: { overLimit: 1, emergencyOverride: 1 } }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(
+    result.text.includes("[EMERGENCY — TIER 2 DISTILLATION] Context limit reached — distill NOW into a denser summary to reclaim tokens."),
+  );
+});
+
 function makeSpans(n: number): BlockSpan[] {
   return Array.from({ length: n }, (_, i) => ({
     blockId: `b${i + 1}`,

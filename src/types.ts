@@ -176,7 +176,7 @@ export interface NudgeConfig {
   minGrowthFloor: number;
   /** Ratio for growth floor: max(minGrowthFloor, minGrowthRatio × growthTokens). Default 0.45. */
   minGrowthRatio: number;
-  /** Emergency override: always nudge when usage ≥ this fraction. Default 0.98 (98%). */
+  /** Emergency override: always nudge when usage ≥ this fraction. Default 0.95 (95%). */
   emergencyThresholdPct: number;
   /** Growth multiplier for the tier-2 trigger: T2 distillation fires when T2
    *  pending ≥ nudgeGrowthTokens × this multiplier AND T2 > T1 effective.

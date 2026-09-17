@@ -17,6 +17,13 @@ export {
   advanceSurvival,
 } from "./state.js";
 export { defaultConfig, validateConfig } from "./config.js";
+export {
+  DEFAULT_OUTPUT_HEADROOM_MAX_PCT,
+  resolveOutputHeadroomCap,
+  reserveOutputHeadroom,
+  shouldReserveOutputHeadroom,
+  applyOutputHeadroom,
+} from "./output-headroom.js";
 export * from "./compress-tools.js";
 export {
   assignRefs,

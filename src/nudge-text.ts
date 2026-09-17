@@ -9,6 +9,7 @@ export interface NudgePromptSections {
   emergencyHeader?: string | null;
   t2Guidance?: string | null;
   t3Guidance?: string | null;
+  summaryBudget?: string | null;
 }
 
 export interface RenderedNudge {
@@ -149,6 +150,16 @@ const DEFAULT_T2_GUIDANCE = `Your tier-1 compression summaries have accumulated.
 
 const DEFAULT_T3_GUIDANCE = `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-3 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 3 condensation rules to the existing summaries, so the whole span is covered and nothing is lost.`;
 
+// Deliberately short (~140 chars) — rides on every nudge; lean surfaces should
+// not need to override it. Full rule lives once in HOW_TO_COMPRESS_RULES
+// (PER-SUMMARY LENGTH BUDGET); this is only the at-the-moment reminder.
+const DEFAULT_SUMMARY_BUDGET_NOTE = "Per-summary length cap: one oversized summary fails the WHOLE call. Large/dense range → split into smaller ranges, batch all in one call.";
+
+function summaryBudgetNote(sections: NudgePromptSections): string | null {
+  if (sections.summaryBudget !== undefined) return sections.summaryBudget;
+  return DEFAULT_SUMMARY_BUDGET_NOTE;
+}
+
 function tierGuidance(tier: 2 | 3, sections: NudgePromptSections): string | null {
   const value = tier === 2 ? sections.t2Guidance : sections.t3Guidance;
   if (value !== undefined) return value;
@@ -178,6 +189,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
       : `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`;
     const guidance = tierGuidance(isT2 ? 2 : 3, sections);
     const head = efficiencyNote(prompts, sections);
+    const budget = summaryBudgetNote(sections);
     return {
       voice,
       text: compact([
@@ -189,6 +201,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
         ...(guidance === null ? [] : [guidance]),
         blockList,
         `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
+        ...(budget === null ? [] : [budget]),
         "",
         prompts.howToCompressRules,
         "",
@@ -199,6 +212,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
 
   if (isEmergency) {
     const head = emergencyHeader(prompts, sections);
+    const budget = summaryBudgetNote(sections);
     return {
       voice: "emergency",
       text: compact([
@@ -210,6 +224,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
         "",
         `{ "topic": "...", "content": [{ "startId": "<ID>", "endId": "<ID>", "summary": "..." }] }`,
         "Only use IDs from visible messages above. Compress older work first.",
+        ...(budget === null ? [] : [budget]),
         "",
         rangesStr,
         ...(blockMapStr ? ["", blockMapStr] : []),
@@ -218,6 +233,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
   }
 
   const gentleHead = efficiencyNote(prompts, sections);
+  const budget = summaryBudgetNote(sections);
   return {
     voice: "gentle",
     text: compact([
@@ -231,6 +247,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
       ...(blockMapStr ? ["", blockMapStr] : []),
       "",
       `💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`,
+      ...(budget === null ? [] : [budget]),
     ]).join("\n"),
   };
 }

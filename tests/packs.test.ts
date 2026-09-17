@@ -32,7 +32,7 @@ test("sanitizePackSurface keeps known keys, drops malformed", () => {
   const s = sanitizePackSurface({
     prompts: { compressPhilosophy: "p", howToCompressRules: 42 },
     promptSections: { acpTags: "tags", tools: null, summariesInContext: 7 },
-    nudgeSections: { efficiencyNote: "e", t2Guidance: null, bogus: "x" },
+    nudgeSections: { efficiencyNote: "e", t2Guidance: null, summaryBudget: "sb", bogus: "x" },
     toolPrompts: {
       compress: { description: "d", paramDescriptions: { content: "c", startId: 3 } },
       search_context: { description: null },
@@ -41,7 +41,7 @@ test("sanitizePackSurface keeps known keys, drops malformed", () => {
   });
   assert.deepEqual(s.prompts, { compressPhilosophy: "p" });
   assert.deepEqual(s.promptSections, { acpTags: "tags", tools: null });
-  assert.deepEqual(s.nudgeSections, { efficiencyNote: "e", t2Guidance: null });
+  assert.deepEqual(s.nudgeSections, { efficiencyNote: "e", t2Guidance: null, summaryBudget: "sb" });
   assert.deepEqual(s.toolPrompts, { compress: { description: "d", paramDescriptions: { content: "c" } } });
   assert.deepEqual(s.adapters, { pi: { any: "thing" } });
 });
@@ -73,7 +73,7 @@ test("lean pack keeps rules default, one-line tool descriptions, adapters namesp
 test("lean carries a condensed how-to-compress style contract in the pi slot", () => {
   const pi = leanPack.surface.adapters?.pi as { promptSections: Record<string, string | null> };
   const howTo = pi.promptSections.howToCompress ?? "";
-  assert.ok(howTo.length > 800 && howTo.length < 2600, `condensed, not full (len=${howTo.length})`);
+  assert.ok(howTo.length > 800 && howTo.length < 2800, `condensed, not full (len=${howTo.length})`);
   for (const marker of ["TASK AS OF THIS BLOCK", "PENDING", "no Q&A lists", "KEEP VERBATIM", "chose X over Y because Z", "PRIORITY", "Do not mimic"]) {
     assert.ok(howTo.includes(marker), `missing: ${marker}`);
   }

@@ -105,6 +105,24 @@ test("t3 null and t2 replace are independent", () => {
   assert.ok(!t2.text.includes("Distill them into a single denser"));
 });
 
+test("default nudge carries the per-summary length-budget reminder on all three paths", () => {
+  const gentle = renderNudgeText(decision());
+  assert.ok(gentle.text.includes("Per-summary length cap"));
+  const emergency = renderNudgeText(decision({ emergency: true }));
+  assert.ok(emergency.text.includes("Per-summary length cap"));
+  const t2 = renderNudgeText(decision({ tier: 2 }));
+  assert.ok(t2.text.includes("Per-summary length cap"));
+});
+
+test("summaryBudget override replaces / null removes the reminder", () => {
+  const replaced = renderNudgeText(decision(), undefined, { summaryBudget: "BUDGET-CUSTOM" });
+  assert.ok(replaced.text.includes("BUDGET-CUSTOM"));
+  assert.ok(!replaced.text.includes("Per-summary length cap"));
+  const removed = renderNudgeText(decision(), undefined, { summaryBudget: null });
+  assert.ok(!removed.text.includes("Per-summary length cap"));
+  assert.ok(!removed.text.includes("\n\n\n"));
+});
+
 test("custom prompts still flow through default framings", () => {
   const prompts = resolvePrompts(
     {

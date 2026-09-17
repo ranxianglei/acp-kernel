@@ -7,6 +7,13 @@
  * a message ref; recorded task state is labeled as history; unicode written directly.
  * Motivation: session 01a071dc blocks b60/b61 stored a fabricated
  * `user verbatim '合并了 下一个'` as a live "CURRENT TASK", causing loop relapses.
+ *
+ * 2026-09-17 amendment (billion-context#888): per-summary length-budget rule appended
+ * to HOW_TO_COMPRESS_RULES. A single summary exceeding maxSummaryLength fails the WHOLE
+ * compress call atomically; dense subagent workloads repeatedly produced one oversized
+ * monolithic summary for a large range. The rule steers the model to split large/dense
+ * ranges into several smaller ones (batched in one call). No number is hardcoded so the
+ * text stays correct under any cap configuration; it is byte-stable for the prefix cache.
  */
 
 export const COMPRESS_PHILOSOPHY = `Compression Philosophy:
@@ -50,7 +57,9 @@ PRIORITY — when the summary must be compact, preserve in this order:
 4. Conclusions and key findings.
 5. Lessons learned: what failed and why.
 
-Write dense, scannable bullets — not narrative prose. If the range spans distinct concerns (request → findings → decision), group bullets under short thematic headers so a reader can scan to the part they need. Every line must earn its place. Do not mimic the style of existing summaries in context; follow these rules.`;
+Write dense, scannable bullets — not narrative prose. If the range spans distinct concerns (request → findings → decision), group bullets under short thematic headers so a reader can scan to the part they need. Every line must earn its place. Do not mimic the style of existing summaries in context; follow these rules.
+
+PER-SUMMARY LENGTH BUDGET: every summary has a hard character cap, and a single oversized summary fails the WHOLE compress call — nothing gets folded. Dense content (many subagent results, long tool outputs) tempts you into writing one giant summary for a big range; don't. When a range is large or dense, SPLIT it into several smaller ranges at logical boundaries and give EACH its own concise, scannable summary, then batch all the ranges in one compress call (\`content: [{startId, endId, summary}, {...}]\`). Prefer several tight blocks over one bloated block: each stays under the cap, and smaller blocks are cheaper to re-send and independently searchable/decompressible.`;
 
 export const TIER2_DISTILL_RULES = `TIER 2 COMPRESSION — DISTILLATION
 

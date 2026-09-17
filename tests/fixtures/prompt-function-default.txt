@@ -41,6 +41,8 @@ PRIORITY — when the summary must be compact, preserve in this order:
 
 Write dense, scannable bullets — not narrative prose. If the range spans distinct concerns (request → findings → decision), group bullets under short thematic headers so a reader can scan to the part they need. Every line must earn its place. Do not mimic the style of existing summaries in context; follow these rules.
 
+PER-SUMMARY LENGTH BUDGET: every summary has a hard character cap, and a single oversized summary fails the WHOLE compress call — nothing gets folded. Dense content (many subagent results, long tool outputs) tempts you into writing one giant summary for a big range; don't. When a range is large or dense, SPLIT it into several smaller ranges at logical boundaries and give EACH its own concise, scannable summary, then batch all the ranges in one compress call (`content: [{startId, endId, summary}, {...}]`). Prefer several tight blocks over one bloated block: each stays under the cap, and smaller blocks are cheaper to re-send and independently searchable/decompressible.
+
 ACP TAGS
 
 Each message in the conversation is annotated with a <acp tokens="2.1K" type="tool:bash">m00175</acp> tag showing its reference ID, approximate token size, and content type. These tags are system metadata injected by the proxy. NEVER echo, repeat, or reference these XML tags in your responses — the tags must not appear in your output. Use only the ref ID (e.g. m00005) inside compress calls, never the XML wrapper. The token size is approximate — treat it as a relative guide, not an exact count.

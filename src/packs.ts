@@ -70,7 +70,7 @@ export interface PackResolver {
 
 const PROMPT_RULE_KEYS = ["compressPhilosophy", "howToCompressRules", "tier2DistillRules", "tier3CondenseRules"] as const;
 const COMPRESS_SECTION_KEYS = ["acpTags", "tools", "summariesInContext", "textProtocol", "textTools", "functionTools"] as const;
-const NUDGE_SECTION_KEYS = ["efficiencyNote", "emergencyHeader", "t2Guidance", "t3Guidance"] as const;
+const NUDGE_SECTION_KEYS = ["efficiencyNote", "emergencyHeader", "t2Guidance", "t3Guidance", "summaryBudget"] as const;
 
 export function isValidPackName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && !name.includes("..");
@@ -198,7 +198,9 @@ DROP — keep the signal, discard the vessel: verbose logs once the error/result
 
 PRIORITY when compacting: 1. user goal/evolution/intent/hard constraints · 2. decisions + rationale · 3. exact artifacts (paths, signatures, errors, values) · 4. conclusions · 5. lessons learned (what failed and why).
 
-Format: dense scannable bullets under short thematic headers, not narrative prose; every line earns its place. Do not mimic the style of existing summaries in context; follow these rules.`;
+Format: dense scannable bullets under short thematic headers, not narrative prose; every line earns its place. Do not mimic the style of existing summaries in context; follow these rules.
+
+Per-summary length cap: one oversized summary fails the whole call — large/dense range → split into smaller ranges, batch all in one call.`;
 
 /** Token-lean surface: one-line tool descriptions, no snippets or guidelines.
  * Host-specific trims (e.g. the Pi adapter's compact system-prompt block)

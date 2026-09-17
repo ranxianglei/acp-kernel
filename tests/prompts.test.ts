@@ -171,6 +171,12 @@ test("renderNudgeText two-arg default equals one-arg call for every mode (back-c
   }
 });
 
+test("HOW_TO_COMPRESS_RULES carries the per-summary length-budget rule (#888)", () => {
+  assert.ok(HOW_TO_COMPRESS_RULES.includes("PER-SUMMARY LENGTH BUDGET"));
+  assert.ok(HOW_TO_COMPRESS_RULES.includes("fails the WHOLE compress call"));
+  assert.ok(HOW_TO_COMPRESS_RULES.includes("SPLIT it into several smaller ranges"));
+});
+
 test("renderNudgeText default output embeds the full rule text verbatim (byte-stability)", () => {
   const gentle = renderNudgeText(makeDecision({ contextUsage: 0.5 }));
   assert.ok(gentle.text.includes(COMPRESS_PHILOSOPHY));

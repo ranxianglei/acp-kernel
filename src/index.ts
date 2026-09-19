@@ -135,6 +135,7 @@ export type {
   CacheReportLine,
   CacheReportOptions,
   CacheReport,
+  FormatCacheReportOptions,
 } from "./cache-report.js";
 export { renderHandoff, renderMessage, matchSession } from "./handoff.js";
 export type { HandoffInput, HandoffMeta, HandoffBlockFull } from "./handoff.js";

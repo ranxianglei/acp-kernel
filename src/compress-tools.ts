@@ -431,7 +431,7 @@ export const ACP_STATUS_TOOL_OPENAI = {
 };
 
 export const ACP_CACHE_TOOL_DESCRIPTION =
-  "Prompt-cache reconciliation: grand ledger (total input/cached/output, overall hit rate) with every request's miss split into new content / compression re-pay / TTL expiry, plus per-fold economics (breakeven turns vs measured cadence). Read-only. Call when asked about cache hits, cache invalidation, or what compression costs.";
+  "Prompt-cache reconciliation: grand ledger (total input/cached/output, overall hit rate) with every request's miss split into new content / compression re-pay / TTL expiry, plus per-fold economics (breakeven turns vs measured cadence). Defaults to a compact summary (totals + verdicts + anomalies only); pass detail=\"full\" for every fold and line item. Read-only. Call when asked about cache hits, cache invalidation, or what compression costs.";
 
 export const ACP_CACHE_TOOL_OPENAI = {
   type: "function" as const,
@@ -440,7 +440,14 @@ export const ACP_CACHE_TOOL_OPENAI = {
     description: ACP_CACHE_TOOL_DESCRIPTION,
     parameters: {
       type: "object",
-      properties: {},
+      properties: {
+        detail: {
+          type: "string",
+          enum: ["summary", "full"],
+          description:
+            '"summary" (default): totals, verdicts, notable folds, anomalous requests only. "full": every retained fold and line item.',
+        },
+      },
     },
   },
 };

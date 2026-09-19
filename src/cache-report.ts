@@ -448,18 +448,47 @@ function fmtTime(at: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/** Render the report as compact, model- and human-readable text.
- *  The identity line is always printed so a broken implementation cannot hide. */
-export function formatCacheReport(
-  report: CacheReport,
-  sessionLabel?: string,
-): string {
+/** Render options: "summary" (default) distills to totals + verdicts +
+ *  notable folds + anomalous lines; "full" keeps the legacy every-fold,
+ *  every-line listing. */
+export interface FormatCacheReportOptions {
+  detail?: "summary" | "full";
+}
+
+const HIT_HEALTHY_PCT = 90;
+const HIT_WATCH_PCT = 70;
+const ANOMALY_HIT_PCT = 85;
+const ANOMALY_MISS_TOK = 5_000;
+const TTL_SPIKE_TOK = 10_000;
+const SUMMARY_FOLD_TOPS = 3;
+const SUMMARY_ANOMALY_CAP = 20;
+
+function hitVerdict(pct: number): string {
+  if (pct >= HIT_HEALTHY_PCT) return "HEALTHY";
+  if (pct >= HIT_WATCH_PCT) return "WATCH";
+  return "INVESTIGATE";
+}
+
+function medianHitPct(lines: CacheReportLine[]): number | null {
+  if (lines.length === 0) return null;
+  const xs = lines.map((l) => l.hitPct).sort((a, b) => a - b);
+  return xs[Math.floor(xs.length / 2)] ?? null;
+}
+
+function fmtIdleGap(ms: number): string {
+  if (ms < 90_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
+  if (ms < 90 * 60_000) return `${Math.round(ms / 60_000)}m`;
+  if (ms < 36 * 3_600_000) return `${(ms / 3_600_000).toFixed(1)}h`;
+  return `${(ms / 86_400_000).toFixed(1)}d`;
+}
+
+function foldVerdict(f: FoldEconomics): string {
+  return f.paidBack === null ? "?" : f.paidBack ? "PAID BACK" : "NOT PAID BACK";
+}
+
+function formatCacheReportFull(report: CacheReport): string {
   const t = report.totals;
   const out: string[] = [];
-  out.push(
-    `ACP CACHE REPORT${sessionLabel ? ` (${sessionLabel})` : ""} — ${t.requests} requests`,
-  );
-  out.push("");
   out.push("GRAND LEDGER");
   out.push(`  total input    ${fmtTok(t.input)} tok`);
   out.push(
@@ -520,4 +549,164 @@ export function formatCacheReport(
     }
   }
   return out.join("\n");
+}
+
+function formatCacheReportSummary(report: CacheReport): string {
+  const t = report.totals;
+  const out: string[] = [];
+  out.push("GRAND LEDGER");
+  out.push(`  total input    ${fmtTok(t.input)} tok`);
+  out.push(
+    `  total cached   ${fmtTok(t.cached)} tok  (hit ${t.hitPct.toFixed(1)}% → ${hitVerdict(t.hitPct)})`,
+  );
+  out.push(`  total output   ${fmtTok(t.output)} tok`);
+  out.push(
+    `  miss breakdown (input − cached = ${fmtTok(Math.max(0, t.input - t.cached))} tok):`,
+  );
+  const avgNew = t.requests > 0 ? t.newContent / t.requests : 0;
+  out.push(
+    `    new content     ${fmtTok(t.newContent)} tok  (~${fmtTok(avgNew)}/req fresh append — not an invalidation)`,
+  );
+  out.push(
+    `    compress re-pay ${fmtTok(t.compRepay)} tok  (${report.economics.folds} folds — re-billed prefix)`,
+  );
+  const spikeIdx: number[] = [];
+  report.lines.forEach((l, i) => {
+    if (l.ttlRepay >= TTL_SPIKE_TOK) spikeIdx.push(i);
+  });
+  const spikes = [...spikeIdx]
+    .sort(
+      (a, b) =>
+        (report.lines[b]?.ttlRepay ?? 0) - (report.lines[a]?.ttlRepay ?? 0),
+    )
+    .slice(0, SUMMARY_FOLD_TOPS)
+    .sort((a, b) => a - b);
+  const spikeText = spikes
+    .map((i) => {
+      const l = report.lines[i];
+      if (!l) return "";
+      let idle = "";
+      const prev = report.lines[i - 1];
+      if (prev && l.at > prev.at) idle = `, idle ${fmtIdleGap(l.at - prev.at)}`;
+      return `#${l.seq} ${fmtTok(l.ttlRepay)}${idle}`;
+    })
+    .join(" · ");
+  out.push(
+    `    ttl/other       ${fmtTok(t.ttlRepay)} tok  (stable-prefix misses: TTL expiry / eviction${spikeText ? `; top spikes: ${spikeText}` : ""})`,
+  );
+  out.push(
+    `  identity check   ${t.balanced ? "OK" : "BROKEN"} — ${fmtTok(t.input)} = ${fmtTok(t.cached)} + ${fmtTok(t.newContent)} + ${fmtTok(t.compRepay)} + ${fmtTok(t.ttlRepay)} (residual ${t.residual})`,
+  );
+  const e = report.economics;
+  if (e.folds > 0) {
+    const p = report.profile;
+    out.push("");
+    out.push(`FOLD ECONOMICS (${e.folds} folds @ w=${p.w} r=${p.r} q=${p.q})`);
+    out.push(
+      `  gross saved ${fmtTok(e.grossSaved)} tok · repay cost ${fmtTok(e.repayCost)} tok · summary cost ${fmtTok(e.summaryCost)} tok → net ${e.netTokens >= 0 ? "+" : ""}${fmtTok(e.netTokens)} tok`,
+    );
+    out.push(
+      `  verdict: ${e.paidBackCount} PAID BACK / ${e.notPaidBackCount} NOT PAID BACK / ${e.unobservedCount} unobserved`,
+    );
+    if (e.notPaidBackCount > 0)
+      out.push(
+        `  NOT PAID BACK = measured post-fold cadence never reached n* (end-of-session / back-to-back folds — one-time cost, not data loss)`,
+      );
+    if (report.folds.length <= SUMMARY_FOLD_TOPS * 2) {
+      for (const f of report.folds) {
+        const nstar =
+          f.breakevenTurns === null ? "n/a" : f.breakevenTurns.toFixed(1);
+        const k = f.turnsToNextFold === null ? "—" : String(f.turnsToNextFold);
+        const h = f.hPct === null ? "n/a" : `${f.hPct.toFixed(1)}%`;
+        out.push(
+          `  #${f.seq} ${fmtTime(f.at)} S=${fmtTok(f.S)} σ=${fmtTok(f.sigma)} h=${h} T=${fmtTok(f.T)} ΔC₁=${fmtTok(f.oneTimeCostUnits)} Δs=${fmtTok(f.perTurnSavingUnits)}/turn n*=${nstar} k=${k} → ${foldVerdict(f)}`,
+        );
+      }
+    } else {
+      const largest = [...report.folds]
+        .sort((a, b) => b.S - a.S)
+        .slice(0, SUMMARY_FOLD_TOPS);
+      const worst = [...report.folds]
+        .sort((a, b) => b.oneTimeCostUnits - a.oneTimeCostUnits)
+        .slice(0, SUMMARY_FOLD_TOPS);
+      out.push(
+        `  largest folds: ${largest.map((f) => `#${f.seq} S=${fmtTok(f.S)} ${foldVerdict(f)}`).join(" · ")}`,
+      );
+      out.push(
+        `  worst one-time: ${worst.map((f) => `#${f.seq} ΔC₁=${fmtTok(f.oneTimeCostUnits)} (${foldVerdict(f)}${f.turnsToNextFold !== null ? `, k=${f.turnsToNextFold}` : ""})`).join(" · ")}`,
+      );
+      const shown = new Set([...largest, ...worst]);
+      if (report.folds.length > shown.size)
+        out.push(
+          `  → ${report.folds.length - shown.size} more folds omitted (detail:"full" lists every fold)`,
+        );
+    }
+  }
+  if (report.lines.length > 0) {
+    out.push("");
+    const shownIdx: number[] = [];
+    report.lines.forEach((l, i) => {
+      if (l.hitPct < ANOMALY_HIT_PCT || l.missed >= ANOMALY_MISS_TOK)
+        shownIdx.push(i);
+    });
+    const last = report.lines.length - 1;
+    if (!shownIdx.includes(last)) shownIdx.push(last);
+    const kept = shownIdx.slice(Math.max(0, shownIdx.length - SUMMARY_ANOMALY_CAP));
+    const anomalies = kept.filter((i) => {
+      const l = report.lines[i];
+      if (!l) return false;
+      return l.hitPct < ANOMALY_HIT_PCT || l.missed >= ANOMALY_MISS_TOK;
+    }).length;
+    if (anomalies === 0) {
+      const med = medianHitPct(report.lines);
+      out.push(
+        `LINE ITEMS — no anomalies (${report.lines.length} requests, median hit ${med !== null ? med.toFixed(1) : "n/a"}%${report.linesOmitted > 0 ? `, ${report.linesOmitted} older outside window` : ""})`,
+      );
+    } else {
+      out.push(
+        `LINE ITEMS (anomalies: hit<${ANOMALY_HIT_PCT}% or miss≥${fmtTok(ANOMALY_MISS_TOK)}):`,
+      );
+      out.push(
+        "  #     time      input  cached    hit%      new    comp     ttl  fold",
+      );
+      for (const i of kept) {
+        const l = report.lines[i];
+        if (!l) continue;
+        const fold = l.foldSeq !== null ? `#${l.foldSeq}` : "";
+        out.push(
+          `  ${String(l.seq).padStart(4)}  ${fmtTime(l.at)}  ${fmtTok(l.input).padStart(7)}  ${fmtTok(l.cached).padStart(7)}  ${l.hitPct.toFixed(1).padStart(5)}%  ${fmtTok(l.newContent).padStart(6)}  ${fmtTok(l.compRepay).padStart(6)}  ${fmtTok(l.ttlRepay).padStart(6)}  ${fold}`,
+        );
+      }
+      const omitted = report.lines.length - kept.length;
+      if (omitted > 0) {
+        const rest = report.lines.filter((_, i) => !kept.includes(i));
+        const med = medianHitPct(rest);
+        out.push(
+          `  … ${omitted} lines omitted (median hit ${med !== null ? med.toFixed(1) : "n/a"}%${report.linesOmitted > 0 ? `, ${report.linesOmitted} older outside window` : ""} — detail:"full" lists all)`,
+        );
+      }
+    }
+  }
+  return out.join("\n");
+}
+
+/** Render the report as compact, model- and human-readable text.
+ *  The identity line is always printed so a broken implementation cannot hide.
+ *  Default detail is "summary"; pass { detail: "full" } for the legacy
+ *  every-fold, every-line listing. */
+export function formatCacheReport(
+  report: CacheReport,
+  sessionLabel?: string,
+  opts?: FormatCacheReportOptions,
+): string {
+  const t = report.totals;
+  const header = `ACP CACHE REPORT${sessionLabel ? ` (${sessionLabel})` : ""} — ${t.requests} requests`;
+  if (opts?.detail === "full") {
+    return [header, "", formatCacheReportFull(report)].join("\n");
+  }
+  return [
+    header + `  [summary — detail:"full" for every fold & line]`,
+    "",
+    formatCacheReportSummary(report),
+  ].join("\n");
 }

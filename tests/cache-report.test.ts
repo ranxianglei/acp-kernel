@@ -312,3 +312,72 @@ test("computeFoldEconomics matches #359 formulas under default profile", () => {
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
+
+test("formatCacheReport defaults to summary: verdicts + anomaly-only lines", () => {
+  const samples: CacheSample[] = [];
+  for (let i = 0; i < 30; i++) {
+    samples.push(sample(i, 100_000, 98_500));
+  }
+  const folds: FoldEvent[] = [];
+  for (let f = 0; f < 10; f++) {
+    folds.push({
+      at: T0 + (f * 3 + 2.5) * min,
+      tokensCompressed: 5_000 + f,
+      summaryTokens: 500,
+      firstFoldStartTokens: 3_000,
+    });
+  }
+  const text = formatCacheReport(buildCacheReport(samples, folds), "s1");
+  assert.match(text, /\[summary — detail:"full" for every fold & line\]/);
+  assert.match(text, /→ HEALTHY\)/);
+  assert.match(text, /PAID BACK \/ \d+ NOT PAID BACK \/ \d+ unobserved/);
+  assert.match(text, /more folds omitted/);
+  assert.match(text, /no anomalies \(30 requests, median hit 98\.5%\)/);
+  assert.ok(!/\n  \s+#?\d+\s+\d\d:/m.test(text), "no per-line rows in summary");
+});
+
+test("formatCacheReport summary surfaces anomalous lines with idle gaps", () => {
+  const samples: CacheSample[] = [];
+  for (let i = 0; i < 20; i++) samples.push(sample(i, 100_000, 99_000));
+  samples.push(sample(120, 100_000, 500));
+  for (let i = 0; i < 5; i++) samples.push(sample(121 + i, 100_000, 99_000));
+  const text = formatCacheReport(buildCacheReport(samples, []), "s2");
+  assert.match(text, /LINE ITEMS \(anomalies: hit<85% or miss≥5000\):/);
+  const anomaly = text.split("\n").filter((l) => /\s+0\.5%\s/.test(l));
+  assert.equal(anomaly.length, 1, "the 500/100000 hit line is shown");
+  assert.match(text, /lines omitted \(median hit 99\.0%/);
+});
+
+test("formatCacheReport detail:'full' keeps the legacy every-line listing", () => {
+  const samples: CacheSample[] = [];
+  for (let i = 0; i < 30; i++) samples.push(sample(i, 100_000, 98_500));
+  const folds: FoldEvent[] = [];
+  for (let f = 0; f < 10; f++) {
+    folds.push({
+      at: T0 + (f * 3 + 2.5) * min,
+      tokensCompressed: 5_000 + f,
+      summaryTokens: 500,
+      firstFoldStartTokens: 3_000,
+    });
+  }
+  const text = formatCacheReport(buildCacheReport(samples, folds), "s3", {
+    detail: "full",
+  });
+  assert.ok(!text.includes("[summary"));
+  const foldRows = text.split("\n").filter((l) => / S=500\d /.test(l));
+  assert.equal(foldRows.length, 10, "all 10 fold rows listed");
+  const lineRows = text.split("\n").filter((l) => /\s+98\.5%\s/.test(l));
+  assert.equal(lineRows.length, 30, "all 30 line items listed");
+  assert.match(text, /identity check   OK/);
+});
+
+test("formatCacheReport summary lists every fold when few, with TTL spike idle gap", () => {
+  const samples = [sample(0, 100_000, 99_000), sample(1, 100_000, 99_000)];
+  const folds: FoldEvent[] = [
+    { at: T0 + 0.5 * min, tokensCompressed: 20_000, summaryTokens: 500, firstFoldStartTokens: 3_000 },
+  ];
+  samples.push(sample(10, 100_000, 10_000));
+  const text = formatCacheReport(buildCacheReport(samples, folds), "s4");
+  assert.match(text, /#1 .*S=20\.0K.* → (NOT PAID BACK|PAID BACK|\?)/);
+  assert.ok(!text.includes("more folds omitted"));
+});

@@ -377,7 +377,14 @@ test("retrying a consumed range reports already-compressed guidance, not too-sma
   assert.equal(retry.result.blocksCreated, 0);
   assert.equal(retry.result.errors.length, 1);
   assert.match(retry.result.errors[0]!, /already compressed/);
-  assert.match(retry.result.errors[0]!, /Current active blocks span/);
+  assert.match(
+    retry.result.errors[0]!,
+    /already summarized in active block\(s\) b1/,
+  );
+  assert.doesNotMatch(
+    retry.result.errors[0]!,
+    /retry with startId\/endId set to active block IDs/,
+  );
   assert.doesNotMatch(
     retry.result.errors[0]!,
     /Total compressible content too small/,
@@ -426,13 +433,16 @@ test("consumed plus fresh-but-small range is not misreported as too small", () =
   assert.equal(retry.result.blocksCreated, 0);
   assert.equal(retry.result.errors.length, 1);
   assert.match(retry.result.errors[0]!, /already compressed/);
-  assert.match(retry.result.errors[0]!, /covered by active block\(s\)/);
+  assert.match(
+    retry.result.errors[0]!,
+    /already summarized in active block\(s\) b1/,
+  );
   assert.match(
     retry.result.errors[0]!,
     /\[diagnostics: session highest ref=m00005, unknown ranges in request=0\/2, session history=1 compression\(s\), 1 block\(s\)\]/,
   );
   assert.doesNotMatch(retry.result.errors[0]!, /renumber/i);
-  assert.match(retry.result.errors[0]!, /Run acp_status/);
+  assert.match(retry.result.errors[0]!, /[Rr]un acp_status/);
   assert.doesNotMatch(retry.result.errors[0]!, /Combine more messages/);
 });
 
@@ -1132,7 +1142,7 @@ test("consumed message anchor snaps to the active block covering it", () => {
   );
 });
 
-test("gate error names the current active block span when anchors stay consumed", () => {
+test("gate error names the covering block when anchors stay consumed", () => {
   const core = createCore();
   const state = createInitialState();
   const messages = [msg("a", "x"), msg("b", "y"), msg("k", "z")];
@@ -1194,6 +1204,10 @@ test("gate error names the current active block span when anchors stay consumed"
   );
   assert.match(
     result.result.errors[0]!,
-    /Current active blocks span b110\.\.b110 — retry with startId\/endId set to active block IDs in that span\./,
+    /its content is already summarized in active block\(s\) b110 — use search_context or decompress b110 if you need details from it/,
+  );
+  assert.doesNotMatch(
+    result.result.errors[0]!,
+    /retry with startId\/endId set to active block IDs/,
   );
 });

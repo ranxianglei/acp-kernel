@@ -253,12 +253,44 @@ function finishSalvage(entries: unknown[], callId: string | undefined, diag: Com
     return finish(ranges, diag);
 }
 
+// #1001 (problem 3): models routinely split the documented line form across
+// array elements — `["m00158–m01712 topic", "## TASK ..."]` — emitting the
+// refs header and the summary as SIBLING strings instead of one multi-line
+// string. Each half alone is invalid (header lacks a summary; the summary
+// lacks refs), so the whole call dies with dropped=N even though the intent
+// is unambiguous. Coalesce before validation: a refless string entry that
+// follows a header-only string entry is its summary body. Complete entries
+// (header + \n + body in one string) and object entries reset the pairing —
+// a stray refless string after a complete entry stays invalid, as today.
+function coalesceLineEntries(entries: unknown[]): unknown[] {
+    const out: unknown[] = [];
+    let headerOnlyIdx = -1;
+    for (const e of entries) {
+        if (typeof e === "string") {
+            const nl = e.indexOf("\n");
+            const head = (nl === -1 ? e : e.slice(0, nl)).trim();
+            const hasRef = REF_PAIR_IN_LINE.test(head) || SINGLE_REF_IN_LINE.test(head);
+            if (!hasRef && headerOnlyIdx >= 0) {
+                out[headerOnlyIdx] = `${out[headerOnlyIdx] as string}\n${e}`;
+                continue;
+            }
+            out.push(e);
+            headerOnlyIdx = hasRef && nl === -1 ? out.length - 1 : -1;
+        } else {
+            out.push(e);
+            headerOnlyIdx = -1;
+        }
+    }
+    return out;
+}
+
 function validateEntries(entries: unknown[], callId: string | undefined): { ranges: CompressRangeSpec[]; invalid: number; reasons: string[] } {
     const ranges: CompressRangeSpec[] = [];
     const reasons: string[] = [];
     let invalid = 0;
-    for (let i = 0; i < entries.length; i++) {
-        const outcome = validateEntry(entries[i], callId);
+    const items = coalesceLineEntries(entries);
+    for (let i = 0; i < items.length; i++) {
+        const outcome = validateEntry(items[i], callId);
         if ("range" in outcome) ranges.push(outcome.range);
         else {
             invalid++;

@@ -786,3 +786,66 @@ test("parseCompressArgs maps non-named control chars through \\uXXXX escapes", (
     assert.equal(diagnostics.kind, "ok");
     assert.equal(ranges[0]?.summary, summary);
 });
+
+// ---------------------------------------------------------------------------
+// #1001 problem 3: split-element line form — refs header and summary as
+// SIBLING array elements instead of one multi-line string. The header-only
+// entry must adopt the following refless string(s) as its summary body.
+// ---------------------------------------------------------------------------
+
+test("parseCompressArgs coalesces a split line-form entry (header + summary siblings) (#1001)", () => {
+    const input = {
+        content: [
+            "m01588\u2013m01712 走bili UI move + proxy 调试",
+            "## TASK AS OF THIS BLOCK\n- user goal\n- decisions with reasons",
+        ],
+    };
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(diagnostics.invalidItems, 0);
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.startRef, "m01588");
+    assert.equal(ranges[0]?.endRef, "m01712");
+    assert.equal(ranges[0]?.summary, "## TASK AS OF THIS BLOCK\n- user goal\n- decisions with reasons");
+    assert.equal(ranges[0]?.topic, "走bili UI move + proxy 调试");
+});
+
+test("parseCompressArgs coalesces multiple summary siblings onto one header-only entry (#1001)", () => {
+    const input = {
+        content: ["m00150\u2013m00220", "first summary chunk", "second chunk"],
+    };
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.summary, "first summary chunk\nsecond chunk");
+});
+
+test("parseCompressArgs keeps a stray refless string invalid after a complete line entry (#1001)", () => {
+    const input = {
+        content: ["m00001\u2013m00002 topic\nreal summary", "## stray with no pending header"],
+    };
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.summary, "real summary");
+    assert.equal(diagnostics.invalidItems, 1);
+});
+
+test("parseCompressArgs still rejects a header-only entry with nothing to adopt (#1001)", () => {
+    const input = { content: ["m00001\u2013m00002 topic"] };
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(ranges.length, 0);
+    assert.equal(diagnostics.kind, "no-valid-ranges");
+    assert.match(String(diagnostics.invalidReasons?.[0] ?? ""), /missing summary/);
+});
+
+test("parseCompressArgs resets the adoption pairing at an object entry (#1001)", () => {
+    const input = {
+        content: [{ startRef: "m00001", endRef: "m00002", summary: "good" }, "orphan summary body"],
+    };
+    const { ranges, diagnostics } = parseCompressArgs(input);
+    assert.equal(diagnostics.kind, "ok");
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0]?.summary, "good");
+    assert.equal(diagnostics.invalidItems, 1);
+});

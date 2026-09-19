@@ -162,6 +162,54 @@ function danglingMessageRefs(
   return dangling;
 }
 
+// Active block(s) whose coverage includes any boundary ref of the spec.
+// Unlike danglingMessageRefs (which only tests message refs), block-ref
+// boundaries are expanded through their effectiveMessageIds so a stale bN
+// ref resolves to the higher-tier block that now owns its content.
+function coveringBlockIds(
+  state: CompressionState,
+  spec: { startRef: string; endRef: string },
+): string[] {
+  const found = new Set<string>();
+  for (const ref of [spec.startRef, spec.endRef]) {
+    const parsed = parseBoundary(ref);
+    if (!parsed) continue;
+    let rawIds: string[] = [];
+    if (parsed.kind === "message") {
+      const rawId =
+        state.messageRefs.byRef[parsed.raw] ??
+        state.messageRefs.byRef[indexToRef(parsed.numericId)];
+      if (rawId) rawIds = [rawId];
+    } else {
+      rawIds =
+        blockById(state, `b${parsed.numericId}`)?.effectiveMessageIds ?? [];
+    }
+    if (rawIds.length === 0) continue;
+    for (const candidate of activeBlocks(state)) {
+      if (rawIds.some((id) => candidate.effectiveMessageIds.includes(id))) {
+        found.add(candidate.blockId);
+      }
+    }
+  }
+  return [...found].sort((x, y) => numericBlockId(x) - numericBlockId(y));
+}
+
+// Block-ID-boundary advice is only actionable when tier distillation is ready;
+// emitting it otherwise sends the model to retry bN..bM ranges that cannot
+// fire yet (the misleading hint behind ranxianglei/billion-context-pi#470).
+function tierActionHint(config: Config, state: CompressionState): string {
+  if (!config.tiers.enabled) return "";
+  const t2 = activeBlocks(state).filter((b) => b.tier === 2);
+  if (t2.length >= config.tiers.tier3Trigger) {
+    return ` Tier condensation is actionable now: compress({ content: [{ startId: "${t2[0]!.blockId}", endId: "${t2[t2.length - 1]!.blockId}", summary: "...", topic: "..." }] }) merges those tier-2 blocks into one tier-3 block.`;
+  }
+  const t1 = activeBlocks(state).filter((b) => b.tier === 1);
+  if (t1.length >= config.tiers.tier2Trigger) {
+    return ` Tier distillation is actionable now: compress({ content: [{ startId: "${t1[0]!.blockId}", endId: "${t1[t1.length - 1]!.blockId}", summary: "...", topic: "..." }] }) merges those tier-1 blocks into one tier-2 block.`;
+  }
+  return "";
+}
+
 export function createCore(ports: Ports = {}): CompressionCore {
   const countTokens = ports.countTokens ?? defaultCountTokens;
 
@@ -296,18 +344,19 @@ export function createCore(ports: Ports = {}): CompressionCore {
         !hasBlockBoundaryRange &&
         totalRangeChars < input.config.compress.minCompressRange
       ) {
-        const live = activeBlocks(state)
-          .map((b) => b.blockId)
-          .sort((x, y) => numericBlockId(x) - numericBlockId(y));
-        const liveHint =
-          live.length > 0
-            ? ` Current active blocks span ${live[0]}..${live[live.length - 1]} — retry with startId/endId set to active block IDs in that span.`
-            : "";
         const diagnostics = refGateDiagnostics(
           state,
           input.ranges.length,
           unknownCount,
         );
+        const firstConsumed = consumedRanges[0];
+        const covering = firstConsumed
+          ? coveringBlockIds(state, firstConsumed)
+          : [];
+        const coverDetail =
+          covering.length > 0
+            ? `its content is already summarized in active block(s) ${covering.join(", ")}${covering.length === 1 ? ` — use search_context or decompress ${covering[0]} if you need details from it` : ""}`
+            : `its refs no longer point to directly compressible content (stale block ref(s) distilled or consumed by higher-tier blocks)`;
         const danglingRefs = consumedRanges.flatMap((spec) =>
           danglingMessageRefs(state, input.messages, spec),
         );
@@ -318,8 +367,8 @@ export function createCore(ports: Ports = {}): CompressionCore {
             ? `None of the ${input.ranges.length} requested range(s) resolved — every ref is unknown to this session. Refs are per-session snapshots, assigned once when a message is first rendered; no compress reassigns them, so unknown refs cannot come from an earlier compress in this session. They come from a different generation: a previous session instance (switching model or upstream mid-conversation starts a fresh session whose refs restart at m00001), the generation before a native-compaction rebase (which also resets refs to m00001), or a typo. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
             : consumedRanges.length > 0
               ? danglingRefs.length > 0
-                ? `Requested range(s) cannot be anchored (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
-                : `Requested range(s) already compressed (e.g. ${consumedRanges[0]!.startRef}..${consumedRanges[0]!.endRef}) — those refs no longer point to directly compressible content: the range is covered by active block(s) or the block ref(s) are stale (distilled or consumed). ${diagnostics} Run acp_status, then call the compress tool again using only the CURRENT compressible ranges it reports.${liveHint}`
+                ? `Requested range(s) cannot be anchored (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
+                : `Requested range(s) already compressed (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — ${coverDetail}. Nothing new to compress in that window. ${diagnostics} Continue the task, or run acp_status and target one of the CURRENT compressible ranges it reports.${tierActionHint(input.config, state)}`
               : `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`;
         return {
           state: input.state,
@@ -886,7 +935,7 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     warnings.push(
       `Excluded ${hitProtectedRaw.length} protected message(s) ${hitRefs.join(
         ", ",
-      )} from compression range (recent/last-user zone).`,
+      )} from compression range (recent/last-user zone) — they stay visible outside the new block; do not target them in another compress call.`,
     );
   }
 

@@ -783,10 +783,23 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     state: input.state,
   });
 
+  // Host-declared summary placeholders (CoreMessage.summaryOfBlockId) are
+  // view-only renderings of a prior distillation, like the kernel's own
+  // acp_summary_* messages: folding one into a plain range's coverage would
+  // silently drop the previous distillation from the visible context (#335).
+  // Block-boundary ranges keep folding them — tier distillation deliberately
+  // crosses checkpoints.
+  const hostSummaryIds = new Set<string>();
+  if (resolved.boundaryKind !== "block") {
+    for (const message of input.messages) {
+      if (message.summaryOfBlockId !== undefined)
+        hostSummaryIds.add(message.id);
+    }
+  }
   const rangeMessageIds = applyPairBoundaryAdjustments(
     resolved,
     input.messages,
-  ).filter((id) => !isSummaryMessageId(id));
+  ).filter((id) => !isSummaryMessageId(id) && !hostSummaryIds.has(id));
 
   // Re-scan for nested blocks in the ADJUSTED range (tool-pair extension may
   // have pulled in messages that are anchors of existing blocks).

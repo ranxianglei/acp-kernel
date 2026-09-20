@@ -18,6 +18,14 @@ export interface CoreMessage {
    *  (e.g. the first emitted core) — split tool-call cores sharing a base id
    *  must not repeat it or totals are multiplied. */
   thinkingTokens?: number;
+  /** Host-declared: this message is the host surface's own rendering of the
+   *  named compression block (a host-managed checkpoint), not primary
+   *  conversation content. Like the kernel's view-only acp_summary_* messages,
+   *  it is never folded into a PLAIN range's (both ends message refs) coverage
+   *  by applyCompression — folding would silently drop the previous
+   *  distillation from the visible context (#335). Block-boundary ranges (tier
+   *  distillation) fold it deliberately. */
+  summaryOfBlockId?: string;
 }
 
 export type CompressionTier = 1 | 2 | 3;

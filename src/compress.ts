@@ -832,10 +832,37 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     state: input.state,
   });
 
-  const rangeMessageIds = applyPairBoundaryAdjustments(
-    resolved,
-    input.messages,
-  ).filter((id) => !isSummaryMessageId(id));
+  // Host checkpoint carriers (#335): a host that renders its own compression
+  // summaries marks each carrier with `summaryOfBlockId`. A plain message-ref
+  // range does not go through the block-distillation path, so folding a live
+  // carrier would silently drop the previous distillation from the visible
+  // context while the result reports nothing superseded. Keep carriers of
+  // still-active blocks visible; stale carriers (block already consumed, or
+  // unknown id) fold like ordinary messages. Block-ref boundaries deliberately
+  // distill across checkpoints and keep folding carriers.
+  const plainRange = resolved.boundaryKind !== "block";
+  const liveCarrierIds = new Set<string>();
+  if (plainRange) {
+    for (const message of input.messages) {
+      const carrierOf = message.summaryOfBlockId;
+      if (carrierOf === undefined) continue;
+      if (blockById(input.state, carrierOf)?.active) {
+        liveCarrierIds.add(message.id);
+      }
+    }
+  }
+  const adjustedIds = applyPairBoundaryAdjustments(resolved, input.messages);
+  const skippedCarriers = adjustedIds.filter((id) => liveCarrierIds.has(id));
+  if (skippedCarriers.length > 0) {
+    warnings.push(
+      `Excluded ${skippedCarriers.length} checkpoint message(s) ${skippedCarriers.join(
+        ", ",
+      )} from the compression range — they carry the visible summary of still-active block(s), which a plain message-ref range does not supersede. The checkpoints stay visible; to fold them, reference the block ids (bN..bM) instead.`,
+    );
+  }
+  const rangeMessageIds = adjustedIds.filter(
+    (id) => !isSummaryMessageId(id) && !liveCarrierIds.has(id),
+  );
 
   // Re-scan for nested blocks in the ADJUSTED range (tool-pair extension may
   // have pulled in messages that are anchors of existing blocks).

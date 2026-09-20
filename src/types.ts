@@ -18,6 +18,16 @@ export interface CoreMessage {
    *  (e.g. the first emitted core) — split tool-call cores sharing a base id
    *  must not repeat it or totals are multiplied. */
   thinkingTokens?: number;
+  /** Host-declared checkpoint carrier (#335): this message is the host's own
+   *  rendered summary of an earlier compression block (e.g. a host-managed
+   *  surface that does not use the kernel's prune/rebuild pipeline). The value
+   *  is the distilled block's id. Semantics: a plain message-ref range does
+   *  NOT supersede that block, so the kernel keeps a carrier of a still-active
+   *  block visible (excluded from folding); block-ref boundaries (bN..bM,
+   *  T2/T3 distillation) fold it like any message. A carrier of an
+   *  inactive/unknown block folds normally. Reserved-prefix ids
+   *  (`acp_summary_*`) stay kernel-internal and never need this marker. */
+  summaryOfBlockId?: string;
 }
 
 export type CompressionTier = 1 | 2 | 3;

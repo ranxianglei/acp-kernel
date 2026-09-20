@@ -44,7 +44,8 @@ export function listRules(state: CompressionState): RuleRecord[] {
 export function resolveRuleLimits(config?: Pick<Config, "rules">): RuleLimits {
   return {
     maxRules: config?.rules?.maxRules ?? DEFAULT_RULE_LIMITS.maxRules,
-    maxRuleChars: config?.rules?.maxRuleChars ?? DEFAULT_RULE_LIMITS.maxRuleChars,
+    maxRuleChars:
+      config?.rules?.maxRuleChars ?? DEFAULT_RULE_LIMITS.maxRuleChars,
   };
 }
 
@@ -67,7 +68,8 @@ export function allocateRuleId(state: CompressionState): string {
   return `rule${Math.max(state.nextRuleId ?? 1, highestRuleNumber(state) + 1)}`;
 }
 
-export type AddRuleResult = { ok: true; rule: RuleRecord } | { ok: false; error: string };
+export type AddRuleResult =
+  { ok: true; rule: RuleRecord } | { ok: false; error: string };
 
 export function addRule(
   state: CompressionState,
@@ -78,7 +80,10 @@ export function addRule(
   const maxRuleChars = limits.maxRuleChars ?? DEFAULT_RULE_LIMITS.maxRuleChars;
   const trimmed = (text ?? "").trim();
   if (!trimmed) {
-    return { ok: false, error: "rule text is empty — provide the reminder to record." };
+    return {
+      ok: false,
+      error: "rule text is empty — provide the reminder to record.",
+    };
   }
   if (trimmed.length > maxRuleChars) {
     return {
@@ -89,7 +94,10 @@ export function addRule(
   const rules = listRules(state);
   const duplicate = rules.find((rule) => rule.text === trimmed);
   if (duplicate) {
-    return { ok: false, error: `identical rule already exists (${duplicate.id}) — no change.` };
+    return {
+      ok: false,
+      error: `identical rule already exists (${duplicate.id}) — no change.`,
+    };
   }
   if (rules.length >= maxRules) {
     return {
@@ -104,13 +112,20 @@ export function addRule(
   return { ok: true, rule };
 }
 
-export type RemoveRuleResult = { ok: true; rule: RuleRecord } | { ok: false; error: string };
+export type RemoveRuleResult =
+  { ok: true; rule: RuleRecord } | { ok: false; error: string };
 
-export function removeRule(state: CompressionState, id: string): RemoveRuleResult {
+export function removeRule(
+  state: CompressionState,
+  id: string,
+): RemoveRuleResult {
   const rules = listRules(state);
   const target = rules.find((rule) => rule.id === id.trim());
   if (!target) {
-    return { ok: false, error: `no rule with id "${id.trim()}" — list current rules first (omit the text argument).` };
+    return {
+      ok: false,
+      error: `no rule with id "${id.trim()}" — list current rules first (omit the text argument).`,
+    };
   }
   state.rules = rules.filter((rule) => rule.id !== target.id);
   return { ok: true, rule: target };
@@ -141,5 +156,7 @@ export function formatRulesForPrompt(state: CompressionState): string {
 /** Plain numbered rendering for the acp_rule tool result when the model lists
  *  rules (billion-context#750 executeRule returns this verbatim). */
 export function formatRulesList(rules: RuleRecord[]): string {
-  return rules.map((rule, i) => `${i + 1}. [${rule.id}] ${rule.text}`).join("\n");
+  return rules
+    .map((rule, i) => `${i + 1}. [${rule.id}] ${rule.text}`)
+    .join("\n");
 }

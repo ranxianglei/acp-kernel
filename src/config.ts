@@ -123,7 +123,8 @@ export function validateConfig(config: Config): string[] {
     }
     if (
       config.rules.maxRuleChars !== undefined &&
-      (!Number.isFinite(config.rules.maxRuleChars) || config.rules.maxRuleChars < 1)
+      (!Number.isFinite(config.rules.maxRuleChars) ||
+        config.rules.maxRuleChars < 1)
     ) {
       errors.push("rules.maxRuleChars must be >= 1");
     }

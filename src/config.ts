@@ -114,5 +114,19 @@ export function validateConfig(config: Config): string[] {
       errors.push("absorb.contextThresholdPct must be in [0, 1]");
     }
   }
+  if (config.rules) {
+    if (
+      config.rules.maxRules !== undefined &&
+      (!Number.isFinite(config.rules.maxRules) || config.rules.maxRules < 1)
+    ) {
+      errors.push("rules.maxRules must be >= 1");
+    }
+    if (
+      config.rules.maxRuleChars !== undefined &&
+      (!Number.isFinite(config.rules.maxRuleChars) || config.rules.maxRuleChars < 1)
+    ) {
+      errors.push("rules.maxRuleChars must be >= 1");
+    }
+  }
   return errors;
 }

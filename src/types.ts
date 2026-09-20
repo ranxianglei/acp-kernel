@@ -127,6 +127,26 @@ export interface TerminalEscapeSignal {
   stuckEvents: number;
 }
 
+/** A persistent reminder recorded via the acp_rule tool (see rules.ts).
+ *  Injected into the system prompt every turn by the adapter and hard-protected
+ *  from compression. Ids are never re-issued (see nextRuleId). */
+export interface RuleRecord {
+  id: string;
+  text: string;
+}
+
+/** Persistent-rule ("acp_rule") feature settings (see rules.ts). Absent or
+ *  enabled !== true = feature off — the adapter never injects the tool; kernel
+ *  protection is unconditional but side-effect-free without acp_rule messages.
+ *  Deviates from kernel#282's original "no Config field" stance: hosts gate the
+ *  feature and carry their limit overrides through the resolved Config
+ *  (billion-context#750 reads config.rules.enabled + resolveRuleLimits). */
+export interface RulesConfig {
+  enabled?: boolean;
+  maxRules?: number;
+  maxRuleChars?: number;
+}
+
 export interface CompressionState {
   blocks: CompressionBlock[];
   messageRefs: MessageRefMap;
@@ -146,6 +166,13 @@ export interface CompressionState {
    *  threshold, viable compression appearing, truncation savings, or a
    *  successful applyCompression. Optional for pre-existing persisted states. */
   terminalStreak?: number;
+  /** Persistent reminders recorded via acp_rule (see rules.ts). Optional:
+   *  pre-rules persisted states lack it. */
+  rules?: RuleRecord[];
+  /** Monotonic rule-id counter (`rule${n}`). Never reset by remove/clear so an
+   *  issued id is never re-issued with different content. Optional: defaults
+   *  to 1 when absent on older persisted states. */
+  nextRuleId?: number;
   nextBlockId: number;
   nextRunId: number;
 }
@@ -233,6 +260,8 @@ export interface Config {
   modelContextLimit: number;
   /** Instant tool-result absorption (see absorb.ts). Absent/disabled = feature off. */
   absorb?: AbsorbConfig;
+  /** Persistent acp_rule reminders (see rules.ts). Absent/disabled = feature off. */
+  rules?: RulesConfig;
   messageFilters?: import("./filter/types.js").MessageFiltersConfig;
 }
 

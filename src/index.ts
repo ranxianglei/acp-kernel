@@ -164,6 +164,25 @@ export type {
   ParsedAbsorb,
   AppendAbsorbPromptsResult,
 } from "./absorb.js";
+export {
+  RULE_TOOL_NAME,
+  DEFAULT_RULE_LIMITS,
+  RULES_USAGE_PROMPT,
+  listRules,
+  allocateRuleId,
+  resolveRuleLimits,
+  addRule,
+  removeRule,
+  clearRules,
+  formatRulesForPrompt,
+  formatRulesList,
+} from "./rules.js";
+export type {
+  RuleLimits,
+  AddRuleResult,
+  RemoveRuleResult,
+  ClearRulesResult,
+} from "./rules.js";
 export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
 export { parseCompressArgs } from "./parse-compress-input.js";

@@ -32,6 +32,8 @@ export function syncBlocks(
     nudge: { ...state.nudge, anchors: { ...state.nudge.anchors } },
     stats: { ...state.stats },
     absorbed: (state.absorbed ?? []).map((record) => ({ ...record })),
+    rules: (state.rules ?? []).map((rule) => ({ ...rule })),
+    nextRuleId: state.nextRuleId,
     terminalStreak: state.terminalStreak,
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,

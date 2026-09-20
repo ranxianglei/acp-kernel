@@ -183,3 +183,64 @@ test("stale carriers (block inactive or unknown) fold like ordinary messages", (
   assert.ok(block.effectiveMessageIds.includes("10"), "unknown-block carrier folds");
   assert.ok(block.effectiveMessageIds.includes("7"), "carrier of the now-dead block folds too");
 });
+
+test("dsh shape: plain range with tool-pair growth consumes the old block yet skips its carrier (#335 exact scenario)", () => {
+  const core = createCore();
+  let state = createInitialState();
+  const messages: CoreMessage[] = [
+    msg("1", "user one"),
+    { id: "2", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c1", text: "{}" },
+    { id: "2#c1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c2", text: "{}" },
+    { id: "3", role: "user", contentType: "tool-result", toolName: "bash", toolCallId: "c1", text: "result c1" },
+    { id: "4", role: "user", contentType: "tool-result", toolName: "bash", toolCallId: "c2", text: "" },
+    msg("5", "user two"),
+    { id: "6", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c3", text: "{}" },
+    { id: "7", role: "user", contentType: "tool-result", toolName: "bash", toolCallId: "c3", text: "" },
+    msg("8", "user three"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+  state = core.applyCompression({
+    ranges: [{ startRef: "m00002", endRef: "m00006", summary: "block A distills the tool work" }],
+    messages,
+    state,
+    config: config(),
+  }).state;
+  const blockA = state.blocks[0]!;
+  assert.ok(blockA.active);
+  const ckpt: CoreMessage = {
+    ...msg("9", "checkpoint: block A summary"),
+    summaryOfBlockId: blockA.blockId,
+  };
+  messages.push(ckpt);
+  for (let i = 0; i < 8; i++) {
+    messages.push(msg(`${10 + i}`, `later turn ${i}`));
+  }
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 7,
+  }).map;
+  const lastRef = `m${String(messages.length).padStart(5, "0")}`;
+  const second = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: lastRef, summary: "plain range over everything" }],
+    messages,
+    state,
+    config: config(),
+  });
+  assert.equal(second.result.blocksCreated, 1);
+  assert.equal(second.result.errors.length, 0);
+  const blockB = second.state.blocks[second.state.blocks.length - 1]!;
+  assert.ok(!blockB.effectiveMessageIds.includes("9"), "carrier of the consumed block must still be skipped");
+  assert.ok(!blockB.directMessageIds.includes("9"));
+  assert.ok(
+    (second.result.warnings ?? []).some((w) => w.includes("checkpoint")),
+    "skip is reported",
+  );
+  const blockACopy = second.state.blocks.find((b) => b.blockId === blockA.blockId)!;
+  assert.equal(blockACopy.active, false, "tool-pair growth re-scan consumes the nested block (dsh ledger shape)");
+  assert.ok(blockB.directBlockIds.includes(blockA.blockId), "parents link recorded");
+  const visible = prune(messages, second.state);
+  assert.ok(visible.some((m) => m.id === "9"), "carrier stays visible");
+});

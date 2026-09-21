@@ -16,14 +16,30 @@ export interface RenderedNudge {
   text: string;
 }
 
-function efficiencyNote(prompts: Prompts, sections: NudgePromptSections): string | null {
-  if (sections.efficiencyNote !== undefined) return sections.efficiencyNote;
-  return `This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${prompts.compressPhilosophy}`;
+export interface RenderNudgeOptions extends NudgePromptSections {
+  /**
+   * Embed the load-bearing guidance texts (compressPhilosophy, howToCompressRules,
+   * and the active tier's distill/condense rules) in the nudge body. Defaults to
+   * true, so existing callers render byte-identical output. Set to false when the
+   * host already delivers these same texts once via its system prompt or tool
+   * descriptions — re-billing them on every injection is pure repetition. Only
+   * the four guidance texts are dropped; per-injection dynamic content
+   * (breakdown, trigger line, ranges, tier target blocks) survives. An explicit
+   * section override above always wins verbatim, independently of this flag.
+   */
+  includeGuidance?: boolean;
 }
 
-function emergencyHeader(prompts: Prompts, sections: NudgePromptSections): string | null {
+function efficiencyNote(prompts: Prompts, sections: NudgePromptSections, includeGuidance: boolean): string | null {
+  if (sections.efficiencyNote !== undefined) return sections.efficiencyNote;
+  const note = "This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.";
+  return includeGuidance ? `${note}\n\n${prompts.compressPhilosophy}` : note;
+}
+
+function emergencyHeader(prompts: Prompts, sections: NudgePromptSections, includeGuidance: boolean): string | null {
   if (sections.emergencyHeader !== undefined) return sections.emergencyHeader;
-  return `⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n${prompts.compressPhilosophy}`;
+  const header = "⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.";
+  return includeGuidance ? `${header}\n\n${prompts.compressPhilosophy}` : header;
 }
 
 function formatK(n: number): string {
@@ -163,11 +179,26 @@ function tierGuidance(tier: 2 | 3, sections: NudgePromptSections): string | null
 }
 
 function compact(parts: string[]): string[] {
-  while (parts.length > 0 && parts[0] === "") parts.shift();
-  return parts;
+  const out: string[] = [];
+  let pendingBlank = false;
+  for (const p of parts) {
+    if (p === "") {
+      pendingBlank = true;
+      continue;
+    }
+    if (pendingBlank && out.length > 0) out.push("");
+    pendingBlank = false;
+    out.push(p);
+  }
+  return out;
 }
 
-export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defaultPrompts, sections: NudgePromptSections = {}): RenderedNudge {
+export function renderNudgeText(
+  decision: NudgeDecision,
+  prompts: Prompts = defaultPrompts,
+  options: RenderNudgeOptions = {},
+): RenderedNudge {
+  const includeGuidance = options.includeGuidance ?? true;
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
   const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
   const blockMapStr = formatBlockMap(decision.activeBlockSpans ?? []);
@@ -183,61 +214,60 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
     const triggerLine = isEmergency
       ? `[EMERGENCY — TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"}] Context limit reached — distill NOW into a denser summary to reclaim tokens.`
       : `[TIER ${decision.tier} ${isT2 ? "DISTILLATION" : "CONDENSATION"} TRIGGER]`;
-    const guidance = tierGuidance(isT2 ? 2 : 3, sections);
-    const head = efficiencyNote(prompts, sections);
-    return {
-      voice,
-      text: compact([
-        ...(head === null ? [] : [head]),
-        "",
-        breakdownStr,
-        "",
-        triggerLine,
-        ...(guidance === null ? [] : [guidance]),
-        blockList,
-        `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
-        "",
-        prompts.howToCompressRules,
-        "",
-        isT2 ? prompts.tier2DistillRules : prompts.tier3CondenseRules,
-      ]).join("\n"),
-    };
-  }
-
-  if (isEmergency) {
-    const head = emergencyHeader(prompts, sections);
-    return {
-      voice: "emergency",
-      text: compact([
-        ...(head === null ? [] : [head]),
-        "",
-        breakdownStr,
-        "",
-        prompts.howToCompressRules,
-        "",
-        `{ "topic": "...", "content": [{ "startId": "<ID>", "endId": "<ID>", "summary": "..." }] }`,
-        "Only use IDs from visible messages above. Compress older work first.",
-        "",
-        rangesStr,
-        ...(blockMapStr ? ["", blockMapStr] : []),
-      ]).join("\n"),
-    };
-  }
-
-  const gentleHead = efficiencyNote(prompts, sections);
-  return {
-    voice: "gentle",
-    text: compact([
-      ...(gentleHead === null ? [] : [gentleHead]),
+    const guidance = tierGuidance(isT2 ? 2 : 3, options);
+    const head = efficiencyNote(prompts, options, includeGuidance);
+    const parts: string[] = [
+      ...(head === null ? [] : [head]),
       "",
       breakdownStr,
       "",
-      prompts.howToCompressRules,
+      triggerLine,
+      ...(guidance === null ? [] : [guidance]),
+      blockList,
+      `Example: compress({ content: [{ startId: "${startId}", endId: "${endId}", summary: "..." }] })`,
+    ];
+    if (includeGuidance) {
+      parts.push("", prompts.howToCompressRules, "", isT2 ? prompts.tier2DistillRules : prompts.tier3CondenseRules);
+    }
+    return { voice, text: compact(parts).join("\n") };
+  }
+
+  if (isEmergency) {
+    const head = emergencyHeader(prompts, options, includeGuidance);
+    const parts: string[] = [
+      ...(head === null ? [] : [head]),
+      "",
+      breakdownStr,
+    ];
+    if (includeGuidance) {
+      parts.push("", prompts.howToCompressRules);
+    }
+    parts.push(
+      "",
+      `{ "topic": "...", "content": [{ "startId": "<ID>", "endId": "<ID>", "summary": "..." }] }`,
+      "Only use IDs from visible messages above. Compress older work first.",
       "",
       rangesStr,
       ...(blockMapStr ? ["", blockMapStr] : []),
-      "",
-      `💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`,
-    ]).join("\n"),
-  };
+    );
+    return { voice: "emergency", text: compact(parts).join("\n") };
+  }
+
+  const gentleHead = efficiencyNote(prompts, options, includeGuidance);
+  const parts: string[] = [
+    ...(gentleHead === null ? [] : [gentleHead]),
+    "",
+    breakdownStr,
+  ];
+  if (includeGuidance) {
+    parts.push("", prompts.howToCompressRules);
+  }
+  parts.push(
+    "",
+    rangesStr,
+    ...(blockMapStr ? ["", blockMapStr] : []),
+    "",
+    `💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`,
+  );
+  return { voice: "gentle", text: compact(parts).join("\n") };
 }

@@ -395,18 +395,47 @@ export function mergeRangesToThreshold(
   const result: CompressibleRange[] = [];
   let batch: CompressibleRange[] = [];
   let batchChars = 0;
-  for (const r of ranges) {
-    batch.push(r);
-    batchChars += rangeChars(r);
-    if (batchChars >= minChars) {
-      result.push(mergeBatch(batch));
+  // Close the running batch at a boundary: emit it only when it alone clears
+  // the gate. A sub-threshold segment bounded by a gap cannot be offered (it
+  // fails the apply-side #847 gate) and must not be stretched across the gap
+  // to reach the threshold, or the emitted span covers non-compressible
+  // content (#498).
+  const closeBatch = () => {
+    if (batch.length > 0) {
+      if (batchChars >= minChars) result.push(mergeBatch(batch));
       batch = [];
       batchChars = 0;
     }
+  };
+  for (const r of ranges) {
+    const prev = batch[batch.length - 1];
+    // A physical array-index gap between the previous range and this one marks
+    // a block / protected / pruned boundary (buildCompressibleRanges leaves a
+    // slot hole there; user-turn splits stay contiguous). Without index data we
+    // keep the legacy accumulate-across-everything behavior.
+    if (
+      prev &&
+      prev.endIndex !== undefined &&
+      r.startIndex !== undefined &&
+      r.startIndex > prev.endIndex + 1
+    ) {
+      closeBatch();
+    }
+    batch.push(r);
+    batchChars += rangeChars(r);
+    if (batchChars >= minChars) closeBatch();
   }
   if (batch.length > 0 && result.length > 0) {
     const prev = result[result.length - 1]!;
-    result[result.length - 1] = mergeBatch([prev, ...batch]);
+    const contiguous =
+      prev.endIndex === undefined ||
+      batch[0]!.startIndex === undefined ||
+      batch[0]!.startIndex <= prev.endIndex + 1;
+    if (contiguous) {
+      result[result.length - 1] = mergeBatch([prev, ...batch]);
+    } else if (batchChars >= minChars) {
+      result.push(mergeBatch(batch));
+    }
   }
   return result;
 }

@@ -183,6 +183,32 @@ export type {
   RemoveRuleResult,
   ClearRulesResult,
 } from "./rules.js";
+export {
+  DEFAULT_CRUSH_CONFIG,
+  classifyCrushText,
+  crushText,
+  evaluateToolResult,
+  applyCrushToMessages,
+  resolveCrushConfig,
+  registerCrushPlugin,
+  unregisterCrushPlugin,
+  listCrushPlugins,
+  resetCrushPlugins,
+  jsonFoldPlugin,
+  codeTrimPlugin,
+  logSelectPlugin,
+} from "./crush.js";
+export type {
+  CrushKind,
+  CrushMeta,
+  CrushOutput,
+  CrushOptions,
+  CrushPluginDef,
+  CrushDecisionKind,
+  CrushEvaluation,
+  EvaluateCrushInput,
+  ApplyCrushResult,
+} from "./crush.js";
 export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
 export { parseCompressArgs } from "./parse-compress-input.js";

@@ -37,8 +37,9 @@ const state = createInitialState();
 const config = defaultConfig(200000); // modelContextLimit (positional); optional overrides as 2nd arg
 
 // processTurn runs the canonical node pipeline every turn:
-// assign-refs → sync-blocks → merge-blocks → prune → filter →
-// hide-compress-calls → nudge-inject → emergency-truncate → render-refs
+// assign-refs → sync-blocks → prune → absorb-hide → crush → absorb-prompt
+// → filter → hide-compress-calls → recommend → nudge-inject
+// → emergency-truncate → render-refs
 const { messages, state: nextState, nudge } = core.processTurn({
   messages, state, config, tokenCount,
 });
@@ -161,6 +162,35 @@ The nudge system tells the model *when* to compress. It implements:
 - **Tier-distillation triggers**: when active tier-1 blocks pile up past `tiers.tier2Trigger`, emit a tier-2 distillation nudge; tier-3 analogously. Count-triggered distillation is gated to the nudge usage band (`nudge.minContextLimitPct`): below it, block counts alone don't justify burning a turn (#237).
 - **Compressible-range computation**: reports the actual compressible ranges (excluding covered + preserved-recent messages) so the model knows what to target.
 - **Baseline reset on compress**: `applyCompression` clears the growth baseline on success, preventing the feedback-loop bug where the nudge re-fires post-compress.
+
+### Tool-result crush gate
+
+Deterministic first tier of the two-tier absorb gate. When a tool result qualifies as an absorb candidate and context pressure is on, the `crush` node (between `absorb-hide` and `absorb-prompt`) re-evaluates it **in view** with pure, deterministic strategies before the absorb-prompt decision runs:
+
+- **skip** — below `absorb.minToolTokens` or under `absorb.contextThresholdPct`; bytes untouched.
+- **crushed** — deterministic compression brought it under `minToolTokens`; no model round-trip. The wire carries the crushed payload (e.g. `__acp_crush` rows/identical-run envelopes for JSON, decodable byte-for-byte).
+- **distill** — still over (or uncrushable); forwarded to the `[ACP absorb]` prompt path, carrying the crushed payload when crushing succeeded.
+
+Built-in strategies form an ordered plugin registry (hosts can add/replace/disable via `registerCrushPlugin` / config):
+
+| Strategy | Kind | Lossy | What it does |
+|----------|------|-------|--------------|
+| `json-fold` | json | no | constant-field hoisting + identical row/run collapse into annotated envelopes |
+| `code-trim` | code | yes | comment/docstring elision behind a string-literal-aware scanner; template literals and assigned triple-quoted strings survive verbatim; unterminated constructs fail open |
+| `log-select` | log | yes | level-classified line selection; **every distinct ERROR/FAIL line survives verbatim** (kernel-enforced invariant — output dropping one is rejected); warnings deduped, stack frames collapsed, honest `[N lines omitted]` footer |
+
+Kernel-enforced guarantees: dispatch guards keep each payload kind on its own strategies; plugins must be pure and deterministic (same payload + config ⇒ same bytes, prefix-cache friendly); any throw, sub-`minReduction` result, or invariant violation fails open to the next candidate or pass-through. **Default off** (`crush.enabled: false`) and requires `absorb.enabled: true`; when disabled the pipeline is byte-identical to pre-crush behavior.
+
+```json
+"crush": {
+  "enabled": false,
+  "minReduction": 0.1,
+  "strategies": {
+    "json-fold": { "enabled": false },
+    "code-trim": { "excludeTools": ["bash"] }
+  }
+}
+```
 
 ## Wire codec (`acp-kernel/wire`)
 

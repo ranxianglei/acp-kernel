@@ -15,6 +15,7 @@ import type { ResolvedRange } from "./boundaries.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
 import { appendAbsorbPrompts, hideAbsorbedMessages } from "./absorb.js";
+import { applyCrushToMessages } from "./crush.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
 import { activeBlockSpans } from "./block-map.js";
 import { createRenderRefsNode } from "./render-refs.js";
@@ -531,6 +532,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
       syncBlocksNode,
       pruneNode,
       absorbHideNode,
+      crushNode,
       absorbPromptNode,
       filterNode,
       hideCompressCallsNode,
@@ -621,6 +623,33 @@ const absorbPromptNode: PipelineNode = {
       ...io,
       messages: applied.messages,
       effects: { ...io.effects, absorbPromptedCount: applied.promptedCount },
+    };
+  },
+};
+
+// Tier 1 of the two-tier absorb gate: deterministic compression of eligible
+// oversized tool results. Runs after absorb-hide (already-absorbed pairs are
+// gone) and before absorb-prompt, which then re-decides on post-crush sizes —
+// results crushed below minToolTokens stop triggering model round-trips.
+const crushNode: PipelineNode = {
+  name: "crush",
+  enabled: (_io, ctx) =>
+    ctx.config.crush?.enabled === true && ctx.config.absorb?.enabled === true,
+  run(io, ctx) {
+    const applied = applyCrushToMessages(
+      io.messages,
+      ctx.config,
+      ctx.tokenCount,
+      ctx.countTokens,
+    );
+    return {
+      ...io,
+      messages: applied.messages,
+      effects: {
+        ...io.effects,
+        crushCount: applied.crushedCount,
+        crushDistilledCount: applied.distilledCount,
+      },
     };
   },
 };

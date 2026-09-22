@@ -37,6 +37,7 @@ export function syncBlocks(
     rules: (state.rules ?? []).map((rule) => ({ ...rule })),
     nextRuleId: state.nextRuleId,
     terminalStreak: state.terminalStreak,
+    lastConfigWarnings: [...(state.lastConfigWarnings ?? [])],
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
   };

@@ -25,5 +25,6 @@ export function mergeCompressionState(parsed: CompressionState): CompressionStat
     terminalStreak: parsed.terminalStreak,
     imageFullRestored: parsed.imageFullRestored ?? fresh.imageFullRestored,
     imageShrinks: parsed.imageShrinks ?? fresh.imageShrinks,
+    lastConfigWarnings: parsed.lastConfigWarnings ?? fresh.lastConfigWarnings,
   };
 }

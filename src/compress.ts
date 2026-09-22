@@ -16,6 +16,10 @@ import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
 import { appendAbsorbPrompts, hideAbsorbedMessages } from "./absorb.js";
 import { applyCrushToMessages } from "./crush.js";
+import { applyRetrieve, ccrStoreNode, RETRIEVED_ID_PREFIX } from "./ccr.js";
+import type { ApplyRetrieveResult, CcrEffect } from "./ccr.js";
+import { createContentStore } from "./content-store.js";
+import type { MessageContentStore } from "./content-store.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
 import { activeBlockSpans } from "./block-map.js";
 import { createRenderRefsNode } from "./render-refs.js";
@@ -61,6 +65,9 @@ export interface Ports {
 
 export interface CompressionCore {
   processTurn(input: ProcessTurnInput): ProcessTurnResult;
+  /** Kernel primitive behind acp_retrieve: resolve a ref to its stored
+   *  original plus the wire-safe injection pair (see ccr.ts). */
+  retrieve(store: MessageContentStore, ref: string): ApplyRetrieveResult;
   applyCompression(input: ApplyCompressionInput): ApplyCompressionResult;
   defaultNodes(): PipelineNode[];
   decompress(
@@ -93,6 +100,9 @@ export interface ProcessTurnInput {
    *     directly from result.state.messageRefs.
    */
   renderTags?: RenderStrategy;
+  /** Per-session CCR content store (pass result.contentStore back here).
+   *  Omit for pre-CCR sessions — an empty store is used. */
+  contentStore?: MessageContentStore;
 }
 
 export interface ApplyCompressionInput {
@@ -458,10 +468,12 @@ export function createCore(ports: Ports = {}): CompressionCore {
         `[acp-kernel] Config validation warnings: ${configErrors.join("; ")}. Thresholds may not fire correctly.`,
       );
     }
+    const contentStore = input.contentStore ?? createContentStore();
     const ctx: PipelineContext = {
       config: input.config,
       tokenCount: input.tokenCount,
       countTokens,
+      contentStore,
     };
     const initial: NodeIO = {
       messages: input.messages,
@@ -474,13 +486,22 @@ export function createCore(ports: Ports = {}): CompressionCore {
     const strategy: RenderStrategy = input.renderTags ?? "all";
     const nodes = buildNodes(strategy);
     const result = runPipeline(nodes, initial, ctx);
+    const ccrEffect = result.effects.ccr as CcrEffect | undefined;
     return {
       messages: result.messages,
       state: result.state,
       nudge: result.effects.nudge,
       terminalEscape: result.effects.terminalEscape,
       truncationSkipped: result.effects.truncationSkipped,
+      contentStore: ccrEffect?.store ?? contentStore,
     };
+  }
+
+  function retrieve(
+    store: MessageContentStore,
+    ref: string,
+  ): ApplyRetrieveResult {
+    return applyRetrieve({ store, ref });
   }
 
   function decompress(blockId: string, state: CompressionState) {
@@ -515,7 +536,12 @@ export function createCore(ports: Ports = {}): CompressionCore {
       activeBlocks: active.length,
       totalBlocks: state.blocks.length,
       tokensCompressed: state.stats.tokensCompressed,
-      breakdown: { active: active.length, total: state.blocks.length },
+      breakdown: {
+        active: active.length,
+        total: state.blocks.length,
+        storedMessages: state.stats.storedCount ?? 0,
+        retrievals: state.stats.retrievalCount ?? 0,
+      },
     };
   }
 
@@ -531,6 +557,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
       assignRefsNode,
       syncBlocksNode,
       pruneNode,
+      ccrStoreNode,
       absorbHideNode,
       crushNode,
       absorbPromptNode,
@@ -546,6 +573,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
 
   return {
     processTurn,
+    retrieve,
     applyCompression,
     defaultNodes,
     decompress,
@@ -579,6 +607,8 @@ const assignRefsNode: PipelineNode = {
       existing: io.state.messageRefs,
       nextIndex: highestUsedIndex(io.state.messageRefs) + 1,
       isProtected: protectedFn,
+      // Ephemeral retrieval injections never consume a ref slot.
+      shouldSkip: (m) => m.id.startsWith(RETRIEVED_ID_PREFIX),
     });
     return { ...io, state: { ...io.state, messageRefs: refResult.map } };
   },

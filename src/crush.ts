@@ -161,14 +161,24 @@ export function crushText(
   const kind = classifyCrushText(text);
   const wanted = options.plugins ?? registeredPlugins();
   for (const plugin of wanted) {
-    if (!plugin.kinds.includes(kind)) continue;
     let res: Omit<CrushOutput, "strategy"> | null;
     try {
+      // Contract-violating host plugins (missing/malformed kinds, non-string
+      // result text) must fail open like any other anomaly, not throw out of
+      // the pipeline or poison msg.text with a non-string.
+      if (!Array.isArray(plugin.kinds) || !plugin.kinds.includes(kind))
+        continue;
       res = plugin.run(text, meta);
     } catch {
       continue;
     }
-    if (!res || !res.text || res.text === text) continue;
+    if (
+      !res ||
+      typeof res.text !== "string" ||
+      res.text === "" ||
+      res.text === text
+    )
+      continue;
     const newTok = countTokens(res.text);
     const reduction = (rawTok - newTok) / rawTok;
     if (reduction < minReduction) continue;
@@ -337,6 +347,11 @@ function buildConstHoist(
   if (!first) return null;
   const constKeys: string[] = [];
   for (const k of keys) {
+    // A key absent from row 0 must not be hoisted: canonOf(undefined) ===
+    // canonOf(null), so "absent in row 0, null elsewhere" would pass the
+    // const check, then JSON.stringify drops the undefined constObj value and
+    // the field vanishes from every decoded row (losslessness violation).
+    if (!(k in first)) continue;
     const c0 = canonOf(first[k], cache);
     let constant = true;
     for (let i = 1; i < n; i++) {
@@ -684,6 +699,53 @@ type JsLineKind =
   | "block-open-mid"
   | "template-open";
 
+// A `/` can start a regex literal only where an expression is expected. If the
+// previous significant char ends a token (identifier char, `.`, quote, `)`,
+// `]`), the `/` is division — parsing a regex there would misread ordinary
+// arithmetic, so the attempt is skipped.
+function regexAllowedAfter(prev: string | null): boolean {
+  if (prev === null) return true;
+  if (/[A-Za-z0-9_]/.test(prev)) return false;
+  return !".'\"`) ]".includes(prev);
+}
+
+function prevSigChar(line: string, i: number): string | null {
+  for (let j = i - 1; j >= 0; j--) {
+    const c = line[j]!;
+    if (c === " " || c === "\t") continue;
+    return c;
+  }
+  return null;
+}
+
+// Scan a JS regex literal starting at line[i] === "/". Returns the index just
+// past the closing slash and its flags, or null when it does not close on this
+// line (regex literals never span lines) — i.e. the `/` was division, not a
+// regex. Honors backslash escapes and [..] character classes (a `/` inside a
+// class does not close the literal).
+function scanRegexLiteral(line: string, i: number): number | null {
+  let j = i + 1;
+  let inClass = false;
+  while (j < line.length) {
+    const c = line[j]!;
+    if (c === "\\") {
+      j += 2;
+      continue;
+    }
+    if (inClass) {
+      if (c === "]") inClass = false;
+    } else if (c === "[") {
+      inClass = true;
+    } else if (c === "/") {
+      let f = j + 1;
+      while (f < line.length && /[a-z]/i.test(line[f]!)) f++;
+      return f;
+    }
+    j++;
+  }
+  return null;
+}
+
 function scanJsCodeLine(line: string): {
   kind: JsLineKind;
   tmpl?: TmplState;
@@ -715,12 +777,28 @@ function scanJsCodeLine(line: string): {
       i += r.consumed;
       continue;
     }
-    if (c === "/" && line[i + 1] === "/") {
-      return {
-        kind: line.slice(0, i).trim().length === 0 ? "comment-full" : "code",
-      };
-    }
-    if (c === "/" && line[i + 1] === "*") {
+    if (c === "/") {
+      const nxt = line[i + 1];
+      if (nxt === "/") {
+        return {
+          kind: line.slice(0, i).trim().length === 0 ? "comment-full" : "code",
+        };
+      }
+      if (nxt !== "*") {
+        // A regex pattern may not start with `*` ("Nothing to repeat"), so
+        // `/*` is unambiguously a comment open. Any other `/` where an
+        // expression is expected may start a regex literal — consume it whole
+        // so patterns like /[/*]/ cannot open a fake block comment later.
+        if (regexAllowedAfter(prevSigChar(line, i))) {
+          const end = scanRegexLiteral(line, i);
+          if (end !== null) {
+            i = end;
+            continue;
+          }
+        }
+        i++;
+        continue;
+      }
       const close = line.indexOf("*/", i + 2);
       const before = line.slice(0, i).trim().length > 0;
       if (close === -1)

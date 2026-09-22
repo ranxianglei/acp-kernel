@@ -9,6 +9,7 @@ import type { CoreMessage, CrushConfig } from "../src/types.js";
 import {
   DEFAULT_CRUSH_CONFIG,
   classifyCrushText,
+  crushJson,
   crushText,
   evaluateToolResult,
   resolveCrushConfig,
@@ -1111,4 +1112,106 @@ test("crush node: reports effects and respects gating", () => {
     "gated off -> untouched",
   );
   assert.equal(io2.effects.crushCount, undefined);
+});
+
+test("json-fold: sparse null key absent in row 0 survives rows-hoist decode", () => {
+  const rows = Array.from({ length: 60 }, (_, i) => ({
+    zone: "z1",
+    id: `id-${String(i).padStart(3, "0")}`,
+    name: `item-${i}`.padEnd(90, "."),
+    ...(i === 0 ? {} : { a: null }),
+  }));
+  const out = crushJson(JSON.stringify(rows));
+  assert.ok(out, "should crush via rows hoist");
+  const env = JSON.parse(out) as RowEnv;
+  assert.equal(env.__acp_crush, "rows");
+  assert.equal(env.const.zone, "z1", "genuine constant still hoists");
+  const decoded = decodeValue(env) as Record<string, unknown>[];
+  for (let i = 0; i < rows.length; i++)
+    assert.deepEqual(decoded[i], rows[i], `row ${i} decodes value-lossless`);
+});
+
+test("code-trim: regex literal containing /* does not open a fake comment", () => {
+  const js = [
+    "function f() {",
+    "  var re = /[/*]/;",
+    "  var a = 1;",
+    "  var b = 2;",
+    "  var c = 3;",
+    "  var d = 4;",
+    '  var s = "has */ inside";',
+    "  var e = 5;",
+    "  var g = 6;",
+    "  return a + b + c + d + e + g;",
+    "}",
+  ].join("\n");
+  const out = crushText(js);
+  if (out !== null) {
+    for (const line of [
+      "var re = /[/*]/;",
+      "var a = 1;",
+      "var b = 2;",
+      "var c = 3;",
+      "var d = 4;",
+      "var e = 5;",
+      "var g = 6;",
+    ])
+      assert.ok(out.text.includes(line), `code line preserved: ${line}`);
+  }
+});
+
+test("code-trim: division is not a regex; full-line comments still elide", () => {
+  const js = [
+    "function ratio(total, parts) {",
+    "  var a = total / parts[0];",
+    "  var b = (total + 1) / (parts[1] || 1);",
+    "  var c = -total / parts[2];",
+    "  /* first full-line comment */",
+    "  /* second full-line comment */",
+    "  var d = total / 2 * parts[3];",
+    "  return a + b + c + d;",
+    "}",
+  ].join("\n");
+  const out = crushText(js);
+  assert.ok(out !== null, "elided comments should pass the reduction floor");
+  assert.ok(out.text.includes("var a = total / parts[0];"));
+  assert.ok(out.text.includes("var b = (total + 1) / (parts[1] || 1);"));
+  assert.ok(out.text.includes("var d = total / 2 * parts[3];"));
+  assert.ok(!out.text.includes("first full-line comment"), "comment elided");
+});
+
+test("crushText: plugin with malformed kinds fails open instead of throwing", () => {
+  const bad = {
+    id: "bad",
+    kinds: undefined,
+    run: () => null,
+  } as unknown as Parameters<typeof registerCrushPlugin>[0];
+  const rows = Array.from({ length: 8 }, (_, i) => ({ id: i * 3, zone: "z1" }));
+  const out = crushText(JSON.stringify(rows), {
+    countTokens: tok,
+    plugins: [bad, jsonFoldPlugin],
+  });
+  assert.equal(
+    out?.strategy,
+    "json-fold",
+    "malformed plugin skipped, built-in still applies",
+  );
+});
+
+test("crushText: plugin returning non-string text fails open", () => {
+  const liar = {
+    id: "liar",
+    kinds: ["json"],
+    run: () => ({ text: 123, lossy: false }),
+  } as unknown as Parameters<typeof registerCrushPlugin>[0];
+  const rows = Array.from({ length: 8 }, (_, i) => ({ id: i * 3, zone: "z1" }));
+  const out = crushText(JSON.stringify(rows), {
+    countTokens: tok,
+    plugins: [liar, jsonFoldPlugin],
+  });
+  assert.equal(
+    out?.strategy,
+    "json-fold",
+    "non-string result skipped, built-in still applies",
+  );
 });

@@ -168,7 +168,7 @@ The nudge system tells the model *when* to compress. It implements:
 Deterministic first tier of the two-tier absorb gate. When a tool result qualifies as an absorb candidate and context pressure is on, the `crush` node (between `absorb-hide` and `absorb-prompt`) re-evaluates it **in view** with pure, deterministic strategies before the absorb-prompt decision runs:
 
 - **skip** — below `absorb.minToolTokens` or under `absorb.contextThresholdPct`; bytes untouched.
-- **crushed** — deterministic compression brought it under `minToolTokens`; no model round-trip. The wire carries the crushed payload (e.g. `__acp_crush` rows/identical-run envelopes for JSON, decodable byte-for-byte).
+- **crushed** — deterministic compression brought it under `minToolTokens`; no model round-trip. The wire carries the crushed payload (e.g. `__acp_crush` rows/identical-run envelopes for JSON, lossless — decodes back to an equal JSON document).
 - **distill** — still over (or uncrushable); forwarded to the `[ACP absorb]` prompt path, carrying the crushed payload when crushing succeeded.
 
 Built-in strategies form an ordered plugin registry (hosts can add/replace/disable via `registerCrushPlugin` / config):

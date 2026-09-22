@@ -210,6 +210,11 @@ function rebuildMessages(
     while (pending.length > 0 && pending[0]!.insertAt === index) {
       result.push(renderSummary(pending.shift()!));
     }
+    // First-user-message pin: the session's opening user message survives
+    // prune even when covered by an active block. This check deliberately
+    // PRECEDES the covered check below — swapping them would let a compress
+    // range strip the last guaranteed user message off the wire. Strict
+    // providers reject conversations with no user message. See DESIGN.md §8.1.
     if (index === firstUserIndex && firstUserIndex >= 0) {
       result.push(messages[index]!);
       continue;

@@ -523,6 +523,9 @@ test("retrieved refs survive host-side ref-map pruning (archive resilience)", ()
     config: ccrConfig(),
     tokenCount: 1000,
   });
+  assert.equal(refForRaw(turn.state.messageRefs, "r1"), "m00004");
+  const pruned = { ...turn.state, messageRefs: { byRaw: {}, byRef: {} } };
+  assert.equal(refForRaw(pruned.messageRefs, "r1"), null);
   const found = core.retrieve(turn.contentStore, "m00004");
   assert.ok(found.ok);
   if (found.ok) assert.equal(found.text, bigText());

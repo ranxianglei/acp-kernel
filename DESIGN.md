@@ -211,6 +211,8 @@ A default `countTokens` ships with the core (word-level + unicode CJK tokenizer,
 | compress/decompress/search/status **tool registration** | **adapter** (calls core pure fns) |
 | `/acp` commands | **adapter** |
 | opencode hooks | **OpenCode adapter** |
+| output-steering **decisions** (turn classification / verbosity level / effort clamp, #355) | **core** `decideOutputSteering` (pure; operates on a structural summary — role + block kinds, no content) |
+| output-steering **landing** (wire field write-back, system-prompt carrier selection, numeric budget floors) | **adapter** |
 | config three-layer merge | **adapter** (core only consumes its own `Config`) |
 | logger / auth / persistence / update | **adapter** (core does zero I/O) |
 

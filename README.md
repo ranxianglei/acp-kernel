@@ -104,6 +104,7 @@ live-recomputed tags, use `renderVisibleRefs` directly.
 | `rebuildCompressionState` | Fork-recovery: replay historical compress calls |
 | `applyMessageFilters` | Pluggable message-filter framework |
 | `resolveTransformChannel` | Channel-selection policy: an explicit preference wins; the default is the wire channel only when the caller reports it viable |
+| `decideOutputSteering` / `classifyTurn` / `clampEffortToFloor` / `applySteeringToPrompt` | Output-side steering *decisions* (#355): structural turn classification (`new_user_ask` / `mechanical_continuation` / `error_continuation` / `unknown`), byte-stable verbosity directives L0–L4 (default L2), and clamp-only effort routing. The kernel decides; adapters land decisions onto wire fields. Default OFF |
 | `applySectionOverrides` / `cloneWithDescriptions` / `applyAcpToolOverrides` | Prompt/tool *surface* customization (see below) |
 | `sanitizePackSurface` / `createPackResolver` / `defaultPackSources` | Prompt packs: named, swappable surface presets resolved over pluggable sources (see below) |
 

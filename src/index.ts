@@ -249,3 +249,29 @@ export {
 export * from "./filter/index.js";
 
 export { VIABLE_RANGE_MIN_TOKENS, viableRanges } from "./viable.js";
+export {
+  classifyTurn,
+  verbosityDirective,
+  renderSteeringBlock,
+  applySteeringToPrompt,
+  clampEffortToFloor,
+  resolveVerbosityLevel,
+  resolveOutputSteeringConfig,
+  decideOutputSteering,
+  VERBOSITY_LEVELS,
+  EFFORT_LADDER,
+  DEFAULT_OUTPUT_STEERING_CONFIG,
+  DEFAULT_STEERING_SENTINEL,
+  DEFAULT_VERBOSITY_LEVEL,
+  MIN_VERBOSITY_LEVEL,
+  MAX_VERBOSITY_LEVEL,
+} from "./output-steering.js";
+export type {
+  TurnKind,
+  StructuralMessage,
+  StructuralBlock,
+  OutputSteeringConfig,
+  OutputSteeringDecision,
+  SteeringPlacement,
+  EffortValue,
+} from "./output-steering.js";

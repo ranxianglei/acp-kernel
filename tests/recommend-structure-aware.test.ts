@@ -103,7 +103,10 @@ function recommend(
   messages: CoreMessage[],
   state: CompressionState,
   cfg: Config,
-): { ranges: CompressibleRange[]; contextRanges: ReturnType<typeof buildCompressibleRanges> } {
+): {
+  ranges: CompressibleRange[];
+  contextRanges: ReturnType<typeof buildCompressibleRanges>;
+} {
   const protectedRefs = computeProtectedRefs(messages, state, cfg);
   const contextRanges = buildCompressibleRanges(
     messages,
@@ -170,11 +173,20 @@ test("open tail turn never lands inside a recommended range", () => {
   const { ranges, contextRanges } = recommend(messages, state, cfg);
 
   for (const r of ranges) {
-    assert.ok(!covers(r, 6), `range ${r.startRef}..${r.endRef} covers open reasoning m00007`);
-    assert.ok(!covers(r, 7), `range ${r.startRef}..${r.endRef} covers open call m00008`);
+    assert.ok(
+      !covers(r, 6),
+      `range ${r.startRef}..${r.endRef} covers open reasoning m00007`,
+    );
+    assert.ok(
+      !covers(r, 7),
+      `range ${r.startRef}..${r.endRef} covers open call m00008`,
+    );
   }
   for (const g of contextRanges.compressible) {
-    assert.ok(!covers(g, 7), `context range ${g.startRef}..${g.endRef} covers open call m00008`);
+    assert.ok(
+      !covers(g, 7),
+      `context range ${g.startRef}..${g.endRef} covers open call m00008`,
+    );
   }
   const coveringCompleted = ranges.find((r) => covers(r, 2) && covers(r, 4));
   assert.ok(
@@ -200,7 +212,10 @@ test("partially complete burst: the whole burst folds out, not just the open cal
 
   for (const i of [2, 3, 4, 5]) {
     for (const r of ranges) {
-      assert.ok(!covers(r, i), `range ${r.startRef}..${r.endRef} covers in-progress member at index ${i}`);
+      assert.ok(
+        !covers(r, i),
+        `range ${r.startRef}..${r.endRef} covers in-progress member at index ${i}`,
+      );
     }
   }
   assert.equal(ranges.length, 1);
@@ -226,7 +241,10 @@ test("sequential tool use: completed turns stay compressible, only the live call
     "adjacency semantics: c2 after t1 starts its own turn",
   );
   for (const r of ranges) {
-    assert.ok(!covers(r, 4), `range ${r.startRef}..${r.endRef} covers live call m00005`);
+    assert.ok(
+      !covers(r, 4),
+      `range ${r.startRef}..${r.endRef} covers live call m00005`,
+    );
   }
   const coveringCompleted = ranges.find((r) => covers(r, 1) && covers(r, 3));
   assert.ok(coveringCompleted, "completed turn must stay advertised");
@@ -337,7 +355,8 @@ test("parallel-tool sandwich: no range splits a call/result pair across a protec
 });
 
 test("merged batches respect the open-turn boundary under minCompressRange", () => {
-  const pad = (s: string, n: number) => s.repeat(Math.ceil(n / s.length)).slice(0, n);
+  const pad = (s: string, n: number) =>
+    s.repeat(Math.ceil(n / s.length)).slice(0, n);
   const messages = [
     userMsg("u0", pad("u0 ", 36)),
     textMsg("a0", pad("a0 ", 36), "assistant"),
@@ -348,7 +367,13 @@ test("merged batches respect the open-turn boundary under minCompressRange", () 
     reasoningMsg("r2", pad("r2 ", 36)),
     callMsg("c2", "edit", "call_2"),
   ];
-  const cfg = config({ compress: { minCompressRange: 100, maxSummaryLength: 0, minSummaryLength: 0 } });
+  const cfg = config({
+    compress: {
+      minCompressRange: 100,
+      maxSummaryLength: 0,
+      minSummaryLength: 0,
+    },
+  });
   const state = assignAll(messages);
   const { ranges } = recommend(messages, state, cfg);
 

@@ -169,9 +169,7 @@ interface CompressibleInfo {
  *  A burst that is only partially complete (some calls already have results)
  *  is likewise open and excluded wholesale. Returns an empty set when every
  *  call has a result — the common case, zero overhead. */
-export function computeOpenTurnMemberIds(
-  messages: CoreMessage[],
-): Set<string> {
+export function computeOpenTurnMemberIds(messages: CoreMessage[]): Set<string> {
   const resultCallIds = new Set<string>();
   for (const msg of messages) {
     if (

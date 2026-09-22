@@ -28,7 +28,10 @@ import {
   isNeverPreserveRecent,
 } from "./protected.js";
 import { countMessageTokens } from "./tokenize.js";
-import { computeIntegrityWithdrawals } from "./turn-integrity.js";
+import {
+  computeIntegrityWithdrawals,
+  computeTurnGroups,
+} from "./turn-integrity.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,6 +146,62 @@ export function computeProtectedRefs(
  * zone (from `computeProtectedRefs`) splits groups — the unprotected head
  * survives as its own range.
  */
+interface CompressibleInfo {
+  id: string;
+  ref: string;
+  gapBefore: boolean;
+  tokens: number;
+  chars: number;
+  isTool: boolean;
+  isUser: boolean;
+  index: number;
+}
+
+/** Message ids of in-progress turns (#344): turns holding a tool-call that
+ *  has no tool-result anywhere in the array (an open call). Folding such a
+ *  turn would absorb the session's live, unfinished exchange — the range
+ *  endpoint lands inside the sequence and the model loses its working context
+ *  mid-task. The whole turn group is excluded from the compressible set and
+ *  treated as a gap; the triggering user message stays compressible (user
+ *  messages carry no wire-level pairing constraint, and the recent-zone
+ *  default already protects the tail).
+ *
+ *  A burst that is only partially complete (some calls already have results)
+ *  is likewise open and excluded wholesale. Returns an empty set when every
+ *  call has a result — the common case, zero overhead. */
+export function computeOpenTurnMemberIds(
+  messages: CoreMessage[],
+): Set<string> {
+  const resultCallIds = new Set<string>();
+  for (const msg of messages) {
+    if (
+      msg.contentType === "tool-result" &&
+      typeof msg.toolCallId === "string"
+    ) {
+      resultCallIds.add(msg.toolCallId);
+    }
+  }
+  const openCallIds = new Set<string>();
+  for (const msg of messages) {
+    if (
+      msg.id &&
+      msg.role === "assistant" &&
+      msg.contentType === "tool-call" &&
+      typeof msg.toolCallId === "string" &&
+      !resultCallIds.has(msg.toolCallId)
+    ) {
+      openCallIds.add(msg.id);
+    }
+  }
+  if (openCallIds.size === 0) return new Set();
+  const excluded = new Set<string>();
+  for (const group of computeTurnGroups(messages)) {
+    if (!group.some((id) => openCallIds.has(id))) continue;
+    for (const id of group) excluded.add(id);
+  }
+  return excluded;
+}
+
 export function buildCompressibleRanges(
   messages: CoreMessage[],
   state: CompressionState,
@@ -150,16 +209,7 @@ export function buildCompressibleRanges(
   protectedZoneRefs?: Set<string>,
   countTokens: (text: string) => number = estimateTextTokens,
 ): ContextRanges {
-  let compressibleMsgs: {
-    id: string;
-    ref: string;
-    gapBefore: boolean;
-    tokens: number;
-    chars: number;
-    isTool: boolean;
-    isUser: boolean;
-    index: number;
-  }[] = [];
+  let compressibleMsgs: CompressibleInfo[] = [];
   const protectedMsgs: {
     ref: string;
     gapBefore: boolean;
@@ -234,6 +284,24 @@ export function buildCompressibleRanges(
     skipSinceProtected = true;
   }
 
+  // Structure-aware selection (#344): keep in-progress turns out of the
+  // compressible set so no candidate range ends inside an unfinished
+  // tool-call sequence. No-op when every call has a result.
+  const openTurnIds = computeOpenTurnMemberIds(messages);
+  if (openTurnIds.size > 0) {
+    let gapPending = false;
+    const kept: CompressibleInfo[] = [];
+    for (const info of compressibleMsgs) {
+      if (openTurnIds.has(info.id)) {
+        gapPending = true;
+        continue;
+      }
+      kept.push(gapPending ? { ...info, gapBefore: true } : info);
+      gapPending = false;
+    }
+    compressibleMsgs = kept;
+  }
+
   // Foldability: the fold gate (src/compress.ts) withdraws every message whose
   // turn would lose its reasoning run or whose call/result pair it would split,
   // because the protected-zone carve removes individual messages after the
@@ -258,6 +326,22 @@ export function buildCompressibleRanges(
       gapPending = false;
     }
     compressibleMsgs = kept;
+  }
+
+  // Per-segment foldability (#344): the screen above assumes the ENTIRE
+  // compressible set folds together, but each recommended range folds on its
+  // own. A gap inside the compressible region (protected tool, zone edge) can
+  // separate a call from its result — or a turn's reasoning from its calls —
+  // leaving segments that the fold gate always empties when taken alone.
+  // Re-run the integrity gate per contiguous segment until stable; withdrawn
+  // messages become gaps so no range spans them. Self-contained histories
+  // converge in one no-op pass (output byte-identical to before this step).
+  const gapCount = compressibleMsgs.reduce(
+    (s, info) => s + (info.gapBefore ? 1 : 0),
+    0,
+  );
+  if (gapCount > 0) {
+    compressibleMsgs = refineSegmentsForFoldability(messages, compressibleMsgs);
   }
 
   // Build compressible groups (split at real array gaps and at user messages
@@ -338,6 +422,51 @@ export function buildCompressibleRanges(
     compressible: compressible.filter((g) => g.tokens > 0),
     protected: protectedRanges,
   };
+}
+
+/** Hard stop for the per-segment refinement loop. Every productive pass
+ *  removes at least one message, so real sessions converge in a few passes;
+ *  the cap bounds worst-case cost on adversarial interleave chains. Reaching
+ *  it leaves the remaining ranges exactly as pre-refinement — the state the
+ *  apply-side fold gate already guards against, never worse. */
+const MAX_REFINEMENT_PASSES = 8;
+
+function refineSegmentsForFoldability(
+  messages: CoreMessage[],
+  infos: CompressibleInfo[],
+): CompressibleInfo[] {
+  let current = infos;
+  for (let pass = 0; pass < MAX_REFINEMENT_PASSES; pass++) {
+    const segments: CompressibleInfo[][] = [];
+    for (const info of current) {
+      const seg = segments[segments.length - 1];
+      if (seg === undefined || info.gapBefore) segments.push([info]);
+      else seg.push(info);
+    }
+    const removed = new Set<string>();
+    for (const seg of segments) {
+      const withdrawn = computeIntegrityWithdrawals(
+        messages,
+        new Set(seg.map((info) => info.id)),
+      ).withdrawn;
+      for (const info of seg) {
+        if (withdrawn.has(info.id)) removed.add(info.id);
+      }
+    }
+    if (removed.size === 0) break;
+    let gapPending = false;
+    const kept: CompressibleInfo[] = [];
+    for (const info of current) {
+      if (removed.has(info.id)) {
+        gapPending = true;
+        continue;
+      }
+      kept.push(gapPending ? { ...info, gapBefore: true } : info);
+      gapPending = false;
+    }
+    current = kept;
+  }
+  return current;
 }
 
 function mergeBatch(batch: CompressibleRange[]): CompressibleRange {

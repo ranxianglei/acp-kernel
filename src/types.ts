@@ -92,6 +92,12 @@ export interface CompressionStats {
   compressionCount: number;
   /** Cumulative tokens reclaimed by absorb (instant tool-result hiding). Optional for pre-absorb persisted states. */
   absorbedTokens?: number;
+  /** Cumulative images downscaled at arrival (image pre-compression, #353). Optional for pre-feature persisted states. */
+  imagesShrunk?: number;
+  /** Cumulative decoded-byte savings from image downsampling. */
+  imageBytesSaved?: number;
+  /** Cumulative estimated-token savings from image downsampling. */
+  imageTokensSaved?: number;
 }
 
 /** One instant tool-result absorption: the original tool-call + tool-result
@@ -174,6 +180,41 @@ export interface CrushConfig {
   strategies?: Record<string, CrushStrategyOverride>;
 }
 
+export type ImageFormat = "webp" | "jpeg" | "png";
+
+/** How upstream bills this image's payload: pixel-tile model (Anthropic / OpenAI high-detail) or raw byte counting (some relays). */
+export type ImageBillingMode = "pixels" | "bytes";
+
+/** Image pre-compression routing/downsample + image_full restore (#353). Hosts perform the three-level (global → provider → model) sub-field merge exactly like absorb. Default off: disabled ⇒ byte-identical pass-through. */
+export interface ImageCompressionConfig {
+  enabled: boolean;
+  /** Only route images whose token estimate >= this. Default 512. */
+  minTokens?: number;
+  /** Longest side (px) of the downsample recipe. Default 1280. */
+  maxDimension?: number;
+  /** Lossy encode quality (1-100) of the downsample recipe. Default 80. */
+  quality?: number;
+  /** Encode format of the downsample recipe. Default "webp". */
+  format?: ImageFormat;
+}
+
+/** One arrival-time image downsample, reported by the host after executing the kernel's recipe. Drives image_full validation and session stats. */
+export interface ImageShrinkRecord {
+  ref: string;
+  rawMessageId: string;
+  mediaType: string;
+  format: ImageFormat;
+  /** Decoded byte length of the original payload. */
+  originalBytes: number;
+  /** Decoded byte length after encoding. */
+  shrunkBytes: number;
+  /** Kernel token estimate of the original payload. */
+  tokensBefore: number;
+  /** Kernel token estimate of the shrunk payload. */
+  tokensAfter: number;
+  createdAt: number;
+}
+
 export interface CompressionState {
   blocks: CompressionBlock[];
   messageRefs: MessageRefMap;
@@ -200,6 +241,10 @@ export interface CompressionState {
    *  issued id is never re-issued with different content. Optional: defaults
    *  to 1 when absent on older persisted states. */
   nextRuleId?: number;
+  /** image_full sticky-restore: refs whose images were restored to full resolution for the rest of the session. MUST be cleared on compaction reset (resetImageFullState) — refs are re-issued after state reset, so stale entries would misattribute. Optional: pre-feature persisted states lack it. */
+  imageFullRestored?: string[];
+  /** Arrival-time downsample records (#353). Optional: pre-feature persisted states lack it. */
+  imageShrinks?: ImageShrinkRecord[];
   nextBlockId: number;
   nextRunId: number;
 }
@@ -291,6 +336,8 @@ export interface Config {
   rules?: RulesConfig;
   /** Deterministic tool-result compression, tier 1 of the absorb gate (see crush.ts). Requires absorb enabled. */
   crush?: CrushConfig;
+  /** Image pre-compression routing/downsample + image_full restore (see image-compress.ts). Absent/disabled = feature off. */
+  imageCompression?: ImageCompressionConfig;
   messageFilters?: import("./filter/types.js").MessageFiltersConfig;
 }
 

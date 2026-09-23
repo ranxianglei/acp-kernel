@@ -699,6 +699,20 @@ test("arbitration: growth-triggered T1 fires once usage enters the nudge band (#
   assert.equal(turn.nudge.tier, 1);
 });
 
+test("arbitration: below-band idle reason does not claim T1 suppression when T1 is not ready (#1198 edge)", () => {
+  const core = createCore();
+  const config = buildConfig({ modelContextLimit: 1_000_000 });
+  // t1Eff ~15K (< 50K threshold) but tier-1 block mass 5 x 42K chars = 52.5K
+  // tokens keeps maxPending above threshold; growth 25K >= 22.5K floor; usage
+  // 10.5% < 45%. T1 was never ready, so the reason must stay neutral.
+  const messages = makeMessages(8);
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 80_000 }).state;
+  state = { ...state, blocks: t1Blocks([["m0"], ["m1"], ["m2"], ["m3"], ["m4"]], 42_000) };
+  const turn = core.processTurn({ messages, state, config, tokenCount: 105_000 });
+  assert.equal(turn.nudge.shouldInject, false, `reason: ${turn.nudge.reason}`);
+  assert.doesNotMatch(turn.nudge.reason ?? "", /T1 growth suppressed/);
+});
+
 test("arbitration: T2 fires on tier-1 block COUNT (tier2Trigger) even when summary tokens are small", () => {
   const core = createCore();
   const config = buildConfig({ preserveRecentMessages: 30 });

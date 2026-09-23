@@ -1619,9 +1619,11 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       );
     if (growthShort)
       parts.push(`growth ${growthSinceReference} < floor ${growthFloor}`);
-    // Everything ready but usage below the band: name the deferral instead of
-    // falling through to the bare "max compressible X, growth Y" fallback.
-    if (!pendingShort && !growthShort && belowBand)
+    // Name the deferral only when T1 growth was actually READY and usage-gated.
+    // maxPending can come from tier mass while t1Eff < threshold — then T1 was
+    // never ready and claiming "suppressed" misreports the blocker (the neutral
+    // fallback below stays accurate for that case).
+    if (t1Eff >= nudgeGrowthTokens && !growthShort && belowBand)
       parts.push(
         `usage ${Math.round(usage * 100)}% < ${Math.round(config.nudge.minContextLimitPct * 100)}% — T1 growth suppressed below usage band`,
       );

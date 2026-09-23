@@ -37,11 +37,12 @@ const state = createInitialState();
 const config = defaultConfig(200000); // modelContextLimit (positional); optional overrides as 2nd arg
 
 // processTurn runs the canonical node pipeline every turn:
-// assign-refs → sync-blocks → prune → absorb-hide → crush → absorb-prompt
-// → filter → hide-compress-calls → recommend → nudge-inject
+// assign-refs → sync-blocks → prune → ccr-store → absorb-hide → crush →
+// absorb-prompt → filter → hide-compress-calls → recommend → nudge-inject
 // → emergency-truncate → render-refs
-const { messages, state: nextState, nudge } = core.processTurn({
+const { messages, state: nextState, nudge, contentStore } = core.processTurn({
   messages, state, config, tokenCount,
+  contentStore, // previous turn's content store (optional; see CCR below)
 });
 
 // When the model emits a compress decision (summary written by the model):
@@ -86,6 +87,74 @@ processTurn({ messages, state, config, tokenCount, renderTags: "none" });
 `renderTags` is optional and defaults to `"all"`, so existing call sites keep
 working unchanged.
 
+#### CCR — content-cached retrieval (lossless tool-result offload)
+
+CCR is the lossless alternative to absorb's lossy distillation. When enabled,
+a tool result at or above `ccr.minToolTokens` is stored **once, at arrival** in
+the per-session content store, and its visible copy is replaced with a
+deterministic placeholder carrying enough signal (kind, size, command/head
+preview, ref) to judge relevance without retrieving. The model pulls the
+original back via the `acp_retrieve` tool; the retrieved text rides back as an
+ephemeral trailing message that never consumes a ref and never enters the fold
+space. Disabled by default — no behavior change unless opted in.
+
+```ts
+const config = defaultConfig(200000, { ccr: { enabled: true } }); // opt-in
+
+// Turn N: pass the previous turn's store back in.
+const { messages, state, contentStore } = core.processTurn({
+  messages, state, config, tokenCount,
+  contentStore, // persisted from turn N-1 (host owns persistence)
+});
+
+// When the model calls acp_retrieve({ ref }):
+const hit = core.retrieve(contentStore, "m00042");
+if (hit.ok) {
+  // hit.text      — the original bytes
+  // hit.injection — trailing request-only message to append for this request
+  // hit.ackText   — short tool-result ack string
+} else {
+  // hit.ackText — not-found notice (hallucinated ref costs one tool call)
+}
+```
+
+Placeholder wire shape (deterministic — same inputs always produce identical
+bytes, so the visible text is byte-stable after arrival and prefix-cache
+friendly):
+
+```
+📦 [acp-stored #m00423 · shell output · 4,213 tok] `npm run build`
+   → acp_retrieve("m000423") returns the full text
+```
+
+Contract guarantees:
+
+- **Replace-once-at-arrival.** The visible bytes change exactly once
+  (original → placeholder); every later turn sees identical bytes.
+- **Tool-pair integrity.** Only the tool-result's own content shrinks; the
+  paired assistant `tool_calls` survive untouched (OpenAI-family wire pairing).
+- **id-never-reused safe.** The store is per-ref append-only, first-write-wins,
+  and never reissues or recycles refs. Refs stay retrievable even if a host
+  prunes its own `messageRefs` map after compaction (e.g. billion-context
+  archive), because lookup happens against the store, not the ref map.
+- **Ephemeral retrieval.** `acp_retrieved_*` messages are skipped by assign-refs
+  and excluded from block coverage — they consume no ref and enter no fold
+  space. Hosts may strip them after the request (nudge channel); if they
+  round-trip anyway, the kernel handles them safely.
+- **Coexists with absorb.** Placeholder-marked results are never absorb
+  candidates (ID-reference wins); absorb keeps handling semantic distillation
+  of everything else.
+
+Persistence: the store is plain JSON (`{ version: 1, byHash, byRef }`) — hosts
+persist it alongside `CompressionState` (same StateStore envelope path as
+blockContents). Content-addressed dedup means identical bytes are written once.
+`core.status(...)` reports `breakdown.storedMessages` and
+`breakdown.retrievals` so a host can measure retrieve rate.
+
+For folded-range retention (v2 groundwork), hosts can call
+`storeCoveredOriginals(store, messages, compressedState, [blockId], countTokens)`
+right after `applyCompression` so pruned originals stay retrievable by ref.
+
 **Token counts in rendered tags are snapshots.** Each message's
 `<acp tokens="N">` attribute is frozen at the tag's first render (the
 per-message `tokenSnapshot` in state) and is not recomputed when the message
@@ -103,6 +172,7 @@ live-recomputed tags, use `renderVisibleRefs` directly.
 | `buildStatusReport` / `buildRecap` | Context-usage report + block recap |
 | `mergeMarkedBlocks` / `collectOldGenBlocks` | Batch merge old-gen blocks into one summary |
 | `rebuildCompressionState` | Fork-recovery: replay historical compress calls |
+| `MessageContentStore` / `storeLargeResults` / `retrieveByRef` / `storeCoveredOriginals` | CCR content store: per-session, content-addressed dedup of tool-result originals + on-demand retrieval (see "CCR" above) |
 | `applyMessageFilters` | Pluggable message-filter framework |
 | `resolveTransformChannel` | Channel-selection policy: an explicit preference wins; the default is the wire channel only when the caller reports it viable |
 | `applySectionOverrides` / `cloneWithDescriptions` / `applyAcpToolOverrides` | Prompt/tool *surface* customization (see below) |

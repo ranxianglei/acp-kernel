@@ -35,7 +35,9 @@ export function defaultConfig(
     absorb: {
       enabled: false,
       toolName: "absorb",
-      minToolTokens: 1000,
+      // Raised 1000 → 4000 (issue #352): lossless CCR takes over large-result
+      // handling; absorb's forced distillation only fires above the new bar.
+      minToolTokens: 4000,
       contextThresholdPct: 0,
       excludeTools: [],
     },
@@ -49,6 +51,13 @@ export function defaultConfig(
       maxDimension: 1280,
       quality: 80,
       format: "webp",
+    },
+    ccr: {
+      enabled: false,
+      toolName: "acp_retrieve",
+      minToolTokens: 4000,
+      excludeTools: [],
+      maxHeadChars: 96,
     },
   };
   return {
@@ -65,6 +74,7 @@ export function defaultConfig(
     imageCompression: overrides.imageCompression
       ? { ...base.imageCompression, ...overrides.imageCompression }
       : base.imageCompression,
+    ccr: overrides.ccr ? { ...base.ccr, ...overrides.ccr } : base.ccr,
   };
 }
 
@@ -191,6 +201,23 @@ export function validateConfig(config: Config): string[] {
       ic.format !== "png"
     ) {
       errors.push('imageCompression.format must be "webp", "jpeg", or "png"');
+    }
+  }
+  if (config.ccr) {
+    if (config.ccr.enabled && !config.ccr.toolName) {
+      errors.push("ccr.toolName must be a non-empty string when enabled");
+    }
+    if (
+      !Number.isFinite(config.ccr.minToolTokens) ||
+      config.ccr.minToolTokens < 0
+    ) {
+      errors.push("ccr.minToolTokens must be >= 0");
+    }
+    if (
+      !Number.isFinite(config.ccr.maxHeadChars) ||
+      config.ccr.maxHeadChars < 0
+    ) {
+      errors.push("ccr.maxHeadChars must be >= 0");
     }
   }
   return errors;

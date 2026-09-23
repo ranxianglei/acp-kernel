@@ -1,3 +1,5 @@
+import type { MessageContentStore } from "./content-store.js";
+
 export type MessageRole = "user" | "assistant" | "system" | "tool";
 
 export type MessageContentType =
@@ -98,6 +100,10 @@ export interface CompressionStats {
   imageBytesSaved?: number;
   /** Cumulative estimated-token savings from image downsampling. */
   imageTokensSaved?: number;
+  /** Cumulative messages stored in the CCR content store. Optional for pre-CCR persisted states. */
+  storedCount?: number;
+  /** Cumulative successful acp_retrieve calls. Optional for pre-CCR persisted states. */
+  retrievalCount?: number;
 }
 
 /** One instant tool-result absorption: the original tool-call + tool-result
@@ -213,6 +219,18 @@ export interface ImageShrinkRecord {
   /** Kernel token estimate of the shrunk payload. */
   tokensAfter: number;
   createdAt: number;
+}
+
+export interface CcrConfig {
+  enabled: boolean;
+  /** Model-facing retrieve tool name (adapters may rename, e.g. acp_retrieve). */
+  toolName: string;
+  /** Only tool results >= this many tokens are stored + replaced. 0 = all. */
+  minToolTokens: number;
+  /** Tool-name patterns (glob suffix allowed) never CCR-stored, independent of protectedTools. */
+  excludeTools: string[];
+  /** Max characters for the placeholder's head/command preview. */
+  maxHeadChars: number;
 }
 
 export interface CompressionState {
@@ -338,6 +356,8 @@ export interface Config {
   crush?: CrushConfig;
   /** Image pre-compression routing/downsample + image_full restore (see image-compress.ts). Absent/disabled = feature off. */
   imageCompression?: ImageCompressionConfig;
+  /** Lossless content-cached retrieval for oversized tool results (see ccr.ts). Absent/disabled = feature off. */
+  ccr?: CcrConfig;
   messageFilters?: import("./filter/types.js").MessageFiltersConfig;
 }
 
@@ -497,6 +517,10 @@ export interface ProcessTurnResult {
   /** Set when emergency truncation ran at/above its threshold but reclaimed
    *  nothing — hosts should warn-log this (it was silent before, #300). */
   truncationSkipped?: string;
+  /** Per-session content store after this turn (pass back as input.contentStore
+   *  next turn and persist via the host's own mechanism). Always present;
+   *  empty until CCR stores something. */
+  contentStore: MessageContentStore;
 }
 
 export interface StatusReport {

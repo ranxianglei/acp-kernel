@@ -592,6 +592,8 @@ test("createInitialState seeds image counters and empty sticky arrays", () => {
     imagesShrunk: 0,
     imageBytesSaved: 0,
     imageTokensSaved: 0,
+    storedCount: 0,
+    retrievalCount: 0,
   });
   assert.deepEqual(s.imageFullRestored, []);
   assert.deepEqual(s.imageShrinks, []);

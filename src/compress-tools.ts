@@ -557,8 +557,8 @@ export const ACP_READONLY_TOOLS_RESPONSES = [
 ] as const;
 
 /** All ACP tool names (dynamic membership — Set, not a static record). Does
- *  NOT include absorb: it is opt-in (config.absorb.enabled) and hosts only
- *  register/inject it when the feature is on. */
+ *  NOT include absorb or acp_retrieve: both are opt-in (config.absorb.enabled
+ *  / config.ccr.enabled) and hosts only register/inject them when on. */
 export const ACP_TOOL_NAMES: ReadonlySet<string> = new Set([
   COMPRESS_TOOL_NAME,
   DECOMPRESS_TOOL_NAME,
@@ -716,6 +716,25 @@ const IMAGE_FULL_PARAMETERS = {
   required: ["ref"],
 };
 
+/** Opt-in retrieve tool (lossless content-cached retrieval). Inject/register
+ *  only when config.ccr.enabled — NOT part of ACP_TOOLS_* arrays (same
+ *  opt-in pattern as absorb). */
+export const RETRIEVE_TOOL_NAME = "acp_retrieve";
+
+export const RETRIEVE_TOOL_DESCRIPTION =
+  "Retrieve the full original text of a stored tool result. REQUIRED when you need details from a placeholder that starts with 📦 [acp-stored #mNNNNN: pass its ref. Returns the exact original text; the placeholder stays in context. Unknown refs return not-found.";
+
+const RETRIEVE_PARAMETERS = {
+  type: "object" as const,
+  properties: {
+    ref: {
+      type: "string",
+      description: "mNNNNN ref shown in the 📦 [acp-stored placeholder",
+    },
+  },
+  required: ["ref"],
+};
+
 export const IMAGE_FULL_TOOL = {
   name: IMAGE_FULL_TOOL_NAME,
   description: IMAGE_FULL_TOOL_DESCRIPTION,
@@ -737,3 +756,26 @@ export const IMAGE_FULL_TOOL_RESPONSES = {
   description: IMAGE_FULL_TOOL_OPENAI.function.description,
   parameters: IMAGE_FULL_TOOL_OPENAI.function.parameters,
 };
+
+export const RETRIEVE_TOOL = {
+  name: RETRIEVE_TOOL_NAME,
+  description: RETRIEVE_TOOL_DESCRIPTION,
+  input_schema: RETRIEVE_PARAMETERS,
+};
+
+export const RETRIEVE_TOOL_OPENAI = {
+  type: "function" as const,
+  function: {
+    name: RETRIEVE_TOOL_NAME,
+    description: RETRIEVE_TOOL_DESCRIPTION,
+    parameters: RETRIEVE_PARAMETERS,
+  },
+};
+
+export const RETRIEVE_TOOL_RESPONSES = {
+  type: "function" as const,
+  name: RETRIEVE_TOOL_NAME,
+  description: RETRIEVE_TOOL_DESCRIPTION,
+  parameters: RETRIEVE_PARAMETERS,
+};
+

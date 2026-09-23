@@ -113,19 +113,30 @@ type Config = {
 interface CompressionCore {
     // Per-turn node pipeline (replaces the message-transform hook's algorithm part).
     // Runs every turn (canonical order): assign-refs → sync-blocks → merge-blocks →
-    // prune → filter → hide-compress-calls → nudge-inject → emergency-truncate →
-    // render-refs. Survives/promotes blocks via advanceSurvival (no age-based
-    // deactivation). Returns transformed messages + updated state + nudge decision.
+    // prune → ccr-store → filter → hide-compress-calls → nudge-inject →
+    // emergency-truncate → render-refs. Survives/promotes blocks via advanceSurvival
+    // (no age-based deactivation). Returns transformed messages + updated state +
+    // nudge decision + the (possibly grown) content store.
     processTurn(input: {
         messages: CoreMessage[];
         state: CompressionState;
         config: Config;
         tokenCount: number;
+        /** Per-session CCR content store from the previous turn (optional; an
+         *  empty store is created when omitted). */
+        contentStore?: MessageContentStore;
     }): {
         messages: CoreMessage[];
         state: CompressionState;
         nudge?: NudgeDecision;
+        /** Always present; pass back as input.contentStore next turn. */
+        contentStore: MessageContentStore;
     };
+
+    // When the model calls acp_retrieve. Pure lookup over the host-provided store
+    // plus an ephemeral injection message (id prefix acp_retrieved_*) that consumes
+    // no ref and never enters fold space. Hallucinated refs → not-found ack.
+    retrieve(store: MessageContentStore, ref: string): ApplyRetrieveResult;
 
     // When the model calls compress. `ranges[].summary` is model-produced text.
     // Allocates block(s), deactivates consumed blocks, updates indices, resets the

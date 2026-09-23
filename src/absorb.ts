@@ -1,5 +1,6 @@
 import { rawForRef, refForRaw, BLOCKED_REF } from "./refs.js";
 import { ACP_TOOL_NAMES, ABSORB_TOOL_NAME } from "./compress-tools.js";
+import { isStoredPlaceholderText } from "./ccr.js";
 import {
   collectLatestProtected,
   isMessageLatestProtected,
@@ -31,7 +32,9 @@ export const ABSORB_PROMPT_MARKER = "[ACP absorb]";
 export const DEFAULT_ABSORB_CONFIG: AbsorbConfig = {
   enabled: false,
   toolName: ABSORB_TOOL_NAME,
-  minToolTokens: 1000,
+  // Raised 1000 → 4000 (issue #352): lossless CCR takes over large-result
+  // handling; absorb's forced distillation only fires above the new bar.
+  minToolTokens: 4000,
   contextThresholdPct: 0,
   excludeTools: [],
 };
@@ -86,6 +89,7 @@ export function isAbsorbCandidate(
   latest?: LatestProtected,
 ): boolean {
   if (msg.contentType !== "tool-result" || !msg.toolCallId) return false;
+  if (isStoredPlaceholderText(msg.text ?? "")) return false;
   const cfg = resolveAbsorbConfig(config);
   if (isAcpOrConfiguredTool(msg.toolName, cfg)) return false;
   if (isMessageProtected(msg, config)) return false;

@@ -157,6 +157,23 @@ export interface RulesConfig {
   maxRuleChars?: number;
 }
 
+export interface CrushStrategyOverride {
+  /** Set false to disable this strategy even when crush is enabled. Default true. */
+  enabled?: boolean;
+  /** Tool-name patterns (glob suffix allowed) this strategy skips. */
+  excludeTools?: string[];
+}
+
+/** Deterministic tool-result compression ("crush") — tier 1 of the absorb
+ *  gate (see crush.ts). Absent/disabled = feature off. */
+export interface CrushConfig {
+  enabled: boolean;
+  /** Minimum relative size reduction to accept a crushed result. In (0, 1]. */
+  minReduction: number;
+  /** Per-strategy toggles/exclusions keyed by plugin id (json-fold, code-trim, log-select, ...). */
+  strategies?: Record<string, CrushStrategyOverride>;
+}
+
 export interface CompressionState {
   blocks: CompressionBlock[];
   messageRefs: MessageRefMap;
@@ -272,6 +289,8 @@ export interface Config {
   absorb?: AbsorbConfig;
   /** Persistent acp_rule reminders (see rules.ts). Absent/disabled = feature off. */
   rules?: RulesConfig;
+  /** Deterministic tool-result compression, tier 1 of the absorb gate (see crush.ts). Requires absorb enabled. */
+  crush?: CrushConfig;
   messageFilters?: import("./filter/types.js").MessageFiltersConfig;
 }
 

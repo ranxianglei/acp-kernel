@@ -35,6 +35,7 @@ acp-kernel/
 ├── src/
 │   ├── index.ts              # Barrel export
 │   ├── compress.ts           # Core: processTurn, applyCompression, decideNudge, pipeline nodes
+│   ├── crush.ts              # Tool-result valuator + deterministic crush strategies (two-tier absorb gate)
 │   ├── boundaries.ts         # Range boundary resolution (startId/endId → message indices)
 │   ├── filter.ts             # Protected tool message filtering
 │   ├── nudge.ts              # Nudge text rendering

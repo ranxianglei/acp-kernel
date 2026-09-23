@@ -39,6 +39,10 @@ export function defaultConfig(
       contextThresholdPct: 0,
       excludeTools: [],
     },
+    crush: {
+      enabled: false,
+      minReduction: 0.1,
+    },
   };
   return {
     ...base,
@@ -50,6 +54,7 @@ export function defaultConfig(
     absorb: overrides.absorb
       ? { ...base.absorb, ...overrides.absorb }
       : base.absorb,
+    crush: overrides.crush ? { ...base.crush, ...overrides.crush } : base.crush,
   };
 }
 
@@ -127,6 +132,35 @@ export function validateConfig(config: Config): string[] {
         config.rules.maxRuleChars < 1)
     ) {
       errors.push("rules.maxRuleChars must be >= 1");
+    }
+  }
+  if (config.crush) {
+    if (
+      !Number.isFinite(config.crush.minReduction) ||
+      config.crush.minReduction <= 0 ||
+      config.crush.minReduction > 1
+    ) {
+      errors.push("crush.minReduction must be in (0, 1]");
+    }
+    if (config.crush.strategies) {
+      for (const [id, ov] of Object.entries(config.crush.strategies)) {
+        if (!ov || typeof ov !== "object" || Array.isArray(ov)) {
+          errors.push(`crush.strategies.${id} must be an object`);
+          continue;
+        }
+        if (ov.enabled !== undefined && typeof ov.enabled !== "boolean") {
+          errors.push(`crush.strategies.${id}.enabled must be a boolean`);
+        }
+        if (
+          ov.excludeTools !== undefined &&
+          (!Array.isArray(ov.excludeTools) ||
+            ov.excludeTools.some((t) => typeof t !== "string"))
+        ) {
+          errors.push(
+            `crush.strategies.${id}.excludeTools must be a string array`,
+          );
+        }
+      }
     }
   }
   return errors;

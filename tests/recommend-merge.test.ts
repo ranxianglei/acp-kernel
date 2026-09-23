@@ -237,3 +237,64 @@ test("invariant: every emitted batch alone clears minChars", () => {
     }
   }
 });
+
+// Ranges carrying array positions (as buildCompressibleRanges always emits).
+// A physical gap between endIndex+1 and the next startIndex marks a block /
+// protected / pruned boundary that batching must never bridge (#498).
+function indexedRange(
+  chars: number,
+  startIdx: number,
+  endIdx: number,
+  startRef: string,
+  endRef: string,
+): CompressibleRange {
+  return makeRange({
+    tokens: Math.round(chars / 4),
+    chars,
+    count: endIdx - startIdx + 1,
+    startRef,
+    endRef,
+    startIndex: startIdx,
+    endIndex: endIdx,
+  });
+}
+
+test("does not bridge an array-index gap even when the sum clears the threshold (#498)", () => {
+  // Pre-gap region is contiguous but sub-threshold (4000 < 5000); a block owns
+  // array slots 4..9; the post-gap region clears the gate on its own.
+  const ranges = [
+    indexedRange(2000, 0, 1, "m00001", "m00002"),
+    indexedRange(2000, 2, 3, "m00003", "m00004"),
+    indexedRange(3000, 10, 12, "m00011", "m00013"),
+    indexedRange(3000, 13, 15, "m00014", "m00016"),
+  ];
+  const out = mergeRangesToThreshold(ranges, 5000);
+  assert.equal(out.length, 1, "only the post-gap region qualifies");
+  assert.equal(out[0]!.startRef, "m00011");
+  assert.equal(out[0]!.endRef, "m00016");
+  assert.deepEqual([out[0]!.startIndex, out[0]!.endIndex], [10, 15]);
+});
+
+test("two gapped regions each clearing the gate stay separate batches (#498)", () => {
+  const ranges = [
+    indexedRange(3000, 0, 1, "m00001", "m00002"),
+    indexedRange(3000, 2, 3, "m00003", "m00004"),
+    indexedRange(3000, 10, 11, "m00011", "m00012"),
+    indexedRange(3000, 12, 13, "m00013", "m00014"),
+  ];
+  const out = mergeRangesToThreshold(ranges, 5000);
+  assert.equal(out.length, 2, "each side of the block is its own batch");
+  assert.deepEqual([out[0]!.startIndex, out[0]!.endIndex], [0, 3]);
+  assert.deepEqual([out[1]!.startIndex, out[1]!.endIndex], [10, 13]);
+});
+
+test("sub-threshold tail separated by a gap is dropped, not folded across the block (#498)", () => {
+  const ranges = [
+    indexedRange(3000, 0, 1, "m00001", "m00002"),
+    indexedRange(3000, 2, 3, "m00003", "m00004"),
+    indexedRange(2000, 10, 11, "m00011", "m00012"),
+  ];
+  const out = mergeRangesToThreshold(ranges, 5000);
+  assert.equal(out.length, 1, "the sub-threshold post-gap tail is dropped");
+  assert.deepEqual([out[0]!.startIndex, out[0]!.endIndex], [0, 3]);
+});

@@ -13,7 +13,7 @@ export type AnthropicToolUse = {
 export type AnthropicToolResult = {
     type: "tool_result";
     tool_use_id: string;
-    content: string | AnthropicTextBlock[];
+    content: string | (AnthropicTextBlock | AnthropicImage)[];
     is_error?: boolean;
     cache_control?: unknown;
 };
@@ -98,7 +98,10 @@ export function anthropicToCore(body: AnthropicRequestBody): Flat {
                     break;
                 }
                 case "tool_result": {
-                    const text = typeof b.content === "string" ? b.content : b.content.map((c) => c.text).join("\n");
+                    // Non-text blocks (image) carry bytes outside msg.text; ride
+                    // the sidecar so coreToAnthropic re-emits them verbatim (#366).
+                    const hasNonText = Array.isArray(b.content) && b.content.some((c) => c.type !== "text");
+                    const text = typeof b.content === "string" ? b.content : b.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
                     const base = deriveMessageId("tool", "tool-result", text, { toolCallId: b.tool_use_id });
                     const id = clusters.next(base);
                     const name = toolNames.get(b.tool_use_id);
@@ -110,6 +113,7 @@ export function anthropicToCore(body: AnthropicRequestBody): Flat {
                         text,
                         ...(name ? { toolName: name } : {}),
                         ...(b.is_error === true ? { toolIsError: true } : {}),
+                        ...(hasNonText ? { rawAnthropicBlock: b } : {}),
                     });
                     if (b.cache_control) cacheControls.set(id, b.cache_control);
                     break;
@@ -181,6 +185,10 @@ export function coreToAnthropic(messages: BiliMessage[], cacheControls?: Map<str
                 });
                 break;
             case "tool-result":
+                if (m.rawAnthropicBlock) {
+                    current.blocks.push(m.rawAnthropicBlock as AnthropicBlock);
+                    break;
+                }
                 current.blocks.push({
                     type: "tool_result",
                     tool_use_id: m.toolCallId ?? "",

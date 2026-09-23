@@ -738,3 +738,73 @@ test("responses: type-less non-message items stay in the preamble", () => {
     assert.equal(preamble.length, 1);
     assert.deepEqual(preamble[0], { foo: "bar" });
 });
+
+// --- Anthropic tool_result embedded media (#366) ---
+
+const TR_IMG_SOURCE = { type: "base64", media_type: "image/png", data: IMG_DATA };
+
+function trBody(content: AnthropicToolResult["content"], extra: Record<string, unknown> = {}): AnthropicRequestBody {
+    return {
+        model: "claude",
+        max_tokens: 100,
+        messages: [
+            { role: "user", content: [{ type: "text", text: "run the tool" }] },
+            { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "screenshot", input: {} }] },
+            { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content, ...extra }] },
+        ],
+    };
+}
+
+function rebuiltToolResult(msgs: ReturnType<typeof anthropicToCore>["msgs"]): Record<string, unknown> {
+    const rebuilt = coreToAnthropic(msgs);
+    const userMsg = rebuilt.filter((m) => m.role === "user").pop()!;
+    return block(userMsg, 0);
+}
+
+test("anthropic: tool_result [text, image] round-trips the image verbatim", () => {
+    const original = { type: "text" as const, text: "done" };
+    const body = trBody([original, { type: "image", source: TR_IMG_SOURCE }]);
+    const { msgs } = anthropicToCore(body);
+    const res = msgs.find((m) => m.contentType === "tool-result")!;
+    assert.ok(res.rawAnthropicBlock, "sidecar carries the original block");
+    // Text extraction (and thus the id seed) is unchanged by the fix.
+    assert.equal(res.text, "done\n");
+    const tr = rebuiltToolResult(msgs);
+    assert.deepEqual(tr.content, [original, { type: "image", source: TR_IMG_SOURCE }], "content array re-emitted verbatim, original order");
+});
+
+test("anthropic: image-only tool_result survives (empty text)", () => {
+    const body = trBody([{ type: "image", source: TR_IMG_SOURCE }]);
+    const { msgs } = anthropicToCore(body);
+    const res = msgs.find((m) => m.contentType === "tool-result")!;
+    assert.equal(res.text, "");
+    assert.ok(res.rawAnthropicBlock);
+    const tr = rebuiltToolResult(msgs);
+    assert.deepEqual(tr.content, [{ type: "image", source: TR_IMG_SOURCE }]);
+});
+
+test("anthropic: tool_result is_error + cache_control survive via sidecar", () => {
+    const body = trBody(
+        [{ type: "text", text: "boom" }, { type: "image", source: TR_IMG_SOURCE }],
+        { is_error: true, cache_control: { type: "ephemeral" } },
+    );
+    const { msgs } = anthropicToCore(body);
+    const tr = rebuiltToolResult(msgs);
+    assert.equal(tr.is_error, true, "is_error reconstructed");
+    assert.deepEqual(tr.cache_control, { type: "ephemeral" }, "cache_control reconstructed");
+});
+
+test("anthropic: string and text-only tool_results keep the legacy shape", () => {
+    const strBody = trBody("done");
+    const strMsgs = anthropicToCore(strBody).msgs;
+    const strRes = strMsgs.find((m) => m.contentType === "tool-result")!;
+    assert.equal(strRes.rawAnthropicBlock, undefined, "string content gets no sidecar");
+    assert.equal(rebuiltToolResult(strMsgs).content, "done", "string content stays a string");
+
+    const arrBody = trBody([{ type: "text", text: "a" }, { type: "text", text: "b" }]);
+    const arrMsgs = anthropicToCore(arrBody).msgs;
+    const arrRes = arrMsgs.find((m) => m.contentType === "tool-result")!;
+    assert.equal(arrRes.rawAnthropicBlock, undefined, "text-only array gets no sidecar");
+    assert.equal(arrRes.text, "a\nb");
+    assert.equal(rebuiltToolResult(arrMsgs).content, "a\nb", "text-only array keeps the joined-string rebuild");
+});

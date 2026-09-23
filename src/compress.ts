@@ -26,6 +26,7 @@ import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
 import {
   collectLatestProtected,
+  hasMediaPayload,
   isMessageLatestProtected,
   isMessageProtected,
 } from "./protected.js";
@@ -598,11 +599,15 @@ const assignRefsNode: PipelineNode = {
     const latest = hasProtection
       ? collectLatestProtected(io.messages, ctx.config)
       : undefined;
-    const protectedFn = hasProtection
-      ? (m: CoreMessage) =>
-          isMessageProtected(m, ctx.config) ||
+    // Media payloads (image/file sidecars) ride outside msg.text; folding one
+    // destroys it permanently (#1188), so media messages always get a BLOCKED
+    // ref — never advertised, never folded — regardless of tool-protection config.
+    const protectedFn = (m: CoreMessage) =>
+      hasMediaPayload(m) ||
+      (hasProtection
+        ? isMessageProtected(m, ctx.config) ||
           (latest ? isMessageLatestProtected(m, latest) : false)
-      : undefined;
+        : false);
     const refResult = assignRefs(io.messages, {
       existing: io.state.messageRefs,
       nextIndex: highestUsedIndex(io.state.messageRefs) + 1,
@@ -994,6 +999,16 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     }
   }
 
+  const mediaExcluded = directMessageIds.filter((id) => {
+    const msg = input.messages.find((m) => m.id === id);
+    return !!msg && hasMediaPayload(msg);
+  });
+  if (mediaExcluded.length > 0) {
+    warnings.push(
+      `Excluded ${mediaExcluded.length} message(s) carrying image/attachment payload(s) from compression range — their bytes are unrecoverable once folded (billion-context#1188); enable stripImages to release old ones.`,
+    );
+  }
+
   // SOFT PROTECTION: the recent-N / last-user-message zone is advisory-only at
   // compress time. Instead of failing the whole range when it brushes protected
   // messages, exclude those messages and proceed with the rest (so the model
@@ -1258,6 +1273,7 @@ function filterProtectedToolMessages(
     const msg = messages.find((m) => m.id === id);
     if (!msg) continue;
     if (
+      hasMediaPayload(msg) ||
       isMessageProtected(msg, config) ||
       isMessageLatestProtected(msg, latest)
     ) {

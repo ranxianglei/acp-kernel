@@ -346,6 +346,7 @@ export {
 } from "./search.js";
 export {
   collectLatestProtected,
+  hasMediaPayload,
   isMessageLatestProtected,
   isMessageProtected,
   matchToolPattern,

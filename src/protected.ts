@@ -171,3 +171,40 @@ export function isMessageLatestProtected(
   }
   return false;
 }
+
+/** Wire-sidecar fields carrying media/attachment payloads whose bytes live
+ *  OUTSIDE msg.text (images, or opaque file refs such as DeepSeek Files API
+ *  `{type:"file"}`). Folding such a message into a summary destroys the
+ *  payload permanently: hosts rebuild requests from their own history and the
+ *  kernel holds no server-side archive (billion-context#1188). Typed
+ *  structurally rather than as BiliMessage because core modules must not
+ *  import from src/wire/. */
+interface MediaSidecar {
+  imageBase64?: string;
+  rawOpenaiContent?: unknown;
+  rawOpenaiContentParts?: unknown[];
+  rawAnthropicBlock?: unknown;
+  rawResponsesItem?: unknown;
+}
+
+export function hasMediaPayload(msg: CoreMessage): boolean {
+  const m = msg as CoreMessage & MediaSidecar;
+  if (typeof m.imageBase64 === "string" && m.imageBase64.length > 0) return true;
+  if (m.rawOpenaiContent != null) return true;
+  if (Array.isArray(m.rawOpenaiContentParts) && m.rawOpenaiContentParts.length > 0)
+    return true;
+  if (isObjWith(m.rawAnthropicBlock, "type", "image")) return true;
+  const item = m.rawResponsesItem;
+  if (isObjWith(item, "type", "input_image")) return true;
+  if (item && typeof item === "object") {
+    const content = (item as { content?: unknown }).content;
+    if (Array.isArray(content)) {
+      return content.some((p) => isObjWith(p, "type", "input_image"));
+    }
+  }
+  return false;
+}
+
+function isObjWith(v: unknown, key: string, value: unknown): boolean {
+  return typeof v === "object" && v !== null && (v as Record<string, unknown>)[key] === value;
+}

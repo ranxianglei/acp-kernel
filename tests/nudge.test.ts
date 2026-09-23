@@ -670,6 +670,35 @@ test("arbitration: count-triggered T3 stays silent below the nudge usage band (#
   assert.match(turn.nudge.reason ?? "", /T3 5 blocks \(count, usage-gated\)/);
 });
 
+test("arbitration: growth-triggered T1 stays silent below the nudge usage band (#1198)", () => {
+  const core = createCore();
+  // Repro shape from billion-context#1198: 1M window, default growth band
+  // (floor==cap==50K → interval pinned at 50000), growthFloor = max(20K,
+  // 0.45*50K) = 22.5K. A file-read batch adds ~55K compressible tokens at
+  // 16% usage — old code injected T1 here on every batch, pinning context
+  // far below the limit and forcing re-read loops.
+  const config = buildConfig({ modelContextLimit: 1_000_000 });
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 100_000 }).state;
+  const turn = core.processTurn({ messages, state, config, tokenCount: 160_000 });
+  assert.equal(turn.nudge.shouldInject, false, `reason: ${turn.nudge.reason}`);
+  assert.match(turn.nudge.reason ?? "", /usage 16% < 45% — T1 growth suppressed below usage band/);
+});
+
+test("arbitration: growth-triggered T1 fires once usage enters the nudge band (#1198 boundary)", () => {
+  const core = createCore();
+  const config = buildConfig({ modelContextLimit: 1_000_000 });
+  const messages = makeMessages(10);
+  let state = createInitialState();
+  state = core.processTurn({ messages, state, config, tokenCount: 400_000 }).state;
+  // Same pending mass (~55K) and growth (60K >= 22.5K floor), but usage
+  // 46% >= 45% band → T1 injects again.
+  const turn = core.processTurn({ messages, state, config, tokenCount: 460_000 });
+  assert.equal(turn.nudge.shouldInject, true, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, 1);
+});
+
 test("arbitration: T2 fires on tier-1 block COUNT (tier2Trigger) even when summary tokens are small", () => {
   const core = createCore();
   const config = buildConfig({ preserveRecentMessages: 30 });

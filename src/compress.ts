@@ -1511,7 +1511,16 @@ function decideNudge(input: NudgeInput): NudgeDecision {
           : `${label} T${best} distill: max pending ${bestPending} (T1 effective ${t1Eff}, T2 ${t2Pen}, T3 ${t3Pen}), usage ${Math.round(usage * 100)}%`;
     }
   } else if (growthReady) {
-    if (t1Eff >= nudgeGrowthTokens) {
+    // Usage-gated like its siblings (#237 gated the tier-COUNT paths;
+    // firstSightMassReady carries the same check): below minContextLimitPct
+    // there is no NEED yet, and the default fixed band (floor==cap==50K)
+    // otherwise fires on every file-read batch at ~10% of a 1M window,
+    // pinning context far below the limit (billion-context#1198). The
+    // token-mass tier paths below stay ungated by design (#237).
+    if (
+      t1Eff >= nudgeGrowthTokens &&
+      usage >= config.nudge.minContextLimitPct
+    ) {
       injectedTier = 1;
       injectedReason = `T1 effective ${t1Eff} >= ${nudgeGrowthTokens}, growth ${growthSinceReference}, usage ${Math.round(usage * 100)}%`;
     } else if (
@@ -1602,6 +1611,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
     // "< threshold" string lied in that case.
     const pendingShort = maxPending < nudgeGrowthTokens;
     const growthShort = growthSinceReference < growthFloor;
+    const belowBand = usage < config.nudge.minContextLimitPct;
     const parts: string[] = [];
     if (pendingShort)
       parts.push(
@@ -1609,6 +1619,12 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       );
     if (growthShort)
       parts.push(`growth ${growthSinceReference} < floor ${growthFloor}`);
+    // Everything ready but usage below the band: name the deferral instead of
+    // falling through to the bare "max compressible X, growth Y" fallback.
+    if (!pendingShort && !growthShort && belowBand)
+      parts.push(
+        `usage ${Math.round(usage * 100)}% < ${Math.round(config.nudge.minContextLimitPct * 100)}% — T1 growth suppressed below usage band`,
+      );
     if (parts.length === 0)
       parts.push(
         `max compressible ${maxPending}, growth ${growthSinceReference}`,

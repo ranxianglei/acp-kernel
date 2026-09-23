@@ -145,6 +145,10 @@ export {
   ABSORB_TOOL_NAME,
   ABSORB_TOOL,
   ABSORB_TOOL_OPENAI,
+  IMAGE_FULL_TOOL_NAME,
+  IMAGE_FULL_TOOL,
+  IMAGE_FULL_TOOL_OPENAI,
+  IMAGE_FULL_TOOL_RESPONSES,
 } from "./compress-tools.js";
 export {
   ABSORB_PROMPT_MARKER,
@@ -209,6 +213,39 @@ export type {
   EvaluateCrushInput,
   ApplyCrushResult,
 } from "./crush.js";
+export {
+  DEFAULT_IMAGE_COMPRESSION_CONFIG,
+  resolveImageCompressionConfig,
+  PIXEL_IMAGE_FALLBACK_TOKENS,
+  parseImageDimensions,
+  parseImageDimensionsFromBase64,
+  pixelTileEstimate,
+  estimateImageTokens,
+  createHeuristicClassifier,
+  DEFAULT_SCREENSHOT_CLASSIFIER,
+  decideImageRoute,
+  buildImageFullSystemNote,
+  parseImageFullInput,
+  recordImageShrink,
+  isImageFullRestored,
+  imageShrinksForRef,
+  applyImageFull,
+  resetImageFullState,
+  IMAGE_FULL_FAILURE_MARKER,
+} from "./image-compress.js";
+export type {
+  ImageDimensions,
+  ImageMeta,
+  ScreenshotClassifier,
+  HeuristicClassifierOptions,
+  ImageRouteReason,
+  DownsampleRecipe,
+  ImageRoutingDecision,
+  ParsedImageFull,
+  ImageStoreEntry,
+  ImageFullInput,
+  ImageFullOutcome,
+} from "./image-compress.js";
 export { rebuildCompressionState } from "./rebuild.js";
 export type { RebuildResult, RebuildPorts } from "./rebuild.js";
 export { parseCompressArgs } from "./parse-compress-input.js";

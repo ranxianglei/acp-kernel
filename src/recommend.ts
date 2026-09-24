@@ -23,9 +23,11 @@ import type { CompressionState } from "./types.js";
 import {
   collectLatestProtected,
   collectProtectedToolCallIds,
+  collectRulePairProtection,
   hasMediaPayload,
   isMessageLatestProtected,
   isMessageProtectedWithPairing,
+  isMessageRuleProtected,
   isNeverPreserveRecent,
 } from "./protected.js";
 import { countMessageTokens } from "./tokenize.js";
@@ -177,6 +179,8 @@ export function buildCompressibleRanges(
   // matches tool-results).
   const latest = collectLatestProtected(messages, config);
   for (const id of latest.callIds) protectedCallIds.add(id);
+  // acp_rule record pairs: conditional protection derived from the stream.
+  const ruleProt = collectRulePairProtection(messages);
 
   // Segmentation is array adjacency, never ref arithmetic: surface-replacing
   // hosts leave holes in the ref map (compressed messages leave the array, refs
@@ -209,7 +213,8 @@ export function buildCompressibleRanges(
 
     if (
       isMessageProtectedWithPairing(msg, config, protectedCallIds) ||
-      isMessageLatestProtected(msg, latest)
+      isMessageLatestProtected(msg, latest) ||
+      isMessageRuleProtected(msg, ruleProt)
     ) {
       protectedMsgs.push({
         ref,

@@ -1,13 +1,18 @@
 import type { Config, CoreMessage } from "./types.js";
+import { RULE_TOOL_NAME } from "./rules.js";
 
 /** Tools that are ALWAYS protected, regardless of user config. These are ACP's
  *  own metadata tools whose records must remain in context: compress calls
  *  carry the summaries that decompress/search rely on, and the system prompt
- *  treats past compress calls as load-bearing metadata. acp_rule calls record
- *  persistent user rules that are re-injected every turn — compressing them
- *  away would silently lose what the rules state. Letting any of these be
- *  compressed away breaks decompress and the "summary is historical" contract. */
-export const ALWAYS_PROTECTED_TOOLS = ["compress", "acp_rule"] as const;
+ *  treats past compress calls as load-bearing metadata. Letting any of these
+ *  be compressed away breaks decompress and the "summary is historical"
+ *  contract.
+ *
+ *  acp_rule pairs used to live here too; they moved to conditional protection
+ *  (collectRulePairProtection below): a recorded rule's pair stays protected
+ *  while the rule is still live, and once the host removes/clears the rule the
+ *  pair becomes ordinary foldable content (billion-context#1177). */
+export const ALWAYS_PROTECTED_TOOLS = ["compress"] as const;
 
 /** Tool results that must NEVER participate in the soft-protected recent zone
  *  (preserveRecentMessages / preserveRecentTokens / last user message).
@@ -207,4 +212,106 @@ export function hasMediaPayload(msg: CoreMessage): boolean {
 
 function isObjWith(v: unknown, key: string, value: unknown): boolean {
   return typeof v === "object" && v !== null && (v as Record<string, unknown>)[key] === value;
+}
+
+/** Result-text prefixes emitted by host acp_rule executors (billion-context's
+ *  executeRule is the reference implementation): successful record / removal /
+ *  full-clear. They form a closed partition of liveness events — no other
+ *  executor outcome starts with them (listings start with a digit or "No",
+ *  errors with lowercase words). */
+const RULE_RECORD_RESULT_RE = /^Recorded (rule\d+): /;
+const RULE_REMOVE_RESULT_RE = /^Removed (rule\d+): /;
+const RULE_CLEAR_RESULT_RE = /^Cleared \d+ rule\(s\)\./;
+
+export interface RulePairProtection {
+  /** toolCallIds whose still-live record pair (call AND result) stays protected. */
+  callIds: Set<string>;
+  /** Message ids of protected halves lacking a pairable toolCallId, plus
+   *  fail-closed malformed record results. */
+  msgIds: Set<string>;
+}
+
+/**
+ * Conditional protection for acp_rule pairs, derived from the visible message
+ * stream itself — no state dependency, because plugin-mode hosts fold in their
+ * own kernel copy, which never sees the server-side rules table, while the
+ * message stream is identical in both modes (billion-context#1177).
+ *
+ * Liveness walk over acp_rule tool-results in message order: `Recorded ruleN:`
+ * adds N, `Removed ruleN:` removes N, `Cleared k rule(s).` clears all. A
+ * record pair is protected iff its id survives the walk (ids are never
+ * re-issued, so final-set membership equals per-event liveness). Every other
+ * acp_rule exchange — removals, clears, listings, failures — is ordinary
+ * compressible content: they are event traces, not persistent reminders, and
+ * pinning them forever would recreate the accumulation problem the feature
+ * exists to fix.
+ *
+ * Fail-closed: a result starting `Recorded ` with an unparseable id keeps its
+ * pair protected (format drift must never silently fold a live rule). Without
+ * any removal/clear events the walk protects every record pair — behaviorally
+ * identical to the old unconditional name-based protection, so this change is
+ * a no-op until hosts actually delete rules.
+ */
+export function collectRulePairProtection(
+  messages: CoreMessage[],
+): RulePairProtection {
+  const callNameById = new Map<string, string>();
+  for (const m of messages) {
+    if (m.contentType === "tool-call" && m.toolCallId && m.toolName) {
+      callNameById.set(m.toolCallId, m.toolName);
+    }
+  }
+  const isRuleResult = (m: CoreMessage): boolean =>
+    m.contentType === "tool-result" &&
+    (m.toolName === RULE_TOOL_NAME ||
+      (m.toolCallId != null &&
+        callNameById.get(m.toolCallId) === RULE_TOOL_NAME));
+
+  const live = new Set<string>();
+  const malformedMsgIds = new Set<string>();
+  const callIds = new Set<string>();
+  for (const m of messages) {
+    if (!isRuleResult(m)) continue;
+    const text = m.text ?? "";
+    const removedId = RULE_REMOVE_RESULT_RE.exec(text)?.[1];
+    if (removedId !== undefined) {
+      live.delete(removedId);
+      continue;
+    }
+    if (RULE_CLEAR_RESULT_RE.test(text)) {
+      live.clear();
+      continue;
+    }
+    const recordedId = RULE_RECORD_RESULT_RE.exec(text)?.[1];
+    if (recordedId !== undefined) {
+      live.add(recordedId);
+    } else if (text.startsWith("Recorded ")) {
+      malformedMsgIds.add(m.id);
+      if (m.toolCallId) callIds.add(m.toolCallId);
+    }
+  }
+
+  const msgIds = new Set<string>(malformedMsgIds);
+  for (const m of messages) {
+    if (!isRuleResult(m)) continue;
+    const recordedId = RULE_RECORD_RESULT_RE.exec(m.text ?? "")?.[1];
+    if (recordedId === undefined || !live.has(recordedId)) continue;
+    if (m.toolCallId) callIds.add(m.toolCallId);
+    else msgIds.add(m.id);
+  }
+  return { callIds, msgIds };
+}
+
+/** True when msg is half of a still-live record pair per
+ *  collectRulePairProtection (both halves share the pair's toolCallId), or a
+ *  fail-closed malformed record result. */
+export function isMessageRuleProtected(
+  msg: CoreMessage,
+  protection: RulePairProtection,
+): boolean {
+  if (msg.contentType !== "tool-call" && msg.contentType !== "tool-result") {
+    return false;
+  }
+  if (protection.msgIds.has(msg.id)) return true;
+  return msg.toolCallId != null && protection.callIds.has(msg.toolCallId);
 }

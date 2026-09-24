@@ -346,11 +346,14 @@ export {
 } from "./search.js";
 export {
   collectLatestProtected,
+  collectRulePairProtection,
   hasMediaPayload,
   isMessageLatestProtected,
   isMessageProtected,
+  isMessageRuleProtected,
   matchToolPattern,
   type LatestProtected,
+  type RulePairProtection,
 } from "./protected.js";
 export {
   runPipeline,

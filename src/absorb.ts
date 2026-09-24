@@ -3,10 +3,13 @@ import { ACP_TOOL_NAMES, ABSORB_TOOL_NAME } from "./compress-tools.js";
 import { isStoredPlaceholderText } from "./ccr.js";
 import {
   collectLatestProtected,
+  collectRulePairProtection,
   isMessageLatestProtected,
   isMessageProtected,
+  isMessageRuleProtected,
   matchToolPattern,
   type LatestProtected,
+  type RulePairProtection,
 } from "./protected.js";
 import type {
   AbsorbConfig,
@@ -87,6 +90,7 @@ export function isAbsorbCandidate(
   msg: CoreMessage,
   config: Config,
   latest?: LatestProtected,
+  rule?: RulePairProtection,
 ): boolean {
   if (msg.contentType !== "tool-result" || !msg.toolCallId) return false;
   if (isStoredPlaceholderText(msg.text ?? "")) return false;
@@ -94,6 +98,7 @@ export function isAbsorbCandidate(
   if (isAcpOrConfiguredTool(msg.toolName, cfg)) return false;
   if (isMessageProtected(msg, config)) return false;
   if (latest && isMessageLatestProtected(msg, latest)) return false;
+  if (rule && isMessageRuleProtected(msg, rule)) return false;
   for (const pattern of cfg.excludeTools) {
     if (msg.toolName && matchToolPattern(msg.toolName, pattern)) return false;
   }
@@ -152,8 +157,9 @@ export function appendAbsorbPrompts(
 
   let promptedCount = 0;
   const latest = collectLatestProtected(messages, config);
+  const ruleProt = collectRulePairProtection(messages);
   const out = messages.map((msg) => {
-    if (!isAbsorbCandidate(msg, config, latest)) return msg;
+    if (!isAbsorbCandidate(msg, config, latest, ruleProt)) return msg;
     if (absorbedIds.has(msg.id)) return msg;
     const text = msg.text ?? "";
     if (text.includes(ABSORB_PROMPT_MARKER)) return msg;
@@ -305,7 +311,8 @@ export function applyAbsorb(input: AbsorbInput): AbsorbOutcome {
     isMessageLatestProtected(
       target,
       collectLatestProtected(input.messages, input.config),
-    )
+    ) ||
+    isMessageRuleProtected(target, collectRulePairProtection(input.messages))
   ) {
     return {
       state: input.state,

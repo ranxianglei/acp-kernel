@@ -228,7 +228,7 @@ Named, swappable surface configurations layered on top of the primitives above:
 
 The nudge system tells the model *when* to compress. It implements:
 
-- **Threshold gate**: fires when context usage ≥ `nudge.minContextLimitPct`.
+- **First-sight mass bypass** (#194): a session that arrives with ready compressible mass ≥ threshold gets its first nudge without waiting for new growth, provided usage ≥ `nudge.minContextLimitPct`. Steady-state nudges are gated on growth/token-mass, not percentage (#379).
 - **Growth-gating**: a repeat nudge requires positive growth since the baseline (prevents re-firing every turn). `"strong"` force relaxes this.
 - **Tier-distillation triggers**: when active tier-1 blocks pile up past `tiers.tier2Trigger`, emit a tier-2 distillation nudge; tier-3 analogously. Block COUNT is not a need signal, so the count path defaults OFF (`tier2Trigger: 1000`, `tier3Trigger: 2000`) — no usage gate: token-mass paths (≥1.5× growthFloor) and the T1 growth path are the need signal and fire ungated (#379, supersedes the #237/#238 usage band).
 - **Compressible-range computation**: reports the actual compressible ranges (excluding covered + preserved-recent messages) so the model knows what to target.

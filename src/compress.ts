@@ -1041,7 +1041,7 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
       throw new Error(
         `Range is entirely within the protected zone (the last ${recentN} messages and/or the most recent user message): ${hitRefs.join(
           ", ",
-        )}. Adjust startId/endId to older messages.`,
+        )}. Adjust startId/endId to older messages — run acp_status and target one of the CURRENT compressible ranges it reports.`,
       );
     }
     warnings.push(

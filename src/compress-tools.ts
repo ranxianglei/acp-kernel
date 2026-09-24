@@ -32,53 +32,107 @@ export const ACP_SEARCH_CLOSE = "</acp_search>";
 export const ACP_DECOMPRESS_OPEN = "<acp_decompress>";
 export const ACP_DECOMPRESS_CLOSE = "</acp_decompress>";
 
+/** Object-form range entry. Both bound spellings are declared because
+ *  parseCompressArgs accepts both (startRef/endRef canonical, startId/endId
+ *  legacy drift) — a pre-validating host must reject nothing the kernel
+ *  accepts (#374). */
+const COMPRESS_RANGE_OBJECT = {
+  type: "object",
+  properties: {
+    topic: { type: "string" },
+    startId: {
+      type: "string",
+      description: "mNNNNN ref at the start of the range",
+    },
+    endId: {
+      type: "string",
+      description: "mNNNNN ref at the end of the range",
+    },
+    startRef: {
+      type: "string",
+      description: "Alternate spelling of startId",
+    },
+    endRef: {
+      type: "string",
+      description: "Alternate spelling of endId",
+    },
+    summary: {
+      type: "string",
+      description: "Self-contained summary replacing the range",
+    },
+  },
+  anyOf: [
+    { required: ["startId", "endId", "summary"] },
+    { required: ["startRef", "endRef", "summary"] },
+  ],
+};
+
+/** Shared parameter schema for every compress wire shape (anthropic
+ *  `input_schema`, openai `function.parameters`, responses flat
+ *  `parameters`). Contract (#374): a deliberate SUPERSET of what
+ *  parseCompressArgs accepts — array content (line strings / range objects),
+ *  string content (bare line form or JSON-encoded array), and the flat
+ *  single-range form ({startId|startRef, endId|endRef, summary}, no content).
+ *  Pre-validating hosts must never kill a call the kernel would honor; do not
+ *  narrow this below the parser without re-checking parse-compress-input.ts.
+ */
+export const COMPRESS_PARAMETERS = {
+  type: "object",
+  properties: {
+    topic: {
+      type: "string",
+      description: "Optional short title for the compressed range",
+    },
+    content: {
+      type: ["array", "string"],
+      description:
+        "One or more ranges to compress into separate summary blocks. Array form (preferred): one entry per range — line form (one STRING per range: first line 'm00150–m00220 optional topic', remaining lines the markdown summary verbatim) or object form {startId,endId,summary,topic?}. String form also accepted: bare line-form text, or a JSON-encoded array of ranges (some gateways stringify arrays). REQUIRED unless the flat single-range form is used.",
+      items: {
+        anyOf: [
+          {
+            type: "string",
+            description:
+              "Line form: first line 'm00150–m00220 optional topic', remaining lines the summary markdown, verbatim (no JSON escaping)",
+          },
+          COMPRESS_RANGE_OBJECT,
+        ],
+      },
+    },
+    startId: {
+      type: "string",
+      description: "Flat single-range form (no content): mNNNNN ref at the start of the range",
+    },
+    endId: {
+      type: "string",
+      description: "Flat single-range form (no content): mNNNNN ref at the end of the range",
+    },
+    startRef: {
+      type: "string",
+      description: "Flat single-range form: alternate spelling of startId",
+    },
+    endRef: {
+      type: "string",
+      description: "Flat single-range form: alternate spelling of endId",
+    },
+    summary: {
+      type: "string",
+      description: "Flat single-range form (no content): self-contained summary replacing the range",
+    },
+  },
+  anyOf: [
+    { required: ["content"] },
+    {
+      required: ["summary"],
+      anyOf: [{ required: ["startId", "endId"] }, { required: ["startRef", "endRef"] }],
+    },
+  ],
+};
+
 export const COMPRESS_TOOL = {
   name: COMPRESS_TOOL_NAME,
   description:
-    "Replace consumed conversation ranges with self-contained summaries you write, identified by their refs. Line form (preferred): content = one STRING per range — first line 'm00150–m00220 optional topic', remaining lines the markdown summary written verbatim (no JSON structure, no escaping). Legacy object form {startId,endId,summary,topic?} also accepted. Use when content is genuinely consumed. REQUIRED — compress without content is invalid.",
-  input_schema: {
-    type: "object",
-    properties: {
-      topic: {
-        type: "string",
-        description: "Optional short title for the compressed range",
-      },
-      content: {
-        type: "array",
-        description:
-          "One or more ranges to compress into separate summary blocks. Line form (preferred): one string per range — first line 'm00150–m00220 optional topic', remaining lines the markdown summary verbatim. Object form also accepted.",
-        items: {
-          anyOf: [
-            {
-              type: "string",
-              description:
-                "Line form: first line 'm00150–m00220 optional topic', remaining lines the summary markdown, verbatim (no JSON escaping)",
-            },
-            {
-              type: "object",
-              properties: {
-                topic: { type: "string" },
-                startId: {
-                  type: "string",
-                  description: "mNNNNN ref at the start of the range",
-                },
-                endId: {
-                  type: "string",
-                  description: "mNNNNN ref at the end of the range",
-                },
-                summary: {
-                  type: "string",
-                  description: "Self-contained summary replacing the range",
-                },
-              },
-              required: ["startId", "endId", "summary"],
-            },
-          ],
-        },
-      },
-    },
-    required: ["content"],
-  },
+    "Replace consumed conversation ranges with self-contained summaries you write, identified by their refs. Line form (preferred): content = one STRING per range — first line 'm00150–m00220 optional topic', remaining lines the markdown summary written verbatim (no JSON structure, no escaping). Also accepted: object entries {startId,endId,summary,topic?} in the content array, content as a single string (bare line form or JSON-encoded array), and a flat single-range call {startId,endId,summary,topic?} without content. Use when content is genuinely consumed. REQUIRED — compress without content or flat range fields is invalid.",
+  input_schema: COMPRESS_PARAMETERS,
 };
 
 export type ParsedRange = {
@@ -160,49 +214,7 @@ export const COMPRESS_TOOL_OPENAI = {
   function: {
     name: COMPRESS_TOOL_NAME,
     description: COMPRESS_TOOL.description,
-    parameters: {
-      type: "object",
-      properties: {
-        topic: {
-          type: "string",
-          description: "Optional short title for the compressed range",
-        },
-        content: {
-          type: "array",
-          description:
-            "One or more ranges to compress into separate summary blocks. Line form (preferred): one string per range — first line 'm00150–m00220 optional topic', remaining lines the markdown summary verbatim. Object form also accepted. REQUIRED — compress without content is invalid.",
-          items: {
-            anyOf: [
-              {
-                type: "string",
-                description:
-                  "Line form: first line 'm00150–m00220 optional topic', remaining lines the summary markdown, verbatim (no JSON escaping)",
-              },
-              {
-                type: "object",
-                properties: {
-                  topic: { type: "string" },
-                  startId: {
-                    type: "string",
-                    description: "mNNNNN ref at the start of the range",
-                  },
-                  endId: {
-                    type: "string",
-                    description: "mNNNNN ref at the end of the range",
-                  },
-                  summary: {
-                    type: "string",
-                    description: "Self-contained summary replacing the range",
-                  },
-                },
-                required: ["startId", "endId", "summary"],
-              },
-            ],
-          },
-        },
-      },
-      required: ["content"],
-    },
+    parameters: COMPRESS_PARAMETERS,
   },
 };
 

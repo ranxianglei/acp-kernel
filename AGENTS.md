@@ -79,6 +79,19 @@ acp-kernel/
    model can cite any number it has ever seen; a re-issued number silently
    misattributes on decompress (wrong content, not an error). This principle
    is why PR #176 (ref reclamation + capacity reuse) was reverted (#191).
+7. **Nudge cadence is flat 50K by design — deliberately NOT window-scaled** —
+   `nudge.growthFloor == nudge.growthCap == 50000` pins `resolveAdaptiveGrowth`
+   at 50000 for every window size; the window-percentage path (`growthRatio`)
+   is intentionally neutralized by these defaults (the percentage-based cadence
+   was deliberately removed). This is a settled product decision, reinforced by
+   #379/#380: growth and token mass are the need signals; block count and usage
+   percentages are not. Do NOT "fix" large windows by scaling the interval with
+   `modelContextLimit` — a 1M-window session folding every 50K of growth is the
+   intended lean-context behavior. Users wanting a lazier cadence configure
+   `growthFloor`/`growthCap` (or bili's `nudgeGrowthTokens`) explicitly. Gentle
+   (growth) nudges are advisory in mechanism — their wording lives in
+   `src/nudge-text.ts` / `src/compression-rules.ts`; only the emergency voice
+   (context limit reached) is mandatory for the model.
 
 ## 3. Development Standards
 

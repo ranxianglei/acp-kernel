@@ -84,6 +84,8 @@ test("defaultConfig provides sensible production defaults", () => {
   assert.equal(cfg.nudge.maxContextLimitPct, 0.75);
   assert.equal(cfg.nudge.emergencyThresholdPct, 0.95);
   assert.ok(cfg.tiers.tier3Trigger > cfg.tiers.tier2Trigger);
+  assert.equal(cfg.tiers.tier2Trigger, 1000);
+  assert.equal(cfg.tiers.tier3Trigger, 2000);
 });
 
 test("defaultConfig has no gc namespace (GC removed)", () => {

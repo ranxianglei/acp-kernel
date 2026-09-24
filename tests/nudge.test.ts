@@ -642,32 +642,36 @@ test("re-baseline after a tokenCount scale drop also resets per-tier cadence sta
   assert.deepEqual(stamped.lastShownByTier, {}, "per-tier cadence stamps must not survive a scale drop");
 });
 
-test("arbitration: count-triggered T2 stays silent below the nudge usage band (#237)", () => {
+test("arbitration: 5 summary blocks stay silent with default triggers (#379 — count path default-off)", () => {
   const core = createCore();
-  const config = buildConfig({ preserveRecentMessages: 30 });
+  const config = buildConfig({ preserveRecentMessages: 30, tiers: { enabled: true, tier2Trigger: 1000, tier3Trigger: 2000 } });
   const messages = makeMessages(30);
   let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50_000 }).state;
   state = { ...state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 400) };
-  // 40k / 100k = 40% < minContextLimitPct 45%: count-ready mass must not inject
+  // The billion-context#1249 repro shape: five condensed-summary blocks at 40%
+  // usage. Under default triggers the count path is OFF — no nudge, no hint.
   const turn = core.processTurn({ messages, state, config, tokenCount: 40_000 });
   assert.equal(turn.nudge.shouldInject, false, `reason: ${turn.nudge.reason}`);
   assert.doesNotMatch(turn.nudge.reason ?? "", /T2 distill ready/);
-  assert.match(turn.nudge.reason ?? "", /T2 5 blocks \(count, usage-gated\)/);
+  assert.doesNotMatch(turn.nudge.reason ?? "", /T2 \d+ blocks \(count\)/, "5 blocks must not read as count-ready under default triggers");
 });
 
-test("arbitration: count-triggered T3 stays silent below the nudge usage band (#237)", () => {
+test("arbitration: count-triggered T3 fires below the old usage band when explicitly configured (#379 — #238 gate deleted)", () => {
   const core = createCore();
   const config = buildConfig({ tiers: { enabled: true, tier2Trigger: 2, tier3Trigger: 3 }, preserveRecentMessages: 30 });
   const messages = makeMessages(30);
-  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50_000 }).state;
+  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 25_000 }).state;
   state = {
     ...state,
     blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 400).map((b) => ({ ...b, tier: 2 })),
   };
+  // 40k / 100k = 40% < the old minContextLimitPct 45% band; growth 15k >=
+  // floor 6000. With the #238 usage gate deleted, explicit count triggers
+  // fire on pure count — percentages no longer gate compression.
   const turn = core.processTurn({ messages, state, config, tokenCount: 40_000 });
-  assert.equal(turn.nudge.shouldInject, false, `reason: ${turn.nudge.reason}`);
-  assert.doesNotMatch(turn.nudge.reason ?? "", /T3 condense ready/);
-  assert.match(turn.nudge.reason ?? "", /T3 5 blocks \(count, usage-gated\)/);
+  assert.equal(turn.nudge.shouldInject, true, `reason: ${turn.nudge.reason}`);
+  assert.equal(turn.nudge.tier, 3);
+  assert.match(turn.nudge.reason ?? "", /T3 condense ready: 5 tier-2 blocks >= tier3Trigger 3/);
 });
 
 test("arbitration: T2 fires on tier-1 block COUNT (tier2Trigger) even when summary tokens are small", () => {

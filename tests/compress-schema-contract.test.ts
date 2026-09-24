@@ -1,0 +1,124 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  COMPRESS_PARAMETERS,
+  COMPRESS_TOOL,
+  COMPRESS_TOOL_OPENAI,
+  COMPRESS_TOOL_RESPONSES,
+} from "../src/compress-tools.js";
+import { parseCompressArgs } from "../src/parse-compress-input.js";
+
+/** Minimal JSON-Schema validator covering exactly the subset
+ *  COMPRESS_PARAMETERS uses (type / properties / required / anyOf / items).
+ *  Stands in for pre-validating hosts (pi-stable-ai typebox Compile +
+ *  Value.Errors) that motivated #374: whatever passes here reaches the
+ *  kernel; whatever the kernel accepts must not be killed here. */
+function typeOk(t: string, v: unknown): boolean {
+  if (t === "array") return Array.isArray(v);
+  if (t === "object") return v !== null && typeof v === "object" && !Array.isArray(v);
+  return typeof v === t;
+}
+
+function validate(schema: Record<string, unknown>, value: unknown): boolean {
+  if (schema.type !== undefined) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    if (!types.some((t) => typeOk(String(t), value))) return false;
+  }
+  if (Array.isArray(value) && schema.items !== undefined) {
+    if (!value.every((item) => validate(schema.items as Record<string, unknown>, item))) return false;
+  }
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    if (Array.isArray(schema.required) && !(schema.required as string[]).every((k) => obj[k] !== undefined)) {
+      return false;
+    }
+    const props = schema.properties as Record<string, Record<string, unknown>> | undefined;
+    if (props) {
+      for (const [k, sub] of Object.entries(props)) {
+        if (obj[k] !== undefined && !validate(sub, obj[k])) return false;
+      }
+    }
+  }
+  if (Array.isArray(schema.anyOf)) {
+    if (!(schema.anyOf as Record<string, unknown>[]).some((sub) => validate(sub, value))) return false;
+  }
+  return true;
+}
+
+/** The contract under test: schema accepts AND the kernel parses N ranges. */
+function acceptedByBoth(input: unknown, expectedRanges: number): void {
+  assert.ok(
+    validate(COMPRESS_PARAMETERS as Record<string, unknown>, input),
+    `schema rejected a shape the kernel accepts: ${JSON.stringify(input)}`,
+  );
+  const { ranges, diagnostics } = parseCompressArgs(input);
+  assert.equal(ranges.length, expectedRanges, `parser recovered ${ranges.length}, kind=${diagnostics.kind}`);
+  assert.ok(diagnostics.ok);
+}
+
+/** Structural violations: schema rejects AND the kernel recovers nothing. */
+function rejectedByBoth(input: unknown): void {
+  assert.equal(
+    validate(COMPRESS_PARAMETERS as Record<string, unknown>, input),
+    false,
+    `schema wrongly accepted: ${JSON.stringify(input)}`,
+  );
+  assert.equal(parseCompressArgs(input).ranges.length, 0);
+}
+
+test("all three wire shapes carry the identical shared parameter schema", () => {
+  assert.equal(COMPRESS_TOOL.input_schema, COMPRESS_PARAMETERS);
+  assert.equal(COMPRESS_TOOL_OPENAI.function.parameters, COMPRESS_PARAMETERS);
+  assert.equal(COMPRESS_TOOL_RESPONSES.parameters, COMPRESS_PARAMETERS);
+});
+
+test("issue #374 repro shapes: flat form and string content are accepted by both layers", () => {
+  // Repro 1: flat {topic, startId, endId, summary} at top level (no content).
+  acceptedByBoth({ topic: "T", startId: "m00150", endId: "m00220", summary: "S" }, 1);
+  // Repro 2: content as a bare line-form string.
+  acceptedByBoth({ content: "m00150–m00220 T\nS body" }, 1);
+});
+
+test("every shape parseCompressArgs accepts passes the declared schema", () => {
+  acceptedByBoth({ content: ["m00150-m00220\nS body"] }, 1);
+  acceptedByBoth({ content: [{ startId: "m00150", endId: "m00220", summary: "S" }] }, 1);
+  acceptedByBoth(
+    { content: ["m00150-m00160 A\nfirst", { startId: "m00170", endId: "m00220", summary: "second", topic: "B" }] },
+    2,
+  );
+  acceptedByBoth({ content: [{ startRef: "m00150", endRef: "m00220", summary: "S" }] }, 1);
+  acceptedByBoth({ startRef: "m00150", endRef: "m00220", summary: "S" }, 1);
+  acceptedByBoth({ content: JSON.stringify([{ startId: "m00001", endId: "m00002", summary: "S" }]) }, 1);
+  acceptedByBoth({ content: "m00150–m00160 A\nfirst\nm00170–m00220 B\nsecond" }, 2);
+});
+
+test("structural violations are rejected by both layers", () => {
+  rejectedByBoth({});
+  rejectedByBoth({ topic: "x" });
+  rejectedByBoth({ content: 42 });
+  rejectedByBoth({ content: [{ startId: "m1" }] });
+  rejectedByBoth({ summary: "s" });
+  rejectedByBoth({ content: [42] });
+});
+
+test("an object under content stays rejected (parser yields zero ranges for it)", () => {
+  // The trap shape: {content: {startId,endId,summary}} looks like a natural
+  // single-range call, but parseCompressArgs treats a non-array/non-string
+  // content as "content-not-array" and recovers nothing — so the schema must
+  // not widen to accept it either (that would trade a loud rejection for a
+  // silent no-op).
+  rejectedByBoth({ content: { startId: "m00150", endId: "m00220", summary: "S" } });
+});
+
+test("empty content array passes the schema; the parser degrades gracefully", () => {
+  // Deliberate leniency pin: no minItems. The kernel handles an empty batch
+  // with a warning and zero blocks instead of failing the turn.
+  assert.ok(validate(COMPRESS_PARAMETERS as Record<string, unknown>, { content: [] }));
+  assert.equal(parseCompressArgs({ content: [] }).ranges.length, 0);
+});
+
+test("the content description still teaches the line form and the string form", () => {
+  const desc = (COMPRESS_PARAMETERS.properties as Record<string, { description?: string }>).content.description ?? "";
+  assert.ok(desc.includes("m00150–m00220"), "line-form header example kept");
+  assert.ok(desc.includes("JSON-encoded array"), "stringified-array form documented");
+});

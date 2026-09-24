@@ -101,6 +101,14 @@ test("lean acpTags carries BOTH the summary-trust guardrail and the post-compres
   }
   assert.ok(!tags.includes("settled history"), "inverted 'settled history' phrasing must be gone (#265)");
   assert.ok(!tags.includes("continue the task from them"), "inverted phrasing must be gone (#265)");
+  assert.ok(
+    tags.includes("never reissued within a session"),
+    "ref-stability wording matches actual assignRefs semantics (#385)",
+  );
+  assert.ok(
+    !tags.includes("may be renumbered"),
+    "stale per-compress renumbering claim must be gone (#385)",
+  );
 });
 
 test("lean pack retains summary-trust guardrail (regression: inverted 'settled history' removed)", () => {

@@ -122,6 +122,13 @@ export function validateConfig(config: Config): string[] {
   if (config.tiers.tier3Trigger <= config.tiers.tier2Trigger) {
     errors.push("tiers.tier3Trigger must be greater than tiers.tier2Trigger");
   }
+  if (
+    config.neverPreserveRecentTools !== undefined &&
+    (!Array.isArray(config.neverPreserveRecentTools) ||
+      config.neverPreserveRecentTools.some((t) => typeof t !== "string"))
+  ) {
+    errors.push("neverPreserveRecentTools must be a string array");
+  }
   if (config.absorb) {
     if (config.absorb.enabled && !config.absorb.toolName) {
       errors.push("absorb.toolName must be a non-empty string when enabled");

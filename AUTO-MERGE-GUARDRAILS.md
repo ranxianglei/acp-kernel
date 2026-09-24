@@ -45,9 +45,9 @@ Safety, §5 Release Workflow, §6 Code Review ("at least 2 separate agents").
   a lying docstring misleads every adapter author.
 - **Block state must be stable across turns** (keep host-expanded blocks deactivated
   [#181](https://github.com/ranxianglei/acp-kernel/pull/181)); tier-distillation nudges are
-  count-triggered but gated to the nudge band ([#237](https://github.com/ranxianglei/acp-kernel/issues/237) /
-  [#162](https://github.com/ranxianglei/acp-kernel/pull/162)); the growth baseline resets on a
-  successful compress (no feedback-loop re-fire).
+  pure-count, no usage gate, default-off 1000/2000 ([#379](https://github.com/ranxianglei/acp-kernel/issues/379) deleted
+  #238's band gate; [#237](https://github.com/ranxianglei/acp-kernel/issues/237)/[#162](https://github.com/ranxianglei/acp-kernel/pull/162) history);
+  the growth baseline resets on a successful compress (no feedback-loop re-fire).
 - **Capacity pressure resolves by widening `REF_WIDTH`, never recycling** (PR #176 ref-reclamation
   was reverted in #191).
 
@@ -66,8 +66,8 @@ Safety, §5 Release Workflow, §6 Code Review ("at least 2 separate agents").
 6. **Protected-tool filtering** (Bug 39) — dropping protected calls out of compression changes what
    the model sees.
 7. **Load-bearing Prompts rules** — overriding one silently degrades summary quality across sessions.
-8. **Pipeline node ordering + nudge invariants** — reordering nodes or un-gating tier triggers
-   reintroduces feedback-loop over-compression.
+8. **Pipeline node ordering + nudge invariants** — reordering nodes or making count-triggered
+   distillation the default again reintroduces needless wire rewrites and prefix-cache loss (#379).
 
 ### 3.2 Structural constraints that stay human
 Zero runtime deps (§2 principle 1 — a new dep lands inside every adapter's inline bundle),

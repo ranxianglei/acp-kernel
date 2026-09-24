@@ -212,7 +212,7 @@ The invariants every adapter relies on. Changing ANY of these is cross-repo + pr
 5. **Tool call/result atomicity** in prune/compress/fold (#286/#287/#293).
 6. **Protected-tool filtering** (hard-excluded from compression — Bug 39) and soft recent-zone semantics (excluded but does not fail the range).
 7. **The four load-bearing Prompts rules** (overriding one requires `acknowledgeRisk`).
-8. **Pipeline node ordering** (the canonical 9-node sequence) and nudge invariants (growth-gating, tier-trigger gating #237/#162, baseline reset on compress).
+8. **Pipeline node ordering** (the canonical 9-node sequence) and nudge invariants (growth-gating, tier-count triggers pure-count & default-off #379, baseline reset on compress).
 
 Plus structural constraints that stay human: zero runtime deps (§2 principle 1 — no new dep without sign-off), platform-agnostic (§2 principle 5 — no host API / file I/O / network creep), and the state schema (explicit in/out; changing its shape is cross-repo).
 

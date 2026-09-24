@@ -5,7 +5,10 @@ export function defaultConfig(
   overrides: Partial<Config> = {},
 ): Config {
   const base: Config = {
-    tiers: { enabled: true, tier2Trigger: 5, tier3Trigger: 10 },
+    // Count triggers default-OFF (#379): block count is not a reclaim-need
+    // signal; distilling without need invalidates the prefix cache far beyond
+    // the reclaimed tokens. Explicit low values still work for exotic setups.
+    tiers: { enabled: true, tier2Trigger: 1000, tier3Trigger: 2000 },
     nudge: {
       maxContextLimitPct: 0.75,
       minContextLimitPct: 0.45,

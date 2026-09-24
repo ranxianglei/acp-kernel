@@ -1485,17 +1485,14 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   const t2Count = tiers[2]?.targetBlocks.length ?? 0;
   const t3Count = tiers[3]?.targetBlocks.length ?? 0;
 
-  // Count-triggered tier distillation is usage-gated (#237): block COUNT is
-  // a mass proxy for ~10:1-condensed summaries, so the token gates under-rate
-  // it — but below the nudge usage band there is no NEED yet, and firing on
-  // 5 tiny blocks at low usage just burns a model turn (and repetition-prone
-  // models flail against the #3 guard on the suggested rewrite). Token-mass
-  // paths (>= 1.5x threshold) stay ungated: crossing them is need by itself.
-  const tierCountUsageFloor = config.nudge.minContextLimitPct;
-  const t2CountReady =
-    t2Count >= config.tiers.tier2Trigger && usage >= tierCountUsageFloor;
-  const t3CountReady =
-    t3Count >= config.tiers.tier3Trigger && usage >= tierCountUsageFloor;
+  // Count triggers are PURE COUNT (#379): block count alone never indicates
+  // reclaim need, so the #238 usage floor (`usage >= minContextLimitPct`)
+  // is deleted — it blocked compress-by-need below the band yet still fired
+  // with tiny mass once the band crossed (the hint channel escaped it).
+  // Defaults (1000/2000) leave the count path effectively off; growth and
+  // the token-mass paths (>= 1.5x) remain the need signal.
+  const t2CountReady = t2Count >= config.tiers.tier2Trigger;
+  const t3CountReady = t3Count >= config.tiers.tier3Trigger;
   if (pressure) {
     // High pressure: pick the tier with the MAX pending so pressure can route
     // to distillation when that reclaims the most tokens. Gated on effective
@@ -1577,28 +1574,20 @@ function decideNudge(input: NudgeInput): NudgeDecision {
   } else {
     const tiersList = [1, 2, 3] as const;
     const eligible = tiersList.filter((t) => config.tiers.enabled || t === 1);
-    const countReadyUngated = (t: 1 | 2 | 3) =>
+    const countReady = (t: 1 | 2 | 3) =>
       t === 2
         ? t2Count >= config.tiers.tier2Trigger
         : t === 3
           ? t3Count >= config.tiers.tier3Trigger
           : false;
-    const countReady = (t: 1 | 2 | 3) =>
-      countReadyUngated(t) && usage >= tierCountUsageFloor;
     const ready = eligible
       .filter((t) => (tiers[t]?.pending ?? 0) >= nudgeGrowthTokens)
       .map((t) => `T${t} ${tiers[t]!.pending}`);
     const readyCount = eligible
       .filter(
-        (t) =>
-          (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReadyUngated(t),
+        (t) => (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReady(t),
       )
-      .map(
-        (t) =>
-          `T${t} ${t === 2 ? t2Count : t3Count} blocks (count${
-            usage >= tierCountUsageFloor ? "" : ", usage-gated"
-          })`,
-      );
+      .map((t) => `T${t} ${t === 2 ? t2Count : t3Count} blocks (count)`);
     const readyAll = [...ready, ...readyCount];
     const readyHint =
       readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";

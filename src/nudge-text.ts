@@ -237,7 +237,7 @@ export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defa
       rangesStr,
       ...(blockMapStr ? ["", blockMapStr] : []),
       "",
-      `💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`,
+      `💡 If you compress, fold the ranges you keep in ONE call (pass multiple content entries: \`content: [{...}, {...}]\`). Ranges the task still needs can wait — they reappear in later nudges.`,
     ]).join("\n"),
   };
 }

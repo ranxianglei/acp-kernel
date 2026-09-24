@@ -33,6 +33,22 @@ test("gentle mode: voice and header text", () => {
   assert.ok(result.text.includes("not an overflow warning"), "should reassure it's not overflow");
 });
 
+test("gentle mode: tail tip is conditional and licenses deferral (#1198)", () => {
+  // The tail must not read as an unconditional "compress all ranges" directive —
+  // #1198-class models obeyed it at 11% usage and folded files they still
+  // needed. The tip teaches BATCHING under an explicit "if you compress",
+  // and states that skipped ranges reappear later (no now-or-never pressure).
+  // Emergency mode keeps its unconditional directive and must not inherit
+  // this line.
+  const gentle = renderNudgeText(makeDecision({ contextUsage: 0.5 }));
+  assert.ok(gentle.text.includes("If you compress"), "tip must be conditional on the model choosing to compress");
+  assert.ok(!gentle.text.includes("Compress all ranges in one call"), "unconditional compress-all directive must be gone");
+  assert.ok(gentle.text.includes("they reappear in later nudges"), "skipped ranges must be framed as deferrable, not lost");
+  const emergency = renderNudgeText(makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }));
+  assert.ok(!emergency.text.includes("If you compress"), "emergency stays unconditional");
+  assert.ok(emergency.text.includes("compress now"), "emergency keeps its mandatory directive");
+});
+
 test("emergency mode: voice and header text", () => {
   const result = renderNudgeText(
     makeDecision({

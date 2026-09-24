@@ -193,6 +193,11 @@ test("applyCompression fails by default when the whole range is protected (no ex
 
   assert.equal(result.result.blocksCreated, 0, "default protection applies without explicit set");
   assert.match(result.result.errors[0]!, /protected/i);
+  assert.match(
+    result.result.errors[0]!,
+    /run acp_status and target one of the CURRENT compressible ranges/i,
+    "rejection must point the model at acp_status for current compressible ranges (#385)",
+  );
 });
 
 // --- decompress results are excluded from the recent-protected zone ---

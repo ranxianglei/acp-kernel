@@ -10,8 +10,10 @@
  *                            (legit fresh — not an invalidation at all)
  *            + compRepay_i    re-payment forced by compression folds (the
  *                            prefix diverged at the fold's first start point)
- *            + ttlRepay_i     residual: misses inside the stable prefix →
- *                            TTL expiry / provider-side eviction
+ *            + ttlRepay_i     residual: UNATTRIBUTED misses inside the
+ *                            stable prefix → upstream TTL expiry /
+ *                            provider-side eviction OR client-side wire
+ *                            rewrite — the kernel cannot distinguish
  *
  * No estimate participates in the closure: newContent is clamped to observed
  * growth, compRepay is clamped to BOTH the remaining miss and the structural
@@ -503,7 +505,7 @@ function formatCacheReportFull(report: CacheReport): string {
   );
   out.push(`    compress re-pay ${fmtTok(t.compRepay)} tok  (caused by folds)`);
   out.push(
-    `    ttl/other       ${fmtTok(t.ttlRepay)} tok  (stable-prefix misses: TTL expiry / eviction)`,
+    `    upstream-ttl-or-client-rewrite (unattributed)  ${fmtTok(t.ttlRepay)} tok  (stable-prefix misses: upstream TTL expiry / eviction or client-side wire rewrite — kernel cannot distinguish)`,
   );
   out.push(
     `  identity check   ${t.balanced ? "OK" : "BROKEN"} — ${fmtTok(t.input)} = ${fmtTok(t.cached)} + ${fmtTok(t.newContent)} + ${fmtTok(t.compRepay)} + ${fmtTok(t.ttlRepay)} (residual ${t.residual})`,
@@ -592,7 +594,7 @@ function formatCacheReportSummary(report: CacheReport): string {
     })
     .join(" · ");
   out.push(
-    `    ttl/other       ${fmtTok(t.ttlRepay)} tok  (stable-prefix misses: TTL expiry / eviction${spikeText ? `; top spikes: ${spikeText}` : ""})`,
+    `    upstream-ttl-or-client-rewrite (unattributed)  ${fmtTok(t.ttlRepay)} tok  (stable-prefix misses: upstream TTL expiry / eviction or client-side wire rewrite — kernel cannot distinguish${spikeText ? `; top spikes: ${spikeText}` : ""})`,
   );
   out.push(
     `  identity check   ${t.balanced ? "OK" : "BROKEN"} — ${fmtTok(t.input)} = ${fmtTok(t.cached)} + ${fmtTok(t.newContent)} + ${fmtTok(t.compRepay)} + ${fmtTok(t.ttlRepay)} (residual ${t.residual})`,

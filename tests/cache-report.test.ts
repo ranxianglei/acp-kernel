@@ -9,6 +9,7 @@ import {
   type FoldEvent,
 } from "../src/cache-report.js";
 import {
+  ACP_CACHE_TOOL_DESCRIPTION,
   ACP_CACHE_TOOL_NAME,
   ACP_CACHE_TOOL_OPENAI,
   ACP_CACHE_TOOL,
@@ -87,7 +88,7 @@ test("pure-append session: growth is new content; cold start is residual", () =>
   assert.equal(r.totals.balanced, true);
 });
 
-test("no folds, cold cache: miss attributed to ttl/other", () => {
+test("no folds, cold cache: miss attributed to the unattributed stable-prefix bucket", () => {
   const samples = [sample(0, 1000, 1000), sample(30, 1000, 400)];
   const r = buildCacheReport(samples, []);
   const last = r.lines[r.lines.length - 1];
@@ -272,6 +273,41 @@ test("formatter emits identity line and sections", () => {
   assert.match(text, /FOLD ECONOMICS/);
   assert.match(text, /LINE ITEMS/);
   assert.match(text, /PAID BACK|NOT PAID BACK|\?/);
+});
+
+test("miss bucket label is honest: upstream-ttl-or-client-rewrite, never ttl/other (#392)", () => {
+  const samples = [sample(0, 10_000, 9_000), sample(1, 6_000, 1_000)];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 5_000,
+      firstFoldStartTokens: 3_000,
+      viewAfter: 5_500,
+    },
+  ];
+  for (const detail of ["summary", "full"] as const) {
+    const text = formatCacheReport(buildCacheReport(samples, folds), "s392", {
+      detail,
+    });
+    assert.match(
+      text,
+      /upstream-ttl-or-client-rewrite \(unattributed\)/,
+      `${detail} mode must use the honest bucket label`,
+    );
+    assert.match(text, /kernel cannot distinguish/, `${detail} mode keeps the uncertainty wording`);
+    assert.ok(
+      !text.includes("ttl/other"),
+      `${detail} mode must not claim ttl/other (#392)`,
+    );
+  }
+  assert.ok(
+    ACP_CACHE_TOOL_DESCRIPTION.includes("upstream-ttl-or-client-rewrite"),
+    "acp_cache tool description names the honest bucket",
+  );
+  assert.ok(
+    !ACP_CACHE_TOOL_DESCRIPTION.includes("TTL expiry"),
+    "acp_cache tool description must not claim TTL as fact (#392)",
+  );
 });
 
 test("acp_cache tool definitions registered across wires", () => {

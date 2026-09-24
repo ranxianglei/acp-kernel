@@ -5,7 +5,7 @@ export function defaultConfig(
   overrides: Partial<Config> = {},
 ): Config {
   const base: Config = {
-    tiers: { enabled: true, tier2Trigger: 5, tier3Trigger: 10 },
+    tiers: { enabled: true, tier2Trigger: 1000, tier3Trigger: 2000 },
     nudge: {
       maxContextLimitPct: 0.75,
       minContextLimitPct: 0.45,

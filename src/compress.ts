@@ -1588,10 +1588,7 @@ function decideNudge(input: NudgeInput): NudgeDecision {
       .filter(
         (t) => (tiers[t]?.pending ?? 0) < nudgeGrowthTokens && countReady(t),
       )
-      .map(
-        (t) =>
-          `T${t} ${t === 2 ? t2Count : t3Count} blocks (count)`,
-      );
+      .map((t) => `T${t} ${t === 2 ? t2Count : t3Count} blocks (count)`);
     const readyAll = [...ready, ...readyCount];
     const readyHint =
       readyAll.length > 0 ? `, ready: ${readyAll.join(", ")}` : "";

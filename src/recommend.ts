@@ -23,6 +23,7 @@ import type { CompressionState } from "./types.js";
 import {
   collectLatestProtected,
   collectProtectedToolCallIds,
+  hasMediaPayload,
   isMessageLatestProtected,
   isMessageProtectedWithPairing,
   isNeverPreserveRecent,
@@ -193,6 +194,14 @@ export function buildCompressibleRanges(
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
     if (isSyntheticOrPruned(msg, state)) {
+      skipSinceCompressible = true;
+      skipSinceProtected = true;
+      continue;
+    }
+
+    // Media payloads are unrecoverable once folded (#1188): never advertised
+    // as compressible, and treated as a gap so no range spans them.
+    if (hasMediaPayload(msg)) {
       skipSinceCompressible = true;
       skipSinceProtected = true;
       continue;

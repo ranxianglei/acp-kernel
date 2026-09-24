@@ -71,6 +71,7 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                 // in the responses/anthropic codecs): ids derive from text alone
                 // and switching the seed would move every pre-existing shape.
                 const text = stringContent(m.content);
+                const nonText = allNonTextParts(m.content);
                 const imgs = allImageParts(m.content);
                 const firstImg = imgs[0];
                 const firstUrl = firstImg ? firstImg.image_url.url : undefined;
@@ -81,15 +82,21 @@ export function openaiToCore(body: OpenAIRequestBody): Flat {
                     role: "user",
                     contentType: "text",
                     text,
-                    ...(imgs.length === 1
+                    // A lone string-URL image keeps the legacy singular sidecar
+                    // (byte-stable for pre-existing shapes). Any other mix —
+                    // multiple images, or any unknown part type such as a
+                    // DeepSeek Files API `{type:"file"}` ref — rides the plural
+                    // sidecar verbatim so coreToOpenai can re-emit it
+                    // (billion-context#1205: unknown parts were silently dropped).
+                    ...(imgs.length === 1 && nonText.length === 1
                         ? {
                             rawOpenaiContent: imgs[0],
                             // data: URLs only — remote URLs ride rawOpenaiContent
                             // verbatim (#187/#291)
                             ...(firstParsed ? { imageMediaType: firstParsed.mediaType, imageBase64: firstParsed.base64 } : {}),
                         }
-                        : imgs.length > 1
-                            ? { rawOpenaiContentParts: imgs }
+                        : nonText.length > 0
+                            ? { rawOpenaiContentParts: nonText }
                             : {}),
                 });
                 break;
@@ -292,6 +299,22 @@ function allImageParts(content: OpenAIMessage["content"]): OpenAIImagePart[] {
         const imagePart = p as { image_url?: { url?: unknown } | null };
         const url = imagePart.image_url?.url;
         if (typeof url === "string") out.push(p as OpenAIImagePart);
+    }
+    return out;
+}
+
+/** Collect ALL non-text object parts of a user content array, in wire order —
+ *  image_url parts plus any unknown part type. Unknown parts are opaque
+ *  payloads (e.g. DeepSeek Files API `{type:"file",file_id}` refs) that the
+ *  kernel must never drop: they ride rawOpenaiContentParts verbatim and
+ *  coreToOpenai re-emits them unchanged (billion-context#1205). */
+function allNonTextParts(content: OpenAIMessage["content"]): OpenAIContentPart[] {
+    if (!Array.isArray(content)) return [];
+    const out: OpenAIContentPart[] = [];
+    for (const p of content) {
+        if (typeof p !== "object" || p === null) continue;
+        if (p.type === "text") continue;
+        out.push(p);
     }
     return out;
 }

@@ -4,10 +4,17 @@ import {
   collectRulePairProtection,
   isMessageRuleProtected,
 } from "../src/protected.js";
-import { assignRefs, emptyRefMap } from "../src/refs.js";
+import { assignRefs, emptyRefMap, refForRaw } from "../src/refs.js";
 import { buildCompressibleRanges } from "../src/recommend.js";
 import { createInitialState } from "../src/state.js";
 import { defaultConfig } from "../src/config.js";
+import { applyAbsorb } from "../src/absorb.js";
+import {
+  DEFAULT_CCR_CONFIG,
+  isStoredPlaceholderText,
+  storeLargeResults,
+} from "../src/ccr.js";
+import { createContentStore } from "../src/content-store.js";
 import type { Config, CoreMessage } from "../src/types.js";
 
 function textMsg(id: string, text: string): CoreMessage {
@@ -217,4 +224,81 @@ test("no-op safety: record-only history keeps every pair protected", () => {
   for (const n of [2, 3, 5, 6]) assert.ok(!compressible.has(n));
   const protectedTools = ranges.protected.flatMap((r) => r.tools);
   assert.ok(protectedTools.includes("acp_rule"));
+});
+
+const countTokens = (text: string) => Math.ceil(text.length / 4);
+
+function stateWithRefs(messages: CoreMessage[]) {
+  const state = createInitialState();
+  state.messageRefs = assignRefs(messages, {
+    existing: emptyRefMap(),
+    nextIndex: 1,
+  }).map;
+  return state;
+}
+
+test("CCR: live record result stays inline, dead pair is stored", () => {
+  const messages: CoreMessage[] = [
+    ruleCall("c1", "rec-1"),
+    ruleResult("r1", "rec-1", "Recorded rule1: keep cache warm"),
+    ruleCall("c2", "rec-2"),
+    ruleResult("r2", "rec-2", "Recorded rule2: old model pin"),
+    ruleCall("c3", "del-1"),
+    ruleResult("r3", "del-1", "Removed rule2: old model pin"),
+  ];
+  const config = cfg({
+    ccr: { ...DEFAULT_CCR_CONFIG, enabled: true, minToolTokens: 1 },
+  });
+  const out = storeLargeResults({
+    messages,
+    state: stateWithRefs(messages),
+    store: createContentStore(),
+    config,
+    countTokens,
+  });
+  assert.equal(out.messages[1]?.text, "Recorded rule1: keep cache warm");
+  assert.ok(isStoredPlaceholderText(out.messages[3]?.text ?? ""));
+  assert.ok(isStoredPlaceholderText(out.messages[5]?.text ?? ""));
+  assert.equal(out.storedCount, 2);
+});
+
+test("absorb: live record result refused, dead record result proceeds", () => {
+  const messages: CoreMessage[] = [
+    textMsg("u1", "work filler one"),
+    ruleCall("c1", "rec-1"),
+    ruleResult("r1", "rec-1", "Recorded rule1: keep cache warm"),
+    ruleCall("c2", "rec-2"),
+    ruleResult("r2", "rec-2", "Recorded rule2: old model pin"),
+    ruleCall("c3", "del-1"),
+    ruleResult("r3", "del-1", "Removed rule2: old model pin"),
+  ];
+  const state = stateWithRefs(messages);
+  const config = cfg({
+    absorb: {
+      enabled: true,
+      toolName: "absorb",
+      minToolTokens: 0,
+      contextThresholdPct: 0,
+      excludeTools: [],
+    },
+  });
+  const live = applyAbsorb({
+    ref: refForRaw(state.messageRefs, "r1")!,
+    summary: "rule recorded",
+    messages,
+    state,
+    config,
+  });
+  assert.ok(!live.ok);
+  assert.match(live.resultText, /protected tool/);
+  const dead = applyAbsorb({
+    ref: refForRaw(state.messageRefs, "r2")!,
+    summary: "old model pin rule, since removed",
+    messages,
+    state,
+    config,
+  });
+  assert.ok(dead.ok, dead.resultText);
+  assert.equal(dead.state.absorbed!.length, 1);
+  assert.equal(dead.state.absorbed![0]!.resultMessageId, "r2");
 });

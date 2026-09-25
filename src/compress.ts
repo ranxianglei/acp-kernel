@@ -12,6 +12,7 @@ import {
   parseBoundary,
 } from "./boundaries.js";
 import type { ResolvedRange } from "./boundaries.js";
+import { activeAncestorIds } from "./decompress.js";
 import { truncateLargeToolOutputs } from "./truncate-tools.js";
 import { hideConsumedCompressCalls } from "./hide-consumed.js";
 import { appendAbsorbPrompts, hideAbsorbedMessages } from "./absorb.js";
@@ -21,7 +22,7 @@ import type { ApplyRetrieveResult, CcrEffect } from "./ccr.js";
 import { createContentStore } from "./content-store.js";
 import type { MessageContentStore } from "./content-store.js";
 import { applyMessageFilters, listMessageFilters } from "./filter/index.js";
-import { activeBlockSpans } from "./block-map.js";
+import { activeBlockSpans, resolveBlockSpan } from "./block-map.js";
 import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
 import {
@@ -227,6 +228,112 @@ function tierActionHint(config: Config, state: CompressionState): string {
   return "";
 }
 
+type RefoldDecision =
+  | { kind: "refold"; blocks: CompressionBlock[] }
+  | { kind: "blocked"; reasons: string[] };
+
+/** Ref-number span [lo, hi] of a spec boundary: m-refs contribute their
+ * number, block refs expand through resolveBlockSpan. */
+function requestedRefoldSpan(
+  state: CompressionState,
+  spec: { startRef: string; endRef: string },
+): { lo: number; hi: number } | null {
+  const nums: number[] = [];
+  for (const ref of [spec.startRef, spec.endRef]) {
+    const parsed = parseBoundary(ref);
+    if (!parsed) return null;
+    if (parsed.kind === "message") {
+      nums.push(parsed.numericId);
+      continue;
+    }
+    const block = blockById(state, `b${parsed.numericId}`);
+    if (!block) return null;
+    const span = resolveBlockSpan(block, state.messageRefs.byRaw);
+    if (!span) return null;
+    const lo = parseBoundary(span.startRef);
+    const hi = parseBoundary(span.endRef);
+    if (!lo || !hi) return null;
+    nums.push(lo.numericId, hi.numericId);
+  }
+  return { lo: Math.min(...nums), hi: Math.max(...nums) };
+}
+
+/** #398 refold-in-place gate for a consumed range: every active block inside
+ * the requested span must be restored-inline (with a fully restored ancestor
+ * chain) and at least one must be — then it updates those in place instead of
+ * rejecting as "already compressed". Otherwise the blocking blocks are listed
+ * by id ("blocked by bN (not restored)" / "partially covered bN"). */
+function evaluateRefold(
+  state: CompressionState,
+  spec: { startRef: string; endRef: string },
+): RefoldDecision {
+  const span = requestedRefoldSpan(state, spec);
+  if (!span) return { kind: "blocked", reasons: [] };
+  const reasons: string[] = [];
+  const blocks: CompressionBlock[] = [];
+  for (const block of state.blocks) {
+    if (!block.active) continue;
+    const resolved = resolveBlockSpan(block, state.messageRefs.byRaw);
+    if (!resolved) {
+      reasons.push(`partially covered ${block.blockId}`);
+      continue;
+    }
+    const ownLo = parseBoundary(resolved.startRef)?.numericId;
+    const ownHi = parseBoundary(resolved.endRef)?.numericId;
+    if (ownLo === undefined || ownHi === undefined) continue;
+    if (ownHi < span.lo || ownLo > span.hi) continue;
+    if (!block.restoredInline) {
+      reasons.push(`blocked by ${block.blockId} (not restored)`);
+      continue;
+    }
+    // Overlapping but not fully contained in the request: part of the block
+    // would keep the stale summary while the range gets a new one.
+    if (ownLo < span.lo || ownHi > span.hi) {
+      reasons.push(`partially covered ${block.blockId}`);
+      continue;
+    }
+    const blockers = activeAncestorIds(state, block.blockId).filter(
+      (ancestorId) => !blockById(state, ancestorId)?.restoredInline,
+    );
+    if (blockers.length > 0) {
+      for (const id of blockers)
+        reasons.push(`blocked by ${id} (not restored)`);
+      continue;
+    }
+    blocks.push(block);
+  }
+  const uniqueReasons = [...new Set(reasons)];
+  if (uniqueReasons.length > 0)
+    return { kind: "blocked", reasons: uniqueReasons };
+  if (blocks.length > 0) return { kind: "refold", blocks };
+  return { kind: "blocked", reasons: [] };
+}
+
+/** In-place refold (#398): same block id/coverage/tier, new summary (+topic),
+ * fresh runId, restoredInline flag cleared. Summary passes the same length
+ * checks as a fresh compression. */
+function applyRefolds(input: {
+  spec: ApplyCompressionInput["ranges"][number];
+  state: CompressionState;
+  runId: string;
+  config: Config;
+  blockIds: string[];
+}): void {
+  validateSummaryLength(input.spec, input.config.compress);
+  const targets = new Set(input.blockIds);
+  input.state.blocks = input.state.blocks.map((block) =>
+    targets.has(block.blockId)
+      ? {
+          ...block,
+          summary: input.spec.summary,
+          topic: input.spec.topic ?? block.topic,
+          runId: input.runId,
+          restoredInline: false,
+        }
+      : block,
+  );
+}
+
 export function createCore(ports: Ports = {}): CompressionCore {
   const countTokens = ports.countTokens ?? defaultCountTokens;
 
@@ -309,6 +416,39 @@ export function createCore(ports: Ports = {}): CompressionCore {
       else if (resolution.status === "unknown") unknownCount++;
     }
 
+    // Refold-in-place (#398/#400): classify ranges against the restored-inline
+    // rule BEFORE the size gate so a pure refold never trips minCompressRange
+    // (it re-summarizes an already-folded block, no fresh messages involved).
+    // #400: full-log hosts (Pi) keep inline-restored originals in the view, so
+    // the same request RESOLVES (status ok, every id already covered) instead
+    // of classifying as consumed — a resolving range whose whole span is
+    // covered is a refold candidate too, otherwise the gate rejects the batch
+    // before the per-range loop can reach the refold path.
+    const refoldDecisions = new Map<
+      (typeof input.ranges)[number],
+      RefoldDecision
+    >();
+    const isRefoldCandidate = (resolution: RangeResolution): boolean =>
+      resolution.status === "consumed" ||
+      (resolution.status === "ok" &&
+        resolution.resolved.boundaryKind !== "block" &&
+        resolution.resolved.messageIds.every((id) =>
+          preExistingCoverage.has(id),
+        ));
+    for (const [spec, resolution] of classifications) {
+      if (isRefoldCandidate(resolution)) {
+        refoldDecisions.set(spec, evaluateRefold(state, spec));
+      }
+    }
+    const allRefold =
+      input.ranges.length > 0 &&
+      unknownCount === 0 &&
+      [...classifications.entries()].every(
+        ([spec, resolution]) =>
+          isRefoldCandidate(resolution) &&
+          refoldDecisions.get(spec)?.kind === "refold",
+      );
+
     // Overlap detection uses resolved boundary indices, not messageIds: a
     // summary-only range (block refs over a pruned view) has empty
     // messageIds after synthetic-id filtering but still occupies its
@@ -359,6 +499,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
         }
       }
       if (
+        !allRefold &&
         !hasBlockBoundaryRange &&
         totalRangeChars < input.config.compress.minCompressRange
       ) {
@@ -375,6 +516,34 @@ export function createCore(ports: Ports = {}): CompressionCore {
           covering.length > 0
             ? `its content is already summarized in active block(s) ${covering.join(", ")}${covering.length === 1 ? ` — use search_context or decompress ${covering[0]} if you need details from it` : ""}`
             : `its refs no longer point to directly compressible content (stale block ref(s) distilled or consumed by higher-tier blocks)`;
+        // All consumed ranges contribute blockers (deduped), not just the first:
+        // a later blocked range must still be named when the batch is rejected.
+        const refoldReasons = [
+          ...new Set(
+            consumedRanges.flatMap((spec) => {
+              const decision = refoldDecisions.get(spec);
+              return decision?.kind === "blocked" ? decision.reasons : [];
+            }),
+          ),
+        ];
+        const refoldSuffix = (reasons: string[]) =>
+          reasons.length > 0
+            ? ` Refold blocked: ${reasons.join("; ")}. Restore the affected block(s) inline (decompress with inline:true), then recompressing the same range updates them in place`
+            : "";
+        const refoldDetail = refoldSuffix(refoldReasons);
+        // #402: under full-log hosts a covered span RESOLVES (status ok)
+        // instead of classifying as consumed, so its blockers never reach
+        // refoldReasons above — without them the bare "too small" hint below
+        // hides the real fix (restore the covering block inline).
+        const okBlockedReasons = [
+          ...new Set(
+            [...classifications.entries()].flatMap(([spec, resolution]) => {
+              if (skipSpecs.has(spec) || resolution.status !== "ok") return [];
+              const decision = refoldDecisions.get(spec);
+              return decision?.kind === "blocked" ? decision.reasons : [];
+            }),
+          ),
+        ];
         const danglingRefs = consumedRanges.flatMap((spec) =>
           danglingMessageRefs(state, input.messages, spec),
         );
@@ -386,9 +555,9 @@ export function createCore(ports: Ports = {}): CompressionCore {
             : consumedRanges.length > 0
               ? danglingRefs.length > 0
                 ? `Requested range(s) cannot be anchored (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
-                : `Requested range(s) already compressed (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — ${coverDetail}. Nothing new to compress in that window. ${diagnostics} Continue the task, or run acp_status and target one of the CURRENT compressible ranges it reports.${tierActionHint(input.config, state)}`
+                : `Requested range(s) already compressed (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — ${coverDetail}${refoldDetail}. Nothing new to compress in that window. ${diagnostics} Continue the task, or run acp_status and target one of the CURRENT compressible ranges it reports.${tierActionHint(input.config, state)}`
               : countedRanges > 0
-                ? `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`
+                ? `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.${refoldSuffix(okBlockedReasons)}`
                 : null;
         if (gateMessage === null) {
           // No range was counted (every spec failed classification, e.g.
@@ -415,6 +584,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
         if (reversalNotes.length > 0) {
           gateMessage += ` ${reversalNotes.join(" ")}`;
         }
+
         return {
           state: input.state,
           result: {
@@ -432,8 +602,30 @@ export function createCore(ports: Ports = {}): CompressionCore {
       const resolution = classifications.get(spec);
       if (resolution === undefined) continue;
       if (resolution.status === "consumed") {
+        const decision = refoldDecisions.get(spec);
+        if (decision?.kind === "refold") {
+          try {
+            applyRefolds({
+              spec,
+              state,
+              runId,
+              config: input.config,
+              blockIds: decision.blocks.map((block) => block.blockId),
+            });
+            blocksCreated += decision.blocks.length;
+          } catch (error) {
+            errors.push(
+              rangeError(
+                spec,
+                error instanceof Error ? error.message : String(error),
+              ),
+            );
+          }
+          continue;
+        }
+        const reasons = decision?.kind === "blocked" ? decision.reasons : [];
         warnings.push(
-          `Skipped range (${spec.startRef}..${spec.endRef}) — already compressed (messages consumed by existing block(s)); nothing to compress.`,
+          `Skipped range (${spec.startRef}..${spec.endRef}) — already compressed${reasons.length > 0 ? `: ${reasons.join("; ")}` : " (messages consumed by existing block(s))"}; nothing to compress.`,
         );
         continue;
       }
@@ -455,7 +647,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
           countTokens,
           preExistingCoverage,
         });
-        blocksCreated++;
+        blocksCreated += outcome.refolded ? outcome.refolded.length : 1;
         tokensCompressed += outcome.tokens;
         warnings.push(...outcome.warnings);
       } catch (error) {
@@ -926,6 +1118,9 @@ interface SingleRangeInput {
 interface SingleRangeOutcome {
   tokens: number;
   warnings: string[];
+  /** #400: set when the range ended as an in-place refold instead of creating
+   * a fresh block — the ids of the blocks updated (caller counts these, not 1). */
+  refolded?: string[];
 }
 
 function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
@@ -1156,6 +1351,27 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     filteredIds.length === 0 &&
     consumedBlockIds.length > 0
   ) {
+    // Refold-in-place under full-log hosts (#398/#400): the range RESOLVED
+    // (inline-restored originals are still in the view) yet adds no NEW
+    // direct messages — the pruned-host equivalent of this range classifies
+    // as "consumed". Consult the same restored-inline rule here so both host
+    // worlds share one entry point: a valid refold updates the in-span
+    // blocks in place; everything else keeps the legacy rejection verbatim.
+    const decision = evaluateRefold(input.state, input.spec);
+    if (decision.kind === "refold") {
+      applyRefolds({
+        spec: input.spec,
+        state: input.state,
+        runId: input.runId,
+        config: input.config,
+        blockIds: decision.blocks.map((block) => block.blockId),
+      });
+      return {
+        tokens: 0,
+        warnings,
+        refolded: decision.blocks.map((block) => block.blockId),
+      };
+    }
     const first = consumedBlockIds[0]!;
     const last = consumedBlockIds[consumedBlockIds.length - 1]!;
     throw new Error(
@@ -1263,7 +1479,20 @@ function validateCompressionRange(
   consumedBlockCount: number,
 ): void {
   const cfg = input.config.compress;
-  const summary = input.spec.summary?.trim() ?? "";
+  validateSummaryLength(input.spec, cfg);
+
+  if (directMessageIds.length === 0 && consumedBlockCount === 0) {
+    throw new Error(
+      "Range contains no compressible messages — all are already covered by active blocks or protected.",
+    );
+  }
+}
+
+function validateSummaryLength(
+  spec: { summary: string; summaryMaxChars?: number },
+  cfg: Config["compress"],
+): void {
+  const summary = spec.summary?.trim() ?? "";
 
   if (summary.length === 0) {
     throw new Error(
@@ -1277,16 +1506,10 @@ function validateCompressionRange(
     );
   }
 
-  const effectiveMax = input.spec.summaryMaxChars ?? cfg.maxSummaryLength;
+  const effectiveMax = spec.summaryMaxChars ?? cfg.maxSummaryLength;
   if (effectiveMax > 0 && summary.length > effectiveMax) {
     throw new Error(
       `Summary too long (${summary.length} chars, max ${effectiveMax}). Strip noise — keep critical paths, decisions, errors, and code references. Or pass summaryMaxChars to increase the limit — don't lose critical info just to fit.`,
-    );
-  }
-
-  if (directMessageIds.length === 0 && consumedBlockCount === 0) {
-    throw new Error(
-      "Range contains no compressible messages — all are already covered by active blocks or protected.",
     );
   }
 }

@@ -57,6 +57,13 @@ export interface CompressionBlock {
    *  distillation, consumed-by-parent) — those keep the legacy resurrection
    *  behavior. */
   expanded?: boolean;
+  /** Refold-in-place marker (#398): the block's content was restored into the
+   *  live context by an inline decompress, so its folded state is temporary.
+   *  compress() updates such a block IN PLACE (same id, replaced summary, flag
+   *  cleared) when a request spans its full content and every active ancestor
+   *  is likewise restored — instead of rejecting it as "already compressed".
+   *  Optional: old persisted states lack the field, which reads as false. */
+  restoredInline?: boolean;
   durationMs?: number;
   compressCallId?: string;
   startRef?: string;

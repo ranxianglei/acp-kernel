@@ -25,15 +25,19 @@ function rangeKey(startRef: string, endRef: string): string {
   return `${startRef}::${endRef}`;
 }
 
-// Adapters (pi) persist the rendered ref tag in front of the tool-call text,
-// so the JSON args no longer start at index 0. Locate the first "{" instead of
-// parsing the raw text — the prefix is preserved on output.
-function parseCallText(text: string | undefined): {
+// Named return type (not inline): with the object literal in the signature,
+// prettier's layout heuristic was not idempotent here (#416).
+interface ParsedCallText {
   prefix: string;
   obj: Record<string, unknown>;
   content: unknown[];
   contentWasString: boolean;
-} | null {
+}
+
+// Adapters (pi) persist the rendered ref tag in front of the tool-call text,
+// so the JSON args no longer start at index 0. Locate the first "{" instead of
+// parsing the raw text — the prefix is preserved on output.
+function parseCallText(text: string | undefined): ParsedCallText | null {
   const raw = text ?? "";
   const start = raw.indexOf("{");
   if (start < 0) return null;

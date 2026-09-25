@@ -526,10 +526,24 @@ export function createCore(ports: Ports = {}): CompressionCore {
             }),
           ),
         ];
-        const refoldDetail =
-          refoldReasons.length > 0
-            ? ` Refold blocked: ${refoldReasons.join("; ")}. Restore the affected block(s) inline (decompress with inline:true), then recompressing the same range updates them in place`
+        const refoldSuffix = (reasons: string[]) =>
+          reasons.length > 0
+            ? ` Refold blocked: ${reasons.join("; ")}. Restore the affected block(s) inline (decompress with inline:true), then recompressing the same range updates them in place`
             : "";
+        const refoldDetail = refoldSuffix(refoldReasons);
+        // #402: under full-log hosts a covered span RESOLVES (status ok)
+        // instead of classifying as consumed, so its blockers never reach
+        // refoldReasons above — without them the bare "too small" hint below
+        // hides the real fix (restore the covering block inline).
+        const okBlockedReasons = [
+          ...new Set(
+            [...classifications.entries()].flatMap(([spec, resolution]) => {
+              if (skipSpecs.has(spec) || resolution.status !== "ok") return [];
+              const decision = refoldDecisions.get(spec);
+              return decision?.kind === "blocked" ? decision.reasons : [];
+            }),
+          ),
+        ];
         const danglingRefs = consumedRanges.flatMap((spec) =>
           danglingMessageRefs(state, input.messages, spec),
         );
@@ -543,7 +557,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
                 ? `Requested range(s) cannot be anchored (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
                 : `Requested range(s) already compressed (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — ${coverDetail}${refoldDetail}. Nothing new to compress in that window. ${diagnostics} Continue the task, or run acp_status and target one of the CURRENT compressible ranges it reports.${tierActionHint(input.config, state)}`
               : countedRanges > 0
-                ? `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.`
+                ? `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.${refoldSuffix(okBlockedReasons)}`
                 : null;
         if (gateMessage === null) {
           // No range was counted (every spec failed classification, e.g.

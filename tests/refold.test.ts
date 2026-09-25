@@ -550,6 +550,46 @@ test("full anchor view: unmarked block keeps the legacy livelock rejection verba
   assert.equal(result.state.nextBlockId, 2);
 });
 
+test("full anchor view: sub-threshold span over an unmarked block names the blocker in the size-gate error (#402)", () => {
+  const core = createCore();
+  // Short messages (~30 chars each → ~300 total < minCompressRange 500), so
+  // the size gate fires BEFORE the per-range loop could reach the livelock
+  // error that names b1 — the diagnostic must carry the blocker itself.
+  const messages = makeMessages(10);
+  const state = makeState(messages, [
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: messages.map((m) => m.id),
+      startRef: "m00001",
+      endRef: "m00010",
+    }),
+  ]);
+  const fullView = [summaryAnchor("b1"), ...messages];
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00010", summary: NEW_SUMMARY }],
+    messages: fullView,
+    state,
+    config: config(),
+  });
+
+  assert.equal(result.result.errors.length, 1);
+  assert.match(
+    result.result.errors[0]!,
+    /Total compressible content too small/,
+  );
+  assert.match(result.result.errors[0]!, /blocked by b1 \(not restored\)/);
+  assert.match(result.result.errors[0]!, /decompress with inline:true/);
+  assert.ok(
+    result.result.errors[0]!.indexOf("too small") <
+      result.result.errors[0]!.indexOf("Refold blocked"),
+    "blocker detail appended to the too-small branch",
+  );
+  assert.equal(result.state.blocks.length, 1, "nothing applied");
+  assert.equal(result.state.blocks[0]!.summary, OLD_SUMMARY);
+  assert.equal(result.state.nextBlockId, 2);
+});
+
 test("full anchor view: batch of a refoldable span plus a qualifying fresh part applies both", () => {
   const core = createCore();
   const messages = longMessages(20);

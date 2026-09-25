@@ -245,10 +245,9 @@ function requestedRefoldSpan(
       nums.push(parsed.numericId);
       continue;
     }
-    const span = resolveBlockSpan(
-      blockById(state, `b${parsed.numericId}`)!,
-      state.messageRefs.byRaw,
-    );
+    const block = blockById(state, `b${parsed.numericId}`);
+    if (!block) return null;
+    const span = resolveBlockSpan(block, state.messageRefs.byRaw);
     if (!span) return null;
     const lo = parseBoundary(span.startRef);
     const hi = parseBoundary(span.endRef);
@@ -502,14 +501,19 @@ export function createCore(ports: Ports = {}): CompressionCore {
           covering.length > 0
             ? `its content is already summarized in active block(s) ${covering.join(", ")}${covering.length === 1 ? ` — use search_context or decompress ${covering[0]} if you need details from it` : ""}`
             : `its refs no longer point to directly compressible content (stale block ref(s) distilled or consumed by higher-tier blocks)`;
-        const firstDecision = firstConsumed
-          ? refoldDecisions.get(firstConsumed)
-          : undefined;
-        const firstReasons =
-          firstDecision?.kind === "blocked" ? firstDecision.reasons : [];
+        // All consumed ranges contribute blockers (deduped), not just the first:
+        // a later blocked range must still be named when the batch is rejected.
+        const refoldReasons = [
+          ...new Set(
+            consumedRanges.flatMap((spec) => {
+              const decision = refoldDecisions.get(spec);
+              return decision?.kind === "blocked" ? decision.reasons : [];
+            }),
+          ),
+        ];
         const refoldDetail =
-          firstReasons.length > 0
-            ? ` Refold blocked: ${firstReasons.join("; ")}. Restore the affected block(s) inline (decompress with inline:true), then recompressing the same range updates them in place`
+          refoldReasons.length > 0
+            ? ` Refold blocked: ${refoldReasons.join("; ")}. Restore the affected block(s) inline (decompress with inline:true), then recompressing the same range updates them in place`
             : "";
         const danglingRefs = consumedRanges.flatMap((spec) =>
           danglingMessageRefs(state, input.messages, spec),

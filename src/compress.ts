@@ -416,24 +416,37 @@ export function createCore(ports: Ports = {}): CompressionCore {
       else if (resolution.status === "unknown") unknownCount++;
     }
 
-    // Refold-in-place (#398): classify consumed ranges against the restored-
-    // inline rule BEFORE the size gate so a pure refold never trips
-    // minCompressRange (it re-summarizes an already-folded block, no fresh
-    // messages involved).
+    // Refold-in-place (#398/#400): classify ranges against the restored-inline
+    // rule BEFORE the size gate so a pure refold never trips minCompressRange
+    // (it re-summarizes an already-folded block, no fresh messages involved).
+    // #400: full-log hosts (Pi) keep inline-restored originals in the view, so
+    // the same request RESOLVES (status ok, every id already covered) instead
+    // of classifying as consumed — a resolving range whose whole span is
+    // covered is a refold candidate too, otherwise the gate rejects the batch
+    // before the per-range loop can reach the refold path.
     const refoldDecisions = new Map<
       (typeof input.ranges)[number],
       RefoldDecision
     >();
-    for (const spec of consumedRanges) {
-      refoldDecisions.set(spec, evaluateRefold(state, spec));
+    const isRefoldCandidate = (resolution: RangeResolution): boolean =>
+      resolution.status === "consumed" ||
+      (resolution.status === "ok" &&
+        resolution.resolved.boundaryKind !== "block" &&
+        resolution.resolved.messageIds.every((id) =>
+          preExistingCoverage.has(id),
+        ));
+    for (const [spec, resolution] of classifications) {
+      if (isRefoldCandidate(resolution)) {
+        refoldDecisions.set(spec, evaluateRefold(state, spec));
+      }
     }
     const allRefold =
       input.ranges.length > 0 &&
-      resolvableCount === 0 &&
       unknownCount === 0 &&
-      classifications.size === consumedRanges.length &&
-      [...refoldDecisions.values()].every(
-        (decision) => decision.kind === "refold",
+      [...classifications.entries()].every(
+        ([spec, resolution]) =>
+          isRefoldCandidate(resolution) &&
+          refoldDecisions.get(spec)?.kind === "refold",
       );
 
     // Overlap detection uses resolved boundary indices, not messageIds: a
@@ -620,7 +633,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
           countTokens,
           preExistingCoverage,
         });
-        blocksCreated++;
+        blocksCreated += outcome.refolded ? outcome.refolded.length : 1;
         tokensCompressed += outcome.tokens;
         warnings.push(...outcome.warnings);
       } catch (error) {
@@ -1091,6 +1104,9 @@ interface SingleRangeInput {
 interface SingleRangeOutcome {
   tokens: number;
   warnings: string[];
+  /** #400: set when the range ended as an in-place refold instead of creating
+   * a fresh block — the ids of the blocks updated (caller counts these, not 1). */
+  refolded?: string[];
 }
 
 function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
@@ -1321,6 +1337,27 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     filteredIds.length === 0 &&
     consumedBlockIds.length > 0
   ) {
+    // Refold-in-place under full-log hosts (#398/#400): the range RESOLVED
+    // (inline-restored originals are still in the view) yet adds no NEW
+    // direct messages — the pruned-host equivalent of this range classifies
+    // as "consumed". Consult the same restored-inline rule here so both host
+    // worlds share one entry point: a valid refold updates the in-span
+    // blocks in place; everything else keeps the legacy rejection verbatim.
+    const decision = evaluateRefold(input.state, input.spec);
+    if (decision.kind === "refold") {
+      applyRefolds({
+        spec: input.spec,
+        state: input.state,
+        runId: input.runId,
+        config: input.config,
+        blockIds: decision.blocks.map((block) => block.blockId),
+      });
+      return {
+        tokens: 0,
+        warnings,
+        refolded: decision.blocks.map((block) => block.blockId),
+      };
+    }
     const first = consumedBlockIds[0]!;
     const last = consumedBlockIds[consumedBlockIds.length - 1]!;
     throw new Error(

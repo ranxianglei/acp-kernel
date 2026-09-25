@@ -338,6 +338,257 @@ test("two sibling restored blocks in one range are both refolded in place", () =
   }
 });
 
+// #400: full-log host views (Pi keeps inline-restored originals visible) -----
+//
+// Full-log hosts (billion-context-pi) always pass the full session projection
+// plus summary anchors to applyCompression — inline-restored originals stay in
+// `messages`, so a re-compress of their span RESOLVES (status ok) instead of
+// classifying as consumed. These variants pin that such requests take the same
+// refold path as the pruned-world cases above.
+
+function longMessages(count: number): CoreMessage[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `msg-${i + 1}`,
+    role: "assistant",
+    contentType: "text",
+    text: `content ${i + 1} ${"x".repeat(80)}`,
+  }));
+}
+
+function summaryAnchor(blockId: string): CoreMessage {
+  return {
+    id: `acp_summary_${blockId}`,
+    role: "system",
+    contentType: "text",
+    text: OLD_SUMMARY,
+  };
+}
+
+test("full anchor view: refold updates the block in place, identical to the pruned case", () => {
+  const core = createCore();
+  const messages = makeMessages(10);
+  const ids = messages.map((m) => m.id);
+  const { state: marked } = markBlockRestoredInline(
+    makeState(messages, [
+      makeBlock({
+        blockId: "b1",
+        effectiveMessageIds: ids,
+        startRef: "m00001",
+        endRef: "m00010",
+      }),
+    ]),
+    "b1",
+  );
+  const fullView = [summaryAnchor("b1"), ...messages];
+
+  const result = core.applyCompression({
+    ranges: [
+      {
+        startRef: "m00001",
+        endRef: "m00010",
+        summary: NEW_SUMMARY,
+        topic: "refold",
+      },
+    ],
+    messages: fullView,
+    state: marked,
+    config: config(),
+  });
+
+  assert.deepEqual(result.result.errors, []);
+  assert.equal(result.result.blocksCreated, 1);
+  assert.equal(
+    result.state.blocks.length,
+    1,
+    "no second block created for the same span",
+  );
+  const block = result.state.blocks[0]!;
+  assert.equal(block.blockId, "b1", "block id stays stable");
+  assert.equal(block.summary, NEW_SUMMARY, "summary replaced in place");
+  assert.equal(block.topic, "refold");
+  assert.equal(block.restoredInline, false, "marker cleared after refold");
+  assert.equal(block.active, true);
+  assert.equal(block.tier, 1, "tier unchanged — refold is not distillation");
+  assert.deepEqual(block.directMessageIds, ids);
+  assert.deepEqual(block.effectiveMessageIds, ids);
+  assert.equal(result.state.nextBlockId, 2, "no new block id allocated");
+});
+
+test("full anchor view: single restored block with a live tail refolds only that block (#400 repro shape)", () => {
+  const core = createCore();
+  const messages = makeMessages(8);
+  const { state: marked } = markBlockRestoredInline(
+    makeState(messages, [
+      makeBlock({
+        blockId: "b1",
+        effectiveMessageIds: [messages[0]!.id],
+        startRef: "m00001",
+        endRef: "m00001",
+      }),
+    ]),
+    "b1",
+  );
+  const fullView = [summaryAnchor("b1"), ...messages];
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00001", summary: NEW_SUMMARY }],
+    messages: fullView,
+    state: marked,
+    config: config(),
+  });
+
+  assert.deepEqual(result.result.errors, []);
+  assert.equal(result.result.blocksCreated, 1);
+  assert.equal(result.state.blocks.length, 1, "live tail left untouched");
+  const block = result.state.blocks[0]!;
+  assert.equal(block.blockId, "b1");
+  assert.equal(block.summary, NEW_SUMMARY);
+  assert.equal(block.restoredInline, false);
+  assert.deepEqual(block.effectiveMessageIds, [messages[0]!.id]);
+  assert.equal(result.state.nextBlockId, 2);
+});
+
+test("full anchor view: two adjacent restored blocks in one range are both refolded in place", () => {
+  const core = createCore();
+  const messages = makeMessages(20);
+  const state = makeState(messages, [
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: messages.slice(0, 10).map((m) => m.id),
+    }),
+    makeBlock({
+      blockId: "b3",
+      effectiveMessageIds: messages.slice(10, 20).map((m) => m.id),
+    }),
+  ]);
+  const s2 = markBlockRestoredInline(state, "b1").state;
+  const s3 = markBlockRestoredInline(s2, "b3").state;
+  const fullView = [summaryAnchor("b1"), summaryAnchor("b3"), ...messages];
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00020", summary: NEW_SUMMARY }],
+    messages: fullView,
+    state: s3,
+    config: config(),
+  });
+
+  assert.deepEqual(result.result.errors, []);
+  assert.equal(result.result.blocksCreated, 2, "both blocks counted");
+  assert.equal(result.state.nextBlockId, 4, "no ids allocated");
+  for (const block of result.state.blocks) {
+    assert.equal(block.summary, NEW_SUMMARY);
+    assert.equal(block.restoredInline, false);
+  }
+});
+
+test("full anchor view: range mixing a restored block with live tail creates a fresh block consuming it (refold only when zero new messages)", () => {
+  const core = createCore();
+  const messages = longMessages(12);
+  const { state: marked } = markBlockRestoredInline(
+    makeState(messages, [
+      makeBlock({
+        blockId: "b1",
+        effectiveMessageIds: messages.slice(0, 10).map((m) => m.id),
+      }),
+    ]),
+    "b1",
+  );
+  const fullView = [summaryAnchor("b1"), ...messages];
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00012", summary: NEW_SUMMARY }],
+    messages: fullView,
+    state: marked,
+    config: config(),
+  });
+
+  assert.deepEqual(result.result.errors, []);
+  assert.equal(result.result.blocksCreated, 1);
+  const b1 = result.state.blocks.find((block) => block.blockId === "b1")!;
+  assert.equal(b1.active, false, "restored block consumed by the fresh fold");
+  assert.equal(b1.summary, OLD_SUMMARY, "its own summary left intact");
+  const fresh = result.state.blocks.find((block) => block.blockId !== "b1")!;
+  assert.equal(fresh.active, true);
+  assert.deepEqual(
+    fresh.directMessageIds,
+    messages.slice(10).map((m) => m.id),
+    "only the live tail becomes direct content",
+  );
+  assert.equal(result.state.nextBlockId, 3, "exactly one new id allocated");
+});
+
+test("full anchor view: unmarked block keeps the legacy livelock rejection verbatim", () => {
+  const core = createCore();
+  const messages = longMessages(10);
+  const state = makeState(messages, [
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: messages.map((m) => m.id),
+      startRef: "m00001",
+      endRef: "m00010",
+    }),
+  ]);
+  const fullView = [summaryAnchor("b1"), ...messages];
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00010", summary: NEW_SUMMARY }],
+    messages: fullView,
+    state,
+    config: config(),
+  });
+
+  assert.match(
+    result.result.errors[0]!,
+    /Range m00001\.\.m00010 contains no new compressible messages — every message in it is already covered by active block\(s\) b1/,
+  );
+  assert.match(
+    result.result.errors[0]!,
+    /reference them by block ID \(b1\.\.b1\)/,
+  );
+  assert.equal(result.state.blocks.length, 1, "nothing applied");
+  assert.equal(result.state.blocks[0]!.summary, OLD_SUMMARY);
+  assert.equal(result.state.nextBlockId, 2);
+});
+
+test("full anchor view: batch of a refoldable span plus a qualifying fresh part applies both", () => {
+  const core = createCore();
+  const messages = longMessages(20);
+  const { state: marked } = markBlockRestoredInline(
+    makeState(messages, [
+      makeBlock({
+        blockId: "b1",
+        effectiveMessageIds: messages.slice(0, 10).map((m) => m.id),
+      }),
+    ]),
+    "b1",
+  );
+  const fullView = [summaryAnchor("b1"), ...messages];
+
+  const result = core.applyCompression({
+    ranges: [
+      { startRef: "m00001", endRef: "m00010", summary: NEW_SUMMARY },
+      { startRef: "m00011", endRef: "m00020", summary: NEW_SUMMARY },
+    ],
+    messages: fullView,
+    state: marked,
+    config: config(),
+  });
+
+  assert.deepEqual(result.result.errors, []);
+  assert.equal(result.result.blocksCreated, 2);
+  const b1 = result.state.blocks.find((block) => block.blockId === "b1")!;
+  assert.equal(b1.summary, NEW_SUMMARY, "refolded in place");
+  assert.equal(b1.restoredInline, false);
+  const fresh = result.state.blocks.filter((block) => block.blockId !== "b1");
+  assert.equal(fresh.length, 1, "fresh part compressed into one new block");
+  assert.equal(fresh[0]!.active, true);
+  assert.deepEqual(
+    fresh[0]!.effectiveMessageIds,
+    messages.slice(10).map((m) => m.id),
+  );
+  assert.equal(result.state.nextBlockId, 3, "exactly one new id allocated");
+});
+
 // Backward compatibility ------------------------------------------------------
 
 test("old persisted format without restoredInline reads as false: refold rejected until marked", () => {

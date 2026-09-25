@@ -1,4 +1,5 @@
 import { clampPrefix } from "./truncate.js";
+import { BLOCKED_REF } from "./refs.js";
 import type { CompressionState, CoreMessage } from "./types.js";
 
 // Orphaned compress calls (no matching block — failed attempts, or historical
@@ -14,6 +15,10 @@ const KEEP_LAST_ORPHANED = 2;
 export interface HideConsumedResult {
     messages: CoreMessage[];
     hidden: number;
+    /** Padded refs of the orphan compress call/result messages hidden by this
+     *  pass (orphans beyond the keep window). Consumed by boundary resolution to
+     *  snap a range endpoint onto a hidden-but-intact orphan (#396). */
+    hiddenOrphanRefs: string[];
 }
 
 function rangeKey(startRef: string, endRef: string): string {
@@ -157,6 +162,16 @@ export function hideConsumedCompressCalls(
     }
 
     let hidden = 0;
+    const hiddenOrphanRefs: string[] = [];
+    const rememberHiddenRef = (message: CoreMessage): void => {
+        if (message.toolCallId && allBlockCallIds.has(message.toolCallId)) {
+            return;
+        }
+        const ref = state.messageRefs.byRaw[message.id];
+        if (ref && ref !== BLOCKED_REF && !hiddenOrphanRefs.includes(ref)) {
+            hiddenOrphanRefs.push(ref);
+        }
+    };
     const result: CoreMessage[] = [];
     for (const message of messages) {
         if (
@@ -165,6 +180,7 @@ export function hideConsumedCompressCalls(
             (!message.toolCallId || !keepCallIds.has(message.toolCallId))
         ) {
             hidden++;
+            rememberHiddenRef(message);
             continue;
         }
         if (
@@ -173,6 +189,7 @@ export function hideConsumedCompressCalls(
             hiddenCallIds.has(message.toolCallId)
         ) {
             hidden++;
+            rememberHiddenRef(message);
             continue;
         }
         if (
@@ -198,5 +215,5 @@ export function hideConsumedCompressCalls(
         result.push(message);
     }
 
-    return { messages: result, hidden };
+    return { messages: result, hidden, hiddenOrphanRefs };
 }

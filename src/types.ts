@@ -263,6 +263,15 @@ export interface CompressionState {
   imageFullRestored?: string[];
   /** Arrival-time downsample records (#353). Optional: pre-feature persisted states lack it. */
   imageShrinks?: ImageShrinkRecord[];
+  /** Padded refs (mNNNNN) of HIDDEN orphan compress call/result messages — the
+   *  orphans beyond the keep-last-N window that hide-consumed removed from the
+   *  visible view this turn. Written every processTurn by the hide-compress-calls
+   *  node so boundary resolution can snap a range endpoint that lands on such a
+   *  hidden-but-intact artifact to its adjacent visible message instead of
+   *  dead-ending the whole range (#396). A drifted/dangling ref (#387) is NOT in
+   *  this set and keeps the clear "cannot be anchored" error. Optional for
+   *  pre-feature persisted states. */
+  hiddenOrphanRefs?: string[];
   nextBlockId: number;
   nextRunId: number;
 }

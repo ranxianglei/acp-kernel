@@ -113,7 +113,38 @@ test("prune after applyCompression removes covered messages and injects summary"
   assert.ok(pruned[1]!.text!.includes("intro recap"));
 });
 
-test("applyCompression auto-swaps reversed boundaries", () => {
+test("resolveBoundaries normalizes reversed refs and records a transparency note", () => {
+  const state = createInitialState();
+  const messages = [msg("a", "x"), msg("b", "y"), msg("c", "z")];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const reversed = resolveBoundaries({
+    startRef: "m00003",
+    endRef: "m00001",
+    messages,
+    state,
+  });
+  assert.equal(reversed.startIndex, 0);
+  assert.equal(reversed.endIndex, 2);
+  assert.deepEqual(reversed.messageIds, ["a", "b", "c"]);
+  assert.equal(
+    reversed.reversedNote,
+    "note: refs were given reversed (m00003→m00001), normalized to m00001..m00003",
+  );
+
+  const forward = resolveBoundaries({
+    startRef: "m00001",
+    endRef: "m00003",
+    messages,
+    state,
+  });
+  assert.equal(forward.reversedNote, undefined);
+});
+
+test("gate verdict carries the reversal note instead of hiding it", () => {
   const core = createCore();
   const state = createInitialState();
   const messages = [msg("a", "x"), msg("b", "y"), msg("c", "z")];
@@ -123,18 +154,137 @@ test("applyCompression auto-swaps reversed boundaries", () => {
   }).map;
 
   const result = core.applyCompression({
-    ranges: [{ startRef: "m00003", endRef: "m00001", summary: "swapped" }],
+    ranges: [{ startRef: "m00003", endRef: "m00001", summary: "reversed" }],
     messages,
     state,
-    config: config(),
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
+  });
+
+  assert.equal(result.result.blocksCreated, 0);
+  assert.equal(result.state.blocks.length, 0);
+  assert.equal(result.result.errors.length, 1);
+  assert.match(
+    result.result.errors[0]!,
+    /too small \(3 chars across 1 range\(s\), min 5000\)/,
+  );
+  assert.match(
+    result.result.errors[0]!,
+    /note: refs were given reversed \(m00003→m00001\), normalized to m00001\.\.m00003/,
+  );
+  assert.equal(result.result.notes, undefined);
+});
+
+test("successful compression of a reversed range reports the rewrite in notes", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const big = "w".repeat(1000);
+  const messages = [
+    msg("a", big),
+    msg("b", big),
+    msg("c", big),
+    msg("d", big),
+    msg("e", big),
+    msg("f", big),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00006", endRef: "m00001", summary: "big reversed" }],
+    messages,
+    state,
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
   });
 
   assert.equal(result.result.blocksCreated, 1);
-  assert.deepEqual(result.state.blocks[0]!.effectiveMessageIds.sort(), [
-    "a",
-    "b",
-    "c",
+  assert.deepEqual(result.result.notes, [
+    "note: refs were given reversed (m00006→m00001), normalized to m00001..m00006",
   ]);
+});
+
+test("mixed batch appends the reversal note to the too-small verdict", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [
+    msg("a", "x"),
+    msg("b", "y"),
+    msg("c", "z"),
+    msg("d", "w"),
+    msg("e", "v"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const result = core.applyCompression({
+    ranges: [
+      { startRef: "m00001", endRef: "m00002", summary: "tiny ok" },
+      { startRef: "m00005", endRef: "m00004", summary: "reversed pair" },
+    ],
+    messages,
+    state,
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
+  });
+
+  assert.equal(result.result.blocksCreated, 0);
+  assert.equal(result.result.errors.length, 1);
+  assert.match(
+    result.result.errors[0]!,
+    /too small \(4 chars across 2 range\(s\), min 5000\)/,
+  );
+  assert.match(
+    result.result.errors[0]!,
+    /note: refs were given reversed \(m00005→m00004\), normalized to m00004\.\.m00005/,
+  );
+});
+
+test("all-invalid batch reports per-range errors without fabricating a size verdict", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [msg("a", "x"), msg("b", "y"), msg("c", "z")];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "foo", endRef: "bar", summary: "bad" }],
+    messages,
+    state,
+    config: config({
+      compress: {
+        minCompressRange: 5000,
+        maxSummaryLength: 0,
+        minSummaryLength: 0,
+      },
+    }),
+  });
+
+  assert.equal(result.result.blocksCreated, 0);
+  assert.equal(result.result.errors.length, 1);
+  assert.match(result.result.errors[0]!, /Invalid boundary ref\(s\)/);
+  assert.doesNotMatch(result.result.errors.join("\n"), /too small/i);
 });
 
 test("block-boundary compression produces T2 and consumes matching T1 blocks", () => {

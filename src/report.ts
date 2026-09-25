@@ -1,6 +1,6 @@
 import { clampPrefix } from "./truncate.js";
+import { isToolMessage } from "./message-kind.js";
 import { refForRaw } from "./refs.js";
-import { isToolMessage } from "./recommend.js";
 import { countMessageTokens } from "./tokenize.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "./types.js";
 
@@ -68,6 +68,7 @@ interface VisibleMessageInfo {
     ref: string;
     tokens: number;
     tool: string;
+    isTool: boolean;
     index: number;
 }
 
@@ -101,10 +102,11 @@ function collectVisible(
         const ref = refForRaw(state.messageRefs, message.id);
         if (!ref) return;
         const tokens = countMessageTokens(message, countTokens);
-        const tool = isToolMessage(message)
-            ? message.toolName ?? (message.toolCallId ? toolCallNames.get(message.toolCallId) : undefined) ?? "tool"
+        const isTool = isToolMessage(message);
+        const tool = isTool
+            ? (message.toolName ?? (message.toolCallId ? toolCallNames.get(message.toolCallId) : undefined) ?? "tool")
             : "text";
-        if (tokens > 0) visible.push({ ref, tokens, tool, index });
+        if (tokens > 0) visible.push({ ref, tokens, tool, isTool, index });
     });
     return { visible, summaryTokens };
 }
@@ -190,10 +192,10 @@ function renderOverview(
     const topTool = [...toolTypeMap.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
     const totalTool = visible
-        .filter((m) => m.tool !== "text")
+        .filter((m) => m.isTool)
         .reduce((sum, m) => sum + m.tokens, 0);
     const totalText = visible
-        .filter((m) => m.tool === "text")
+        .filter((m) => !m.isTool)
         .reduce((sum, m) => sum + m.tokens, 0);
     const total = summaryTokens + totalTool + totalText;
 

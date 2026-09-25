@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildStatusPanel, topicFallback, formatCompactTokens, cacheHitStats, formatHitRate } from "../src/panel/index.js";
+import { defaultCountTokens } from "../src/tokenize.js";
 import { VIABLE_RANGE_MIN_TOKENS } from "../src/viable.js";
 
 test("panel separates session accounting from sent view", () => {
@@ -83,6 +84,29 @@ test("session-only derives on the estimation scale, never cross-scale", () => {
     unprunedTokens: 134_000,
   });
   assert.match(text, /Session-only \(compressed originals, est\.\): 110k — pruned from every request/);
+});
+
+test("panel session-only stays on the core's estimator scale for CJK (issue #390)", () => {
+  // unpruned must be estimated with the SAME estimator the nudge breakdown
+  // uses (defaultCountTokens, CJK 1:1) — not chars/4. 1000 CJK chars of
+  // compressed originals = 1000 tokens on that scale (250 on chars/4).
+  const sentTotal = 24_000;
+  const unpruned = sentTotal + defaultCountTokens("中".repeat(1_000));
+  const nudge = {
+    shouldInject: false,
+    reason: "idle",
+    contextBreakdown: { system: 0, tool: 20_000, text: 4_000, code: 0, summaries: 0, total: 24_000, growth: 0 },
+  };
+  const state = { blocks: [], messageRefs: { byRaw: {}, byRef: {} }, nudge: {}, stats: { tokensCompressed: 0 }, nextBlockId: 1, nextRunId: 1 };
+  const text = buildStatusPanel({
+    tokenCount: 430_000,
+    systemPromptTokens: 0,
+    state: state as never,
+    nudge: nudge as never,
+    modelContextLimit: 1_000_000,
+    unprunedTokens: unpruned,
+  });
+  assert.match(text, /Session-only \(compressed originals, est\.\): 1\.0k — pruned from every request/);
 });
 
 test("topicFallback takes the first sentence segment, ≤30 chars", () => {

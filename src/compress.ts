@@ -30,6 +30,7 @@ import {
   isMessageLatestProtected,
   isMessageProtected,
 } from "./protected.js";
+import { isToolMessage } from "./message-kind.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import { adjustBoundariesForReasoningPairs } from "./reasoning-pairs.js";
 import { computeIntegrityWithdrawals } from "./turn-integrity.js";
@@ -1714,10 +1715,7 @@ function computeContextBreakdown(
     const tokens = countMessageTokens(msg, count);
     if (msg.text?.startsWith("[Compressed conversation section]")) {
       summaries += tokens;
-    } else if (
-      msg.contentType === "tool-call" ||
-      msg.contentType === "tool-result"
-    ) {
+    } else if (isToolMessage(msg)) {
       tool += tokens;
     } else if (msg.role === "system") {
       system += tokens;

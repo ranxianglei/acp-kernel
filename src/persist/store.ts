@@ -158,6 +158,12 @@ export class StateStore<T> {
     private readonly writeChains = new Map<string, Promise<void>>();
     /** id → absolute path, populated by writes and loadAll. */
     private readonly discovered = new Map<string, string>();
+    /** id → seq of the last COMMITTED write (sync or async). Async writers
+     *  capture the seq at snapshot time and re-check it inside their
+     *  synchronous commit block; a flushSync (or a newer committed write)
+     *  bumping the seq makes the stale in-flight write abort its commit
+     *  instead of clobbering the newer on-disk payload. */
+    private readonly commitSeq = new Map<string, number>();
     /** id → cumulative write-failure count, for rate-limited alerting. */
     private readonly failCounts = new Map<string, number>();
     /** Monotonic counter for unique temp filenames within a process. */
@@ -222,7 +228,9 @@ export class StateStore<T> {
     /** Synchronous flush for one id. Used where the caller cannot await
      *  (memory eviction, sync shutdown paths). Cancels any pending debounce
      *  timer. Returns true on success, false on failure — callers that use
-     *  the result to drop in-memory state must NOT drop it on failure. */
+     *  the result to drop in-memory state must NOT drop it on failure.
+     *  Committing bumps the per-id fence so a stale in-flight async write
+     *  cannot land its older payload after this returns. */
     flushSync(id: string, build: () => T): boolean {
         if (!this.enabled) return true;
         const timer = this.timers.get(id);
@@ -266,6 +274,7 @@ export class StateStore<T> {
         if (!lastErr) {
             this.discovered.set(id, file);
             this.clearFailure(id);
+            this.bumpCommit(id);
             this.removeSpillSync(file);
             return true;
         }
@@ -286,6 +295,7 @@ export class StateStore<T> {
             }
         }
         if (spillPath) this.discovered.set(id, spillPath);
+        if (spillPath) this.bumpCommit(id);
         this.recordFailure(id, lastErr, spillPath);
         return spillPath !== null;
     }
@@ -393,6 +403,10 @@ export class StateStore<T> {
     }
 
     private async writeInner(id: string, build: () => T): Promise<void> {
+        // Fence point, captured BEFORE build(): from here on, any write that
+        // commits (a flushSync re-entering from inside build(), or a newer
+        // chained write) bumps the seq and this snapshot is stale.
+        const baseSeq = this.commitSeq.get(id) ?? 0;
         let payload: T;
         try {
             payload = build();
@@ -414,9 +428,28 @@ export class StateStore<T> {
             try {
                 await fsp.mkdir(path.dirname(file), { recursive: true });
                 await fsp.writeFile(tmp, data);
-                await fsp.rename(tmp, file);
+                // Commit block: fence check + rename in one synchronous run
+                // — the event loop cannot interleave a flushSync between the
+                // check and the rename, so a stale payload can never land
+                // after a newer committed write.
+                if ((this.commitSeq.get(id) ?? 0) !== baseSeq) {
+                    await fsp.unlink(tmp).catch(() => {});
+                    return;
+                }
+                try {
+                    fs.renameSync(tmp, file);
+                } catch (e) {
+                    lastErr = e;
+                    await fsp.unlink(tmp).catch(() => {});
+                    if (!isTransientFsError(e) || attempt === this.retryAttempts - 1) break;
+                    const { promise, resolve } = Promise.withResolvers<void>();
+                    setTimeout(resolve, this.backoffMs(attempt));
+                    await promise;
+                    continue;
+                }
                 this.discovered.set(id, file);
                 this.clearFailure(id);
+                this.commitSeq.set(id, baseSeq + 1);
                 await this.removeSpill(file);
                 return;
             } catch (e) {
@@ -430,6 +463,10 @@ export class StateStore<T> {
                 await promise;
             }
         }
+        // Fenced off before spilling: a newer committed write already owns
+        // the disk record for this id — the stale payload is dropped, not
+        // spilled (its spill would clobber the newer spill on the same slot).
+        if ((this.commitSeq.get(id) ?? 0) !== baseSeq) return;
         // The canonical write outlived the retry window (Windows lock held
         // by AV/indexer/SMB, or a sweeper keeps deleting the fresh temp).
         // Spill to a side file so the data still lands on disk instead of
@@ -442,7 +479,11 @@ export class StateStore<T> {
         for (let attempt = 0; attempt < this.retryAttempts && spillPath === null; attempt++) {
             try {
                 await fsp.mkdir(path.dirname(spill), { recursive: true });
-                await fsp.writeFile(spill, data);
+                // Fence + write synchronously: the spill slot is shared per
+                // id, so a late-landing stale spill would overwrite a newer
+                // spill exactly like the canonical case above.
+                if ((this.commitSeq.get(id) ?? 0) !== baseSeq) return;
+                fs.writeFileSync(spill, data);
                 spillPath = spill;
             } catch (e) {
                 if (!isTransientFsError(e) || attempt === this.retryAttempts - 1) break;
@@ -451,7 +492,10 @@ export class StateStore<T> {
                 await promise;
             }
         }
-        if (spillPath) this.discovered.set(id, spillPath);
+        if (spillPath) {
+            this.discovered.set(id, spillPath);
+            this.commitSeq.set(id, baseSeq + 1);
+        }
         this.recordFailure(id, lastErr, spillPath);
         throw lastErr;
     }
@@ -511,6 +555,13 @@ export class StateStore<T> {
     /** Remove a stale spill after a successful canonical write (best-effort). */
     private async removeSpill(file: string): Promise<void> {
         await fsp.unlink(this.spillPathFor(file)).catch(() => {});
+    }
+
+    /** Advance the per-id commit fence after a successful synchronous
+     *  commit, fencing off any in-flight async write holding an older
+     *  snapshot. */
+    private bumpCommit(id: string): void {
+        this.commitSeq.set(id, (this.commitSeq.get(id) ?? 0) + 1);
     }
 
     private removeSpillSync(file: string): void {

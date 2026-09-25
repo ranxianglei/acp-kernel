@@ -493,7 +493,7 @@ test("rename failure spills to a side file instead of dropping data", async (t) 
     const dir = tmpDir();
     try {
         const s = store(dir, { retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
-        t.mock.method(fsp, "rename", async () => {
+        t.mock.method(fs, "renameSync", () => {
             throw eperm();
         });
         let threw = false;
@@ -561,7 +561,7 @@ test("write failures alert on the first and power-of-two counts, not every write
             retryMaxMs: 2,
             log: (level, msg) => logs.push({ level, msg }),
         });
-        t.mock.method(fsp, "rename", async () => {
+        t.mock.method(fs, "renameSync", () => {
             throw eperm();
         });
         for (let i = 0; i < 5; i++) {
@@ -613,13 +613,13 @@ test("a successful write clears the failure counter so alerting restarts", async
             retryMaxMs: 2,
             log: (level, msg) => logs.push({ level, msg }),
         });
-        t.mock.method(fsp, "rename", async () => {
+        t.mock.method(fs, "renameSync", () => {
             throw eperm();
         });
         await s.writeNow("sid-reset", () => ({ label: "a", count: 0 })).catch(() => {});
         t.mock.restoreAll();
         await s.writeNow("sid-reset", () => ({ label: "b", count: 1 }));
-        t.mock.method(fsp, "rename", async () => {
+        t.mock.method(fs, "renameSync", () => {
             throw eperm();
         });
         await s.writeNow("sid-reset", () => ({ label: "c", count: 2 })).catch(() => {});
@@ -668,13 +668,13 @@ test("a temp file vanishing before rename (ENOENT) is healed by whole-cycle retr
     const dir = tmpDir();
     try {
         const s = store(dir, { retryAttempts: 3, retryBaseMs: 1, retryMaxMs: 1 });
-        const realRename = fsp.rename.bind(fsp);
+        const realRenameSync = fs.renameSync.bind(fs);
         let calls = 0;
-        t.mock.method(fsp, "rename", (async (src: string, dest: string) => {
+        t.mock.method(fs, "renameSync", ((src: string, dest: string) => {
             calls++;
             if (calls === 1) throw enoent();
-            await realRename(src, dest);
-        }) as typeof fsp.rename);
+            realRenameSync(src, dest);
+        }) as typeof fs.renameSync);
         await s.writeNow("sid-sweep", () => ({ label: "healed", count: 3 }));
         const canonical = path.join(dir, flatFileNameFor("sid-sweep"));
         const env = JSON.parse(readFileSync(canonical, "utf8")) as { id: string; payload: Payload };
@@ -713,7 +713,7 @@ test("persistent ENOENT still spills so data is never dropped", async (t) => {
     const dir = tmpDir();
     try {
         const s = store(dir, { retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
-        t.mock.method(fsp, "rename", (async () => {
+        t.mock.method(fs, "renameSync", (() => {
             throw enoent();
         }) as typeof fsp.rename);
         let threw = false;
@@ -809,7 +809,7 @@ test("codec applies to spill writes as well", async (t) => {
     const dir = tmpDir();
     try {
         const s = store(dir, { codec: xorCodec(), retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
-        t.mock.method(fsp, "rename", async () => {
+        t.mock.method(fs, "renameSync", () => {
             throw eperm();
         });
         let threw = false;
@@ -879,6 +879,75 @@ test("mixed tree: unencoded legacy files and encoded files both load", async () 
         const all = await fresh.loadAll();
         assert.deepEqual(all.get("sid-old")?.payload, { label: "legacy", count: 1 });
         assert.deepEqual(all.get("sid-new")?.payload, { label: "encoded", count: 2 });
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("#373: a flushSync landing while an async write is mid-flight cannot be clobbered by the stale rename", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir);
+        // Reentrant interleave: while writeInner is between its build() and
+        // its commit, a flushSync commits a NEWER payload. Deterministic —
+        // the reentrant call runs inside build() itself.
+        const inFlight = s.writeNow("sid-fence", () => {
+            const snap: Payload = { label: "stale", count: 1 };
+            const ok = s.flushSync("sid-fence", () => ({ label: "fresh", count: 2 }));
+            assert.equal(ok, true, "reentrant flushSync must succeed");
+            return snap;
+        });
+        await inFlight;
+        const loaded = s.loadSync("sid-fence");
+        assert.ok(loaded, "record must exist");
+        assert.deepEqual(
+            loaded.payload,
+            { label: "fresh", count: 2 },
+            "disk must hold the flushSync payload, not the stale in-flight snapshot",
+        );
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("#373: fenced async writes that lose the race settle quietly and never throw into the chain", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir);
+        let observed: Payload | null = null;
+        const p1 = s.writeNow("sid-chain", () => {
+            const snap: Payload = { label: "older", count: 1 };
+            s.flushSync("sid-chain", () => ({ label: "newer", count: 5 }));
+            return snap;
+        });
+        await p1;
+        // A queued write built AFTER the flushSync commits is NOT fenced —
+        // it snapshots later state and must land.
+        await s.writeNow("sid-chain", () => {
+            observed = { label: "latest", count: 9 };
+            return observed;
+        });
+        const loaded = s.loadSync("sid-chain");
+        assert.ok(loaded);
+        assert.deepEqual(loaded.payload, { label: "latest", count: 9 });
+        // The fenced older write left no tmp orphans behind.
+        const leftovers = readdirSync(dir).filter((f) => f.startsWith(".tmp-"));
+        assert.deepEqual(leftovers, []);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("#373: flushSync after a fully settled async write simply supersedes it", async () => {
+    const dir = tmpDir();
+    try {
+        const s = store(dir);
+        await s.writeNow("sid-order", () => ({ label: "async-first", count: 1 }));
+        const ok = s.flushSync("sid-order", () => ({ label: "sync-second", count: 2 }));
+        assert.equal(ok, true);
+        const loaded = s.loadSync("sid-order");
+        assert.ok(loaded);
+        assert.deepEqual(loaded.payload, { label: "sync-second", count: 2 });
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }

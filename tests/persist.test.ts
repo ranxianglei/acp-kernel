@@ -520,7 +520,7 @@ test("loadAll discovers a spilled record and reconciles against the canonical by
         const s = store(dir, { retryAttempts: 2, retryBaseMs: 1, retryMaxMs: 2 });
         await s.writeNow("sid-r", () => ({ label: "old", count: 1 }));
         await new Promise((r) => setTimeout(r, 5));
-        t.mock.method(fsp, "rename", async () => {
+        t.mock.method(fs, "renameSync", () => {
             throw eperm();
         });
         await s.writeNow("sid-r", () => ({ label: "new", count: 2 })).catch(() => {});

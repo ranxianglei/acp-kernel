@@ -222,10 +222,22 @@ test("hasMediaPayload detects each sidecar carrier and ignores plain/tool-result
     ),
     true,
   );
-  // The same sidecar field carries structured tool_results — must NOT count.
+  // The same sidecar field carries structured tool_results — a bare one or a
+  // text-only one must NOT count (#366).
   assert.equal(
     hasMediaPayload(
       mediaUserMsg("f", "x", { rawAnthropicBlock: { type: "tool_result" } }),
+    ),
+    false,
+  );
+  assert.equal(
+    hasMediaPayload(
+      mediaUserMsg("j", "x", {
+        rawAnthropicBlock: {
+          type: "tool_result",
+          content: [{ type: "text", text: "done" }],
+        },
+      }),
     ),
     false,
   );
@@ -359,5 +371,145 @@ test("applyCompression excludes media messages from the block and warns", () => 
   assert.ok(
     result.result.warnings.some((w) => w.includes("image/attachment")),
     `warning present, got: ${JSON.stringify(result.result.warnings)}`,
+  );
+});
+
+// --- Anthropic tool_result embedded media (#366) ---
+
+const TR_IMG = {
+  type: "image",
+  source: { type: "base64", media_type: "image/png", data: IMG_DATA },
+};
+
+function mediaToolResult(id: string, text: string): CoreMessage {
+  return Object.assign(
+    {
+      id,
+      role: "tool" as const,
+      contentType: "tool-result" as const,
+      toolName: "screenshot",
+      toolCallId: "t1",
+      text,
+    },
+    {
+      rawAnthropicBlock: {
+        type: "tool_result",
+        tool_use_id: "t1",
+        content: [{ type: "text", text: "done" }, TR_IMG],
+      },
+    },
+  );
+}
+
+test("hasMediaPayload detects image blocks inside a tool_result sidecar", () => {
+  assert.equal(
+    hasMediaPayload(mediaToolResult("r", "done\n")),
+    true,
+    "image block in content array counts as media payload",
+  );
+});
+
+test("buildCompressibleRanges never spans a media tool_result and never strands its call", () => {
+  const messages = [
+    textMsg("u", "user", "alpha ".repeat(50).trim()),
+    {
+      id: "call",
+      role: "assistant" as const,
+      contentType: "tool-call" as const,
+      toolName: "screenshot",
+      toolCallId: "t1",
+      text: "{}",
+    },
+    mediaToolResult("res", "done\n"),
+    textMsg("b", "assistant", "beta ".repeat(50).trim()),
+  ];
+  const state = createInitialState();
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+  const ranges = buildCompressibleRanges(messages, state, config());
+
+  const refToIndex = new Map(
+    messages.map((m, i) => [state.messageRefs.byRaw[m.id], i]),
+  );
+  const resIdx = messages.findIndex((m) => m.id === "res");
+  const callIdx = messages.findIndex((m) => m.id === "call");
+  for (const r of ranges.compressible) {
+    const s = refToIndex.get(r.startRef)!;
+    const e = refToIndex.get(r.endRef)!;
+    assert.ok(
+      !(s <= resIdx && resIdx <= e),
+      `range ${r.startRef}..${r.endRef} must not span the media tool_result`,
+    );
+    assert.ok(
+      !(s <= callIdx && callIdx <= e),
+      `range ${r.startRef}..${r.endRef} must not advertise the call whose result is blocked`,
+    );
+  }
+  assert.ok(
+    ranges.compressible.length >= 1,
+    "non-media messages stay compressible",
+  );
+});
+
+test("applyCompression keeps a media tool_result and its paired call visible together", () => {
+  const core = createCore();
+  const state = createInitialState();
+  const messages = [
+    textMsg("u", "user", "the task"),
+    {
+      id: "call",
+      role: "assistant" as const,
+      contentType: "tool-call" as const,
+      toolName: "screenshot",
+      toolCallId: "t1",
+      text: "{}",
+    },
+    mediaToolResult("res", "done\n"),
+    textMsg("u2", "user", "and now?"),
+  ];
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+
+  const result = core.applyCompression({
+    ranges: [
+      {
+        startRef: "m00001",
+        endRef: "m00004",
+        summary: "task summarized",
+        topic: "work",
+      },
+    ],
+    messages,
+    state,
+    config: config(),
+  });
+
+  assert.equal(
+    result.result.errors.length,
+    0,
+    JSON.stringify(result.result.errors),
+  );
+  assert.equal(result.state.blocks.length, 1);
+  const block = result.state.blocks[0]!;
+  assert.deepEqual(block.directMessageIds.sort(), ["u", "u2"]);
+  assert.ok(
+    !block.effectiveMessageIds.includes("res"),
+    "media tool_result not folded",
+  );
+  assert.ok(
+    !block.effectiveMessageIds.includes("call"),
+    "paired call withdrawn with its result (pair atomicity)",
+  );
+  assert.ok(
+    result.result.warnings.some((w) => w.includes("image/attachment")),
+    `media warning present, got: ${JSON.stringify(result.result.warnings)}`,
+  );
+  assert.ok(
+    result.result.warnings.some((w) => w.includes("tool call/result pair")),
+    `pair-withdrawal warning present, got: ${JSON.stringify(result.result.warnings)}`,
   );
 });

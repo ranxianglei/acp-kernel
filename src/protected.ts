@@ -173,7 +173,8 @@ export function isMessageLatestProtected(
 }
 
 /** Wire-sidecar fields carrying media/attachment payloads whose bytes live
- *  OUTSIDE msg.text (images, or opaque file refs such as DeepSeek Files API
+ *  OUTSIDE msg.text (images, image blocks inside a structured Anthropic
+ *  tool_result, or opaque file refs such as DeepSeek Files API
  *  `{type:"file"}`). Folding such a message into a summary destroys the
  *  payload permanently: hosts rebuild requests from their own history and the
  *  kernel holds no server-side archive (billion-context#1188). Typed
@@ -193,7 +194,15 @@ export function hasMediaPayload(msg: CoreMessage): boolean {
   if (m.rawOpenaiContent != null) return true;
   if (Array.isArray(m.rawOpenaiContentParts) && m.rawOpenaiContentParts.length > 0)
     return true;
-  if (isObjWith(m.rawAnthropicBlock, "type", "image")) return true;
+  const ab = m.rawAnthropicBlock;
+  if (isObjWith(ab, "type", "image")) return true;
+  // A structured tool_result sidecar is media only when its content array
+  // holds non-text blocks (images); text-only structured results carry no
+  // bytes outside msg.text.
+  if (isObjWith(ab, "type", "tool_result")) {
+    const content = (ab as { content?: unknown }).content;
+    if (Array.isArray(content)) return content.some((p) => !isObjWith(p, "type", "text"));
+  }
   const item = m.rawResponsesItem;
   if (isObjWith(item, "type", "input_image")) return true;
   if (item && typeof item === "object") {

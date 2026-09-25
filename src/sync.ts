@@ -12,7 +12,13 @@ export function syncBlocks(
 ): SyncResult {
   const presentIds = new Set(messages.map((message) => message.id));
   const presentBases = new Set<string>();
-  for (const message of messages) presentBases.add(baseIdOf(message.id));
+  // Subid coverage only applies to messages that actually carry a string id.
+  // Id-less host-shaped entries were silently digested by every release
+  // before 0.0.90 (presentIds merely held undefined and no has() ever
+  // matched); baseIdOf would throw on them and hard-crash processTurn (#421).
+  for (const message of messages) {
+    if (typeof message.id === "string") presentBases.add(baseIdOf(message.id));
+  }
   const deactivated: string[] = [];
   // Deep-clone (not just `{...state}`) so the caller's input state is never
   // mutated: processTurn stamps `state.nudge.*` and reassigns `messageRefs`,

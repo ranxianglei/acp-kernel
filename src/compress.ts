@@ -588,7 +588,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
           countTokens,
           preExistingCoverage,
         });
-        blocksCreated++;
+        blocksCreated += outcome.refoldedBlocks ?? 1;
         tokensCompressed += outcome.tokens;
         warnings.push(...outcome.warnings);
       } catch (error) {
@@ -1049,6 +1049,9 @@ interface SingleRangeInput {
 interface SingleRangeOutcome {
   tokens: number;
   warnings: string[];
+  /** Set when the range ended as an in-place refold instead of a new block:
+   * the number of blocks updated (K2 counting, mirrors the consumed path). */
+  refoldedBlocks?: number;
 }
 
 function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
@@ -1279,6 +1282,22 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     filteredIds.length === 0 &&
     consumedBlockIds.length > 0
   ) {
+    // #400: full-log hosts keep folded originals in the view, so a re-compress
+    // of an inline-restored span classifies "ok" here instead of "consumed"
+    // and would die in the guard before the #398 gate ever ran. Consult the
+    // gate at this single choke point; blocked decisions fall through to the
+    // legacy rejection below, byte-for-byte.
+    const refold = evaluateRefold(input.state, input.spec);
+    if (refold.kind === "refold") {
+      applyRefolds({
+        spec: input.spec,
+        state: input.state,
+        runId: input.runId,
+        config: input.config,
+        blockIds: refold.blocks.map((block) => block.blockId),
+      });
+      return { tokens: 0, warnings, refoldedBlocks: refold.blocks.length };
+    }
     const first = consumedBlockIds[0]!;
     const last = consumedBlockIds[consumedBlockIds.length - 1]!;
     throw new Error(

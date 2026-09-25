@@ -338,6 +338,145 @@ test("two sibling restored blocks in one range are both refolded in place", () =
   }
 });
 
+/** Full-log hosts pass every original plus the rendered anchors;
+ * these fixtures mirror that world (issue #400). */
+function longMessages(count: number): CoreMessage[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `msg-${i + 1}`,
+    role: "assistant",
+    contentType: "text",
+    text: `content ${i + 1} ${"x".repeat(80)}`,
+  }));
+}
+
+const anchor = (blockId: string): CoreMessage => ({
+  id: `acp_summary_${blockId}`,
+  role: "system",
+  contentType: "text",
+  text: OLD_SUMMARY,
+});
+
+// Full-anchor view parity (#400) ----------------------------------------------
+
+test("full-anchor view: re-compressing a restored span refolds in place, identical to the pruned view", () => {
+  const core = createCore();
+  const messages = longMessages(12);
+  const ids = messages.slice(0, 10).map((m) => m.id);
+  const { state: marked } = markBlockRestoredInline(
+    makeState(messages, [
+      makeBlock({
+        blockId: "b1",
+        effectiveMessageIds: ids,
+        startRef: "m00001",
+        endRef: "m00010",
+      }),
+    ]),
+    "b1",
+  );
+  const ranges = [
+    {
+      startRef: "m00001",
+      endRef: "m00010",
+      summary: NEW_SUMMARY,
+      topic: "refold",
+    },
+  ];
+
+  const full = core.applyCompression({
+    ranges,
+    messages: [anchor("b1"), ...messages], // full session projection + anchor
+    state: marked,
+    config: config(),
+  });
+  const pruned = core.applyCompression({
+    ranges,
+    messages: [],
+    state: marked,
+    config: config(),
+  });
+
+  assert.deepEqual(full.result.errors, []);
+  assert.equal(full.result.blocksCreated, 1);
+  assert.equal(pruned.result.blocksCreated, 1, "same count as the pruned view");
+  assert.deepEqual(full.state.blocks, pruned.state.blocks, "same end state");
+  assert.equal(full.state.nextBlockId, 2, "no new block id allocated");
+  const block = full.state.blocks[0]!;
+  assert.equal(block.blockId, "b1", "block id stays stable");
+  assert.equal(block.summary, NEW_SUMMARY);
+  assert.equal(block.topic, "refold");
+  assert.equal(block.restoredInline, false, "marker cleared after refold");
+  assert.equal(block.active, true);
+});
+
+test("full-anchor view: span fully covered by an un-restored block still dies in the livelock guard, error text verbatim", () => {
+  const core = createCore();
+  const messages = longMessages(10);
+  const ids = messages.map((m) => m.id);
+  const state = makeState(messages, [
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: ids,
+      startRef: "m00001",
+      endRef: "m00010",
+    }),
+  ]);
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00010", summary: NEW_SUMMARY }],
+    messages: [anchor("b1"), ...messages],
+    state,
+    config: config(),
+  });
+
+  assert.equal(result.result.errors.length, 1);
+  assert.equal(
+    result.result.errors[0]!,
+    "range m00001..m00010: Range m00001..m00010 contains no new compressible messages — every message in it is already covered by active block(s) b1. Nothing was compressed. To rewrite or merge those blocks, reference them by block ID (b1..b1); otherwise run acp_status and compress a range it reports as compressible.",
+  );
+  assert.equal(result.state.blocks[0]!.summary, OLD_SUMMARY, "no mutation");
+  assert.equal(result.state.nextBlockId, 2, "no id allocated");
+});
+
+test("full-anchor view: sibling restored blocks covering the whole span are both refolded in place", () => {
+  const core = createCore();
+  const messages = longMessages(20);
+  const state = makeState(messages, [
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: messages.slice(0, 10).map((m) => m.id),
+    }),
+    makeBlock({
+      blockId: "b3",
+      effectiveMessageIds: messages.slice(10, 20).map((m) => m.id),
+    }),
+  ]);
+  const s2 = markBlockRestoredInline(state, "b1").state;
+  const s3 = markBlockRestoredInline(s2, "b3").state;
+
+  const full = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00020", summary: NEW_SUMMARY }],
+    messages: [anchor("b1"), anchor("b3"), ...messages],
+    state: s3,
+    config: config(),
+  });
+  const pruned = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00020", summary: NEW_SUMMARY }],
+    messages: [],
+    state: s3,
+    config: config(),
+  });
+
+  assert.deepEqual(full.result.errors, []);
+  assert.equal(full.result.blocksCreated, 2);
+  assert.equal(pruned.result.blocksCreated, 2, "same count as the pruned view");
+  assert.deepEqual(full.state.blocks, pruned.state.blocks, "same end state");
+  assert.equal(full.state.nextBlockId, 4, "no new block ids allocated");
+  for (const block of full.state.blocks) {
+    assert.equal(block.summary, NEW_SUMMARY);
+    assert.equal(block.restoredInline, false);
+  }
+});
+
 // Backward compatibility ------------------------------------------------------
 
 test("old persisted format without restoredInline reads as false: refold rejected until marked", () => {

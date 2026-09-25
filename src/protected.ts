@@ -35,15 +35,28 @@ export const NEVER_PRESERVE_RECENT_TOOLS = [
   "bash",
 ] as const;
 
-/** True for tool-call / tool-result messages whose toolName is in the
- *  NEVER_PRESERVE_RECENT_TOOLS list — i.e. tool results (like decompress)
- *  that should be excluded from the soft-protected recent zone. */
-export function isNeverPreserveRecent(msg: CoreMessage): boolean {
+/** True for tool-call / tool-result messages whose toolName matches one of
+ *  the recent-zone exclusion patterns — i.e. tool results (like decompress)
+ *  that should be excluded from the soft-protected recent zone.
+ *
+ *  `patterns` defaults to NEVER_PRESERVE_RECENT_TOOLS when omitted/undefined
+ *  (the built-in list stays the default behavior); an explicit array —
+ *  including `[]` — replaces it verbatim. Patterns use the same glob-suffix
+ *  matching as protectedTools; exact names behave exactly as before. */
+export function isNeverPreserveRecent(
+  msg: CoreMessage,
+  patterns?: readonly string[],
+): boolean {
   if (msg.contentType !== "tool-call" && msg.contentType !== "tool-result") {
     return false;
   }
   if (!msg.toolName) return false;
-  return (NEVER_PRESERVE_RECENT_TOOLS as readonly string[]).includes(msg.toolName);
+  const list =
+    patterns === undefined ? (NEVER_PRESERVE_RECENT_TOOLS as readonly string[]) : patterns;
+  for (const pattern of list) {
+    if (matchToolPattern(msg.toolName, pattern)) return true;
+  }
+  return false;
 }
 
 export function matchToolPattern(toolName: string, pattern: string): boolean {

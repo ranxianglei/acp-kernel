@@ -361,6 +361,16 @@ export interface Config {
    *  cumulative-snapshot tools (e.g. todo_list) where only the newest result
    *  is the source of truth. */
   protectedLatestTools?: string[];
+  /** Tool-name patterns (glob suffix allowed) excluded from the soft-protected
+   *  recent zone (preserveRecentMessages / preserveRecentTokens / last user
+   *  message). Matching tool calls/results stay compressible even while they
+   *  sit in the recent tail, so large spent results (file bodies, command
+   *  output) can be reclaimed immediately instead of aging out of the window.
+   *  `undefined` = built-in default list (decompress/search_context/read/bash);
+   *  an explicit array — including `[]` — replaces the default verbatim
+   *  (`[]` excludes nothing: every recent tool result keeps its zone
+   *  protection while in the window). */
+  neverPreserveRecentTools?: string[];
   preserveRecentMessages: number;
   preserveRecentTokens: number;
   modelContextLimit: number;

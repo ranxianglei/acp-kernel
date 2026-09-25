@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { createCore } from "../src/compress.js";
 import { createInitialState } from "../src/state.js";
 import { assignRefs } from "../src/refs.js";
+import { isNeverPreserveRecent } from "../src/protected.js";
+import { defaultConfig, validateConfig } from "../src/config.js";
 import type { Config, CoreMessage } from "../src/types.js";
 
 function msg(
@@ -277,4 +279,145 @@ test("warnings accumulate across multiple ranges in one batch", () => {
 
   assert.ok(result.result.blocksCreated >= 1, "at least the unprotected head compresses");
   assert.ok(result.result.warnings.length >= 1, "warnings surfaced");
+});
+
+// --- neverPreserveRecentTools is configurable (billion-context#1277) ---
+
+test("isNeverPreserveRecent defaults to the built-in list when patterns is omitted", () => {
+  for (const name of ["decompress", "search_context", "read", "bash"]) {
+    assert.equal(isNeverPreserveRecent(toolResult("x", name, "body")), true, `${name} excluded by default`);
+  }
+  assert.equal(isNeverPreserveRecent(toolResult("y", "grep", "hits")), false, "other tools not excluded by default");
+  assert.equal(isNeverPreserveRecent(msg("z", "plain text")), false, "non-tool messages never excluded");
+});
+
+test("isNeverPreserveRecent honors an explicit pattern list (glob suffix included)", () => {
+  const readResult = toolResult("a", "read", "file body");
+  const bashResult = toolResult("b", "bash", "output");
+  const readFileResult = toolResult("c", "read_file", "file body");
+
+  // An explicit list replaces the built-in default verbatim.
+  assert.equal(isNeverPreserveRecent(bashResult, ["bash"]), true);
+  assert.equal(isNeverPreserveRecent(readResult, ["bash"]), false, "read no longer excluded once the list is explicit");
+  // The empty list excludes nothing.
+  assert.equal(isNeverPreserveRecent(readResult, []), false);
+  assert.equal(isNeverPreserveRecent(bashResult, []), false);
+  // Glob-suffix matching has the same semantics as protectedTools.
+  assert.equal(isNeverPreserveRecent(readFileResult, ["read*"]), true);
+  assert.equal(isNeverPreserveRecent(readResult, ["read*"]), true);
+});
+
+test("computeProtectedRefs flips recent-zone membership per configured list", async () => {
+  const { computeProtectedRefs } = await import("../src/recommend.js");
+  const messages: CoreMessage[] = [
+    msg("a", "old alpha", "user"),
+    msg("b", "old beta", "assistant"),
+    msg("c", "old gamma", "user"),
+    toolResult("d", "read", "x".repeat(20000)),
+    msg("e", "latest user intent", "user"),
+  ];
+  const state = seededState(messages);
+
+  // Default (field unset): read stays out of the zone → compressible in place.
+  let refs = computeProtectedRefs(messages, state, config({ preserveRecentMessages: 3 }));
+  assert.ok(!refs.has("m00004"), "default list keeps the read result outside the zone");
+
+  // Explicit list WITHOUT read: the replacement drops read's exclusion, so the
+  // fresh read result is back inside the zone (this is the #1198 trade-off
+  // users opt into).
+  refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentMessages: 3, neverPreserveRecentTools: ["bash"] }),
+  );
+  assert.ok(refs.has("m00004"), "explicit list without read gives the read result recent-zone protection");
+
+  // Explicit list WITH read: same as default for this message.
+  refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentMessages: 3, neverPreserveRecentTools: ["read", "bash"] }),
+  );
+  assert.ok(!refs.has("m00004"), "explicit list containing read keeps it compressible");
+
+  // Empty list: nothing excluded → the fresh read result sits IN the zone.
+  refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentMessages: 3, neverPreserveRecentTools: [] }),
+  );
+  assert.ok(refs.has("m00004"), "empty list gives the fresh read result full recent-zone protection");
+});
+
+test("applyCompression A/B: empty list protects a fresh read result; default reclaims it immediately", () => {
+  const core = createCore();
+  const messages: CoreMessage[] = [
+    msg("a", "first message alpha", "user"),
+    msg("b", "second message beta", "assistant"),
+    msg("c", "third message gamma", "user"),
+    toolResult("d", "read", "freshly read file body " + "x".repeat(200)),
+    msg("e", "fourth message epsilon", "assistant"),
+    msg("f", "fifth message zeta", "user"),
+  ];
+  // With preserveRecentMessages=3 and nothing excluded, visible tail = d,e,f
+  // → m00004 is inside the protected zone under the empty list.
+  const refused = core.applyCompression({
+    ranges: [
+      { startRef: "m00004", endRef: "m00004", summary: "should be refused while in the recent zone", topic: "fresh" },
+    ],
+    messages,
+    state: seededState(messages),
+    config: config({ preserveRecentMessages: 3, neverPreserveRecentTools: [] }),
+  });
+  assert.equal(refused.result.blocksCreated, 0, "fresh read result protected with empty exclusion list");
+  assert.equal(refused.result.errors.length, 1);
+  assert.match(refused.result.errors[0]!, /protected/i);
+
+  // Same session shape under the default list: read is out of the zone → reclaimable now.
+  const allowed = core.applyCompression({
+    ranges: [
+      { startRef: "m00004", endRef: "m00004", summary: "reclaiming the spent read result", topic: "reclaim" },
+    ],
+    messages,
+    state: seededState(messages),
+    config: config({ preserveRecentMessages: 3 }),
+  });
+  assert.equal(allowed.result.blocksCreated, 1, "default list still reclaims the read result immediately");
+  assert.equal(allowed.result.errors.length, 0);
+});
+
+test("empty list: a read result ages OUT of the recent zone and becomes compressible again", () => {
+  const core = createCore();
+  const messages: CoreMessage[] = [
+    msg("a", "first message alpha", "user"),
+    msg("b", "second message beta", "assistant"),
+    msg("c", "third message gamma", "user"),
+    toolResult("d", "read", "spent file body " + "x".repeat(200)),
+    msg("e", "fourth message epsilon", "assistant"),
+    msg("f", "fifth message zeta", "user"),
+    msg("g", "sixth message eta", "assistant"),
+    msg("h", "seventh message theta", "user"),
+  ];
+  const state = seededState(messages);
+  // visible tail = f,g,h → m00004 has aged out of the last-3 window.
+  const result = core.applyCompression({
+    ranges: [
+      { startRef: "m00004", endRef: "m00004", summary: "aging out of the zone", topic: "aged" },
+    ],
+    messages,
+    state,
+    config: config({ preserveRecentMessages: 3, neverPreserveRecentTools: [] }),
+  });
+  assert.equal(result.result.blocksCreated, 1, "aged-out read result compressible even with empty exclusion list");
+  assert.equal(result.result.errors.length, 0);
+});
+
+test("validateConfig rejects a non-string-array neverPreserveRecentTools", () => {
+  assert.deepEqual(
+    validateConfig(defaultConfig(200000, { neverPreserveRecentTools: [1] as unknown as string[] })),
+    ["neverPreserveRecentTools must be a string array"],
+  );
+  assert.deepEqual(validateConfig(defaultConfig(200000, { neverPreserveRecentTools: ["read"] })), []);
+  assert.deepEqual(validateConfig(defaultConfig(200000, { neverPreserveRecentTools: [] })), []);
+  assert.deepEqual(validateConfig(defaultConfig(200000)), [], "unset stays valid (built-in default applies)");
 });

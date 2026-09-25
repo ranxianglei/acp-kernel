@@ -93,12 +93,25 @@ test("every shape parseCompressArgs accepts passes the declared schema", () => {
 });
 
 test("structural violations are rejected by both layers", () => {
-  rejectedByBoth({});
-  rejectedByBoth({ topic: "x" });
   rejectedByBoth({ content: 42 });
   rejectedByBoth({ content: [{ startId: "m1" }] });
-  rejectedByBoth({ summary: "s" });
   rejectedByBoth({ content: [42] });
+});
+
+test("empty-ish calls are the parser's job, not the schema's (bili #1299)", () => {
+  // The top level must stay a plain object schema: Anthropic 400s any
+  // tool input_schema with top-level oneOf/allOf/anyOf, so the
+  // content-vs-flat alternation cannot be expressed structurally. With no
+  // top-level required either (a strict host must not kill the flat form),
+  // these shapes pass the schema by design — parseCompressInput is the
+  // enforcement point and recovers zero ranges for them.
+  for (const input of [{}, { topic: "x" }, { summary: "s" }]) {
+    assert.ok(
+      validate(COMPRESS_PARAMETERS as Record<string, unknown>, input),
+      `schema must stay permissive at top level: ${JSON.stringify(input)}`,
+    );
+    assert.equal(parseCompressArgs(input).ranges.length, 0, `parser rejected: ${JSON.stringify(input)}`);
+  }
 });
 
 test("an object under content stays rejected (parser yields zero ranges for it)", () => {

@@ -232,3 +232,19 @@ A default `countTokens` ships with the core (word-level + unicode CJK tokenizer,
 ## 7. Why the algorithm, but not the DCP-derived code, comes here
 
 Copyright protects *expression*, not ideas, methods, or algorithms (17 USC §102(b)). The compression *methods* (3-tier, growth cadence, protected filtering) are the author's. This core reimplements them in **fresh expression** — it is not a copy or refactor of DCP-derived files. See [PROVENANCE.md](./PROVENANCE.md) for the per-module origin classification (original-bring / DCP-derived-reimplement / adapter-only).
+
+---
+
+## 8. Prune Semantics & Wire Invariants
+
+`prune` rebuilds the visible view every turn: messages covered by active blocks are dropped, and each active block's rendered summary (`[Compressed conversation section]`, id `acp_summary_bN`) is inserted at the block's earliest covered position (pair-safe, per `pairSafeAnchorIndex`). One behavior of the rebuilt view is a load-bearing contract for downstream consumers:
+
+### 8.1 First-user-message pin
+
+The session's **first user message survives prune unconditionally** — even when it is covered by an active block. In `rebuildMessages` (`src/prune.ts`) the pin check runs *before* the covered-by-active-block check, so after compressing a range that includes the first user message, the rebuilt wire contains **both** the rendered summary **and** the first user message verbatim; all other covered messages drop as usual. Only the *first* user message is pinned — later covered user messages are pruned normally.
+
+- **Why:** strict providers reject conversations with no user message (e.g., Anthropic requires the conversation to start from the user role). Pinning guarantees the rebuilt wire retains at least one user message whenever the input had one. Deliberate since prune's first implementation (v0.0.2) — the ordering of the two checks is part of the contract, not incidental. Regression-tested by `tests/state-prune.test.ts` ("prune preserves first user message even when covered") and `tests/orphan-fixes.test.ts` ("prune: first user message pruned when covered (no duplication)").
+- **Consequences for consumers:**
+  - Consumers cannot assert byte-level disappearance of the first user message after compression; post-compress wire assertions must expect the rendered summary **plus** the pinned message verbatim.
+  - Token-size and prefix-cache stability estimates must account for the pinned message staying verbatim (it is often the task description and can be long).
+  - Boundary resolution compensates: `blockVisibleInRange` (`src/boundaries.ts`) treats a block as present in a range via its rendered summary **or** its earliest surviving raw — required precisely because the summary anchors *before* the pinned raw.

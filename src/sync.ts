@@ -11,8 +11,12 @@ export function syncBlocks(
   state: CompressionState,
 ): SyncResult {
   const presentIds = new Set(messages.map((message) => message.id));
+  // Id-less entries (host-shaped, outside the CoreMessage contract) carry no
+  // coverable identity — skip them instead of crashing baseIdOf (#421).
   const presentBases = new Set<string>();
-  for (const message of messages) presentBases.add(baseIdOf(message.id));
+  for (const message of messages) {
+    if (typeof message.id === "string") presentBases.add(baseIdOf(message.id));
+  }
   const deactivated: string[] = [];
   // Deep-clone (not just `{...state}`) so the caller's input state is never
   // mutated: processTurn stamps `state.nudge.*` and reassigns `messageRefs`,

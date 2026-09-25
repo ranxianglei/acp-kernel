@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createCore } from "../src/compress.js";
 import { syncBlocks } from "../src/sync.js";
 import { defaultConfig, validateConfig } from "../src/config.js";
 import { createInitialState } from "../src/state.js";
@@ -99,6 +100,44 @@ test("syncBlocks still deactivates when the base is truly gone (#231)", () => {
   );
   const result = syncBlocks([msg("h_other")], state);
   assert.deepEqual(result.deactivated, ["b1"]);
+});
+
+test("syncBlocks tolerates id-less host-shaped messages (#421)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({ blockId: "b1", effectiveMessageIds: ["kept"] }),
+    makeBlock({ blockId: "b2", effectiveMessageIds: ["gone"] }),
+  );
+  const idLess = {
+    role: "user" as const,
+    content: { type: "text", text: "u1" },
+  };
+  const result = syncBlocks(
+    [msg("kept"), idLess, msg("other")] as unknown as CoreMessage[],
+    state,
+  );
+  assert.deepEqual(result.deactivated, ["b2"], "id-less entries cover nothing");
+  assert.equal(result.state.blocks[0]!.active, true);
+  assert.equal(result.state.blocks[1]!.active, false);
+});
+
+test("processTurn tolerates id-less host-shaped messages end-to-end (#421)", () => {
+  const messages = Array.from({ length: 60 }, (_, i) =>
+    i % 2 === 0
+      ? { role: "user" as const, content: { type: "text", text: `u${i}` } }
+      : {
+          role: "assistant" as const,
+          content: [{ type: "text", text: `a${i}` }],
+        },
+  );
+  const out = createCore().processTurn({
+    messages: messages as unknown as CoreMessage[],
+    state: createInitialState(),
+    config: defaultConfig(200000),
+    tokenCount: 90000,
+  });
+  assert.equal(out.messages.length, 60);
+  assert.deepEqual(out.state.blocks, []);
 });
 
 test("syncBlocks does not mutate input state", () => {

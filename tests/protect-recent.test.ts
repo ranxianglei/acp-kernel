@@ -421,3 +421,129 @@ test("validateConfig rejects a non-string-array neverPreserveRecentTools", () =>
   assert.deepEqual(validateConfig(defaultConfig(200000, { neverPreserveRecentTools: [] })), []);
   assert.deepEqual(validateConfig(defaultConfig(200000)), [], "unset stays valid (built-in default applies)");
 });
+
+// --- preserveRecentTools: positive-facing subtraction knob (#1198/#1277) ----
+
+test("preserveRecentTools subtracts from the built-in list without restating it", async () => {
+  const { computeProtectedRefs } = await import("../src/recommend.js");
+  const messages = [
+    msg("a", "first message alpha"),
+    msg("b", "second message beta"),
+    msg("c", "third message gamma"),
+    toolResult("d", "read", "freshly read file body " + "x".repeat(200)),
+    msg("e", "fourth message epsilon"),
+    msg("f", "fifth message zeta"),
+  ];
+  const state = seededState(messages);
+
+  // Default: read is excluded from the zone → not protected.
+  let refs = computeProtectedRefs(messages, state, config({ preserveRecentMessages: 3 }));
+  assert.ok(!refs.has("m00004"), "default list keeps the fresh read result compressible");
+
+  // One-entry positive override: protect read, rest of the built-in untouched.
+  refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentMessages: 3, preserveRecentTools: ["read"] }),
+  );
+  assert.ok(refs.has("m00004"), "preserveRecentTools:[\"read\"] gives the read result zone protection");
+
+  // A bash result at the same position stays excluded — only read was subtracted.
+  const bashMessages = [
+    msg("a", "first message alpha"),
+    msg("b", "second message beta"),
+    msg("c", "third message gamma"),
+    toolResult("d", "bash", "command output " + "x".repeat(200)),
+    msg("e", "fourth message epsilon"),
+    msg("f", "fifth message zeta"),
+  ];
+  refs = computeProtectedRefs(
+    bashMessages,
+    seededState(bashMessages),
+    config({ preserveRecentMessages: 3, preserveRecentTools: ["read"] }),
+  );
+  assert.ok(!refs.has("m00004"), "bash stays excluded — the subtraction is per-tool");
+});
+
+test("preserveRecentTools combines with an explicit neverPreserveRecentTools list", async () => {
+  const { computeProtectedRefs } = await import("../src/recommend.js");
+  const messages = [
+    msg("a", "first message alpha"),
+    msg("b", "second message beta"),
+    msg("c", "third message gamma"),
+    toolResult("d", "read", "freshly read file body " + "x".repeat(200)),
+    toolResult("e", "bash", "command output " + "y".repeat(200)),
+    msg("f", "fifth message zeta"),
+  ];
+  const state = seededState(messages);
+  const cfg = config({
+    preserveRecentMessages: 3,
+    neverPreserveRecentTools: ["read", "bash"],
+    preserveRecentTools: ["read"],
+  });
+  const refs = computeProtectedRefs(messages, state, cfg);
+  assert.ok(refs.has("m00004"), "read protected: subtracted from the explicit list");
+  assert.ok(!refs.has("m00005"), "bash still excluded: not in preserveRecentTools");
+});
+
+test("preserveRecentTools supports glob suffixes and tolerates empty/no-match", async () => {
+  const { computeProtectedRefs } = await import("../src/recommend.js");
+  const messages = [
+    msg("a", "first message alpha"),
+    msg("b", "second message beta"),
+    msg("c", "third message gamma"),
+    toolResult("d", "bash", "command output " + "x".repeat(200)),
+    msg("e", "fourth message epsilon"),
+    msg("f", "fifth message zeta"),
+  ];
+  const state = seededState(messages);
+  let refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentMessages: 3, preserveRecentTools: ["bash*"] }),
+  );
+  assert.ok(refs.has("m00004"), "glob pattern bash* removes the built-in bash entry");
+
+  refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentMessages: 3, preserveRecentTools: ["nonexistent_tool"] }),
+  );
+  assert.ok(!refs.has("m00004"), "no-match preserve pattern is a no-op");
+
+  refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentMessages: 3, preserveRecentTools: [] }),
+  );
+  assert.ok(!refs.has("m00004"), "empty preserve array is a no-op, not protect-everything");
+});
+
+test("applyCompression: preserveRecentTools [\"read\"] is the one-line #1198 remedy", () => {
+  const core = createCore();
+  const messages: CoreMessage[] = [
+    msg("a", "first message alpha"),
+    msg("b", "second message beta"),
+    msg("c", "third message gamma"),
+    toolResult("d", "read", "freshly read file body " + "x".repeat(200)),
+    msg("e", "fourth message epsilon"),
+    msg("f", "fifth message zeta"),
+  ];
+  const refused = core.applyCompression({
+    ranges: [
+      { startRef: "m00004", endRef: "m00004", summary: "fold the fresh read", topic: "read" },
+    ],
+    messages,
+    state: seededState(messages),
+    config: config({ preserveRecentMessages: 3, preserveRecentTools: ["read"] }),
+  });
+  assert.equal(refused.result.blocksCreated, 0, "fresh read result protected by the subtraction knob");
+  assert.match(refused.result.errors[0]!, /protected/i);
+});
+
+test("validateConfig checks preserveRecentTools shape and accepts []", () => {
+  const bad = config({ preserveRecentTools: [42] as unknown as string[] });
+  assert.ok(validateConfig(bad).some((e) => /preserveRecentTools/.test(e)), "non-string array rejected");
+  const empty = config({ preserveRecentTools: [] });
+  assert.ok(!validateConfig(empty).some((e) => /preserveRecentTools/.test(e)), "empty array is a tolerated no-op");
+});

@@ -129,6 +129,13 @@ export function validateConfig(config: Config): string[] {
   ) {
     errors.push("neverPreserveRecentTools must be a string array");
   }
+  if (
+    config.preserveRecentTools !== undefined &&
+    (!Array.isArray(config.preserveRecentTools) ||
+      config.preserveRecentTools.some((t) => typeof t !== "string"))
+  ) {
+    errors.push("preserveRecentTools must be a string array");
+  }
   if (config.absorb) {
     if (config.absorb.enabled && !config.absorb.toolName) {
       errors.push("absorb.toolName must be a non-empty string when enabled");

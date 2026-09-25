@@ -42,17 +42,28 @@ export const NEVER_PRESERVE_RECENT_TOOLS = [
  *  `patterns` defaults to NEVER_PRESERVE_RECENT_TOOLS when omitted/undefined
  *  (the built-in list stays the default behavior); an explicit array —
  *  including `[]` — replaces it verbatim. Patterns use the same glob-suffix
- *  matching as protectedTools; exact names behave exactly as before. */
+ *  matching as protectedTools; exact names behave exactly as before.
+ *
+ *  `preservePatterns` (config.preserveRecentTools) is then SUBTRACTED from
+ *  that effective list (glob-suffix matching against the list entries), so
+ *  `preserveRecentTools: ["read"]` protects fresh read results without
+ *  restating the built-in list (upstream billion-context #1198/#1277).
+ *  Unset or empty = no subtraction. */
 export function isNeverPreserveRecent(
   msg: CoreMessage,
   patterns?: readonly string[],
+  preservePatterns?: readonly string[],
 ): boolean {
   if (msg.contentType !== "tool-call" && msg.contentType !== "tool-result") {
     return false;
   }
   if (!msg.toolName) return false;
-  const list =
+  const base =
     patterns === undefined ? (NEVER_PRESERVE_RECENT_TOOLS as readonly string[]) : patterns;
+  const list =
+    preservePatterns === undefined || preservePatterns.length === 0
+      ? base
+      : base.filter((tool) => !preservePatterns.some((p) => matchToolPattern(tool, p)));
   for (const pattern of list) {
     if (matchToolPattern(msg.toolName, pattern)) return true;
   }

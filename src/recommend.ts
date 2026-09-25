@@ -83,7 +83,7 @@ export function computeProtectedRefs(
     // counting them toward the last-N window would make them un-compressible
     // and hide them from recommendations. The message stays fully visible —
     // this only affects protection scope.
-    if (isNeverPreserveRecent(msg, config.neverPreserveRecentTools)) continue;
+    if (isNeverPreserveRecent(msg, config.neverPreserveRecentTools, config.preserveRecentTools)) continue;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
     visible.push({ ref, tokens: countMessageTokens(msg, countTokens) });

@@ -371,6 +371,15 @@ export interface Config {
    *  (`[]` excludes nothing: every recent tool result keeps its zone
    *  protection while in the window). */
   neverPreserveRecentTools?: string[];
+  /** Tool-name patterns (glob suffix allowed) REMOVED from the effective
+   *  never-preserve list — the positive-facing knob: "protect these tools in
+   *  the recent zone" without restating the whole built-in list. The common
+   *  remedy for the batch-read fold→re-read loop (upstream billion-context
+   *  #1198/#1277) is `["read"]`: freshly-read files then age out of the
+   *  window normally instead of folding immediately. Effective exclusion =
+   *  `(neverPreserveRecentTools ?? built-in) minus preserveRecentTools`;
+   *  unset or empty = no subtraction (pure no-op). */
+  preserveRecentTools?: string[];
   preserveRecentMessages: number;
   preserveRecentTokens: number;
   modelContextLimit: number;

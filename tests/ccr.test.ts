@@ -877,9 +877,24 @@ test("storeCoveredOriginals never persists placeholder text as an original (#134
   });
   const messages: CoreMessage[] = [
     { id: "u1", role: "user", contentType: "text", text: placeholder },
-    { id: "a1", role: "assistant", contentType: "text", text: "assistant reply that folds alongside" },
-    { id: "u2", role: "user", contentType: "text", text: "recent tail user message" },
-    { id: "a2", role: "assistant", contentType: "text", text: "recent tail assistant reply" },
+    {
+      id: "a1",
+      role: "assistant",
+      contentType: "text",
+      text: "assistant reply that folds alongside",
+    },
+    {
+      id: "u2",
+      role: "user",
+      contentType: "text",
+      text: "recent tail user message",
+    },
+    {
+      id: "a2",
+      role: "assistant",
+      contentType: "text",
+      text: "recent tail assistant reply",
+    },
   ];
   const seeded = core.processTurn({
     messages,
@@ -906,9 +921,15 @@ test("storeCoveredOriginals never persists placeholder text as an original (#134
     [block.blockId],
     countTokens,
   );
-  assert.ok(!hasStoredRef(store, "m00001"), "placeholder must not enter the store");
+  assert.ok(
+    !hasStoredRef(store, "m00001"),
+    "placeholder must not enter the store",
+  );
   const missed = retrieveByRef(store, "m00001");
-  assert.ok(!missed.ok, "retrieve must miss honestly, not echo the placeholder");
+  assert.ok(
+    !missed.ok,
+    "retrieve must miss honestly, not echo the placeholder",
+  );
   const kept = retrieveByRef(store, "m00002");
   assert.ok(kept.ok, "non-placeholder covered originals still store normally");
   if (kept.ok) assert.equal(kept.text, "assistant reply that folds alongside");

@@ -1,6 +1,7 @@
 import { activeBlocks, blockById } from "./state.js";
 import { isRenderedSummaryMessage, summaryMessageId } from "./prune.js";
 import { isRetrievedMessage } from "./ccr.js";
+import { BLOCKED_REF, refToIndex } from "./refs.js";
 import type {
   CompressionBlock,
   CompressionState,
@@ -191,6 +192,30 @@ function resolveAnchorIndex(
         snapped: `${label}="${boundary.raw}" refers to a message already compressed into an active block — anchored to the active block covering it instead.`,
       };
     }
+    const paddedRef = formatPaddedRef(boundary.numericId);
+    if (state.hiddenOrphanRefs?.includes(paddedRef)) {
+      const neighbor = snapToNeighborVisible(
+        state,
+        indexByMessageId,
+        boundary.numericId,
+        endpoint,
+      );
+      if (neighbor !== null) {
+        const dir =
+          endpoint === "start"
+            ? "the next visible message after it"
+            : "the previous visible message before it";
+        return {
+          index: neighbor,
+          snapped: `${label}="${boundary.raw}" is a hidden orphan compress call (no matching block) — snapped to ${dir} instead.`,
+        };
+      }
+      throw new BoundaryNotFoundError(
+        "consumed",
+        endpoint,
+        `${label}="${boundary.raw}" is a hidden orphan compress call with no adjacent visible message to anchor to — run acp_status for current refs.`,
+      );
+    }
     throw new BoundaryNotFoundError(
       "consumed",
       endpoint,
@@ -293,6 +318,36 @@ function inheritedContentIds(
     for (const id of child.effectiveMessageIds) ids.add(id);
   }
   return ids;
+}
+
+// Ref numbers are assigned in session order and never recycled, so the visible
+// list is an order-preserving subsequence: nearest-by-ref-number ==
+// nearest-by-position. Synthetic summary/retrieved messages carry no ref and
+// protected ones hold BLOCKED_REF, so both are skipped here.
+function snapToNeighborVisible(
+  state: CompressionState,
+  indexByMessageId: Map<string, number>,
+  refNumber: number,
+  endpoint: "start" | "end",
+): number | null {
+  let bestIndex: number | null = null;
+  let bestRef: number | null = null;
+  for (const [rawId, index] of indexByMessageId) {
+    const refText = state.messageRefs.byRaw[rawId];
+    if (!refText || refText === BLOCKED_REF) continue;
+    const ref = refToIndex(refText);
+    if (ref === null) continue;
+    if (endpoint === "start") {
+      if (ref > refNumber && (bestRef === null || ref < bestRef)) {
+        bestRef = ref;
+        bestIndex = index;
+      }
+    } else if (ref < refNumber && (bestRef === null || ref > bestRef)) {
+      bestRef = ref;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
 }
 
 function formatPaddedRef(index: number): string {

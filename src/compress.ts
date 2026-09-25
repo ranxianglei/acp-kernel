@@ -703,7 +703,11 @@ const hideCompressCallsNode: PipelineNode = {
   name: "hide-compress-calls",
   run(io) {
     const hidden = hideConsumedCompressCalls(io.state, io.messages);
-    return { ...io, messages: hidden.messages };
+    return {
+      ...io,
+      messages: hidden.messages,
+      state: { ...io.state, hiddenOrphanRefs: hidden.hiddenOrphanRefs },
+    };
   },
 };
 
@@ -1711,6 +1715,9 @@ function cloneState(state: CompressionState): CompressionState {
     terminalStreak: state.terminalStreak,
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
+    hiddenOrphanRefs: state.hiddenOrphanRefs
+      ? [...state.hiddenOrphanRefs]
+      : undefined,
   };
 }
 

@@ -38,11 +38,7 @@ function toolCall(
   };
 }
 
-function toolResult(
-  id: string,
-  callId: string,
-  text: string,
-): CoreMessage {
+function toolResult(id: string, callId: string, text: string): CoreMessage {
   return {
     id,
     role: "tool",
@@ -85,22 +81,31 @@ test("Bug 1: protected tool messages are filtered (no summary inflation)", () =>
   ];
   const config = defaultConfig(200000, {
     protectedTools: ["skill"],
-    compress: { minCompressRange: 0, maxSummaryLength: 100, minSummaryLength: 0 },
-    preserveRecentMessages: 0, preserveRecentTokens: 0,
-  });
-  let state = setupRefs(messages, {
-    blocks: [],
-    prune: { byMessageId: {}, activeBlockIds: [] },
-    messageRefs: { byRaw: {}, byRef: {} },
-    nudge: {
-      lastPerMessageNudgeTokens: 0,
-      lastNudgeShownTokens: 0,
-      pendingNudgeTurn: null,
-      baselineTokens: 0,
+    compress: {
+      minCompressRange: 0,
+      maxSummaryLength: 100,
+      minSummaryLength: 0,
     },
-    stats: { totalTokensCompressed: 0 },
-    compressionTiming: {},
-  }, config);
+    preserveRecentMessages: 0,
+    preserveRecentTokens: 0,
+  });
+  let state = setupRefs(
+    messages,
+    {
+      blocks: [],
+      prune: { byMessageId: {}, activeBlockIds: [] },
+      messageRefs: { byRaw: {}, byRef: {} },
+      nudge: {
+        lastPerMessageNudgeTokens: 0,
+        lastNudgeShownTokens: 0,
+        pendingNudgeTurn: null,
+        baselineTokens: 0,
+      },
+      stats: { totalTokensCompressed: 0 },
+      compressionTiming: {},
+    },
+    config,
+  );
 
   const result = core.applyCompression({
     ranges: [{ startRef: "m00001", endRef: "m00003", summary: "short" }],
@@ -110,12 +115,22 @@ test("Bug 1: protected tool messages are filtered (no summary inflation)", () =>
     countTokens: defaultCountTokens,
   });
 
-  assert.equal(result.result.blocksCreated, 1, "compression succeeds — no length error");
+  assert.equal(
+    result.result.blocksCreated,
+    1,
+    "compression succeeds — no length error",
+  );
   assert.equal(result.result.errors.length, 0, "no errors");
   const block = result.state.blocks[0]!;
   assert.equal(block.summary, "short", "summary is exactly the author's text");
-  assert.ok(!block.directMessageIds.includes("b"), "protected skill call excluded");
-  assert.ok(!block.directMessageIds.includes("c"), "protected skill result excluded");
+  assert.ok(
+    !block.directMessageIds.includes("b"),
+    "protected skill call excluded",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("c"),
+    "protected skill result excluded",
+  );
   assert.ok(block.directMessageIds.includes("a"), "regular msg compressed");
   assert.ok(block.directMessageIds.includes("d"), "regular msg compressed");
 });
@@ -131,21 +146,26 @@ test("Bug 2: orphaned tool-call — protected call outside range, result inside"
   const config = defaultConfig(200000, {
     protectedTools: ["skill"],
     compress: { minCompressRange: 0, maxSummaryLength: 0, minSummaryLength: 0 },
-    preserveRecentMessages: 0, preserveRecentTokens: 0,
+    preserveRecentMessages: 0,
+    preserveRecentTokens: 0,
   });
-  let state = setupRefs(messages, {
-    blocks: [],
-    prune: { byMessageId: {}, activeBlockIds: [] },
-    messageRefs: { byRaw: {}, byRef: {} },
-    nudge: {
-      lastPerMessageNudgeTokens: 0,
-      lastNudgeShownTokens: 0,
-      pendingNudgeTurn: null,
-      baselineTokens: 0,
+  let state = setupRefs(
+    messages,
+    {
+      blocks: [],
+      prune: { byMessageId: {}, activeBlockIds: [] },
+      messageRefs: { byRaw: {}, byRef: {} },
+      nudge: {
+        lastPerMessageNudgeTokens: 0,
+        lastNudgeShownTokens: 0,
+        pendingNudgeTurn: null,
+        baselineTokens: 0,
+      },
+      stats: { totalTokensCompressed: 0 },
+      compressionTiming: {},
     },
-    stats: { totalTokensCompressed: 0 },
-    compressionTiming: {},
-  }, config);
+    config,
+  );
 
   // 'a' (protected skill call) is BLOCKED, so refs are: b=m00001, c=m00002, d=m00003
   // Compress m00001->m00003 covers b(result), c, d — b's call 'a' is outside range

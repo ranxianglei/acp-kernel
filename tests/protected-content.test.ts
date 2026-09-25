@@ -6,16 +6,38 @@ import { assignRefs } from "../src/refs.js";
 import { defaultConfig } from "../src/config.js";
 import type { Config, CoreMessage } from "../src/types.js";
 
-function msg(id: string, text: string, role: CoreMessage["role"] = "user"): CoreMessage {
+function msg(
+  id: string,
+  text: string,
+  role: CoreMessage["role"] = "user",
+): CoreMessage {
   return { id, role, contentType: "text", text };
 }
 
-function toolCall(id: string, toolName: string, callId: string, args: string): CoreMessage {
-  return { id, role: "assistant", contentType: "tool-call", toolName, toolCallId: callId, text: args };
+function toolCall(
+  id: string,
+  toolName: string,
+  callId: string,
+  args: string,
+): CoreMessage {
+  return {
+    id,
+    role: "assistant",
+    contentType: "tool-call",
+    toolName,
+    toolCallId: callId,
+    text: args,
+  };
 }
 
 function toolResult(id: string, callId: string, text: string): CoreMessage {
-  return { id, role: "tool", contentType: "tool-result", toolCallId: callId, text };
+  return {
+    id,
+    role: "tool",
+    contentType: "tool-result",
+    toolCallId: callId,
+    text,
+  };
 }
 
 function setupRefs(messages: CoreMessage[]) {
@@ -28,12 +50,14 @@ function setupRefs(messages: CoreMessage[]) {
 }
 
 const longText = "x".repeat(6000);
-const validSummary = "A meaningful summary that captures the key information of the compressed range including file paths and decisions.";
+const validSummary =
+  "A meaningful summary that captures the key information of the compressed range including file paths and decisions.";
 
 function cfg(overrides: Partial<Config> = {}): Config {
   return defaultConfig(200000, {
     compress: { minCompressRange: 0, maxSummaryLength: 0, minSummaryLength: 0 },
-    preserveRecentMessages: 0, preserveRecentTokens: 0,
+    preserveRecentMessages: 0,
+    preserveRecentTokens: 0,
     ...overrides,
   });
 }
@@ -60,16 +84,40 @@ test("Feature 2: protected tool-call is excluded from compression range", () => 
   assert.equal(result.result.errors.length, 0);
 
   const block = result.state.blocks[0]!;
-  assert.ok(!block.directMessageIds.includes("b"), "tool-call 'b' should be excluded");
-  assert.ok(!block.directMessageIds.includes("c"), "tool-result 'c' should be excluded");
-  assert.ok(block.directMessageIds.includes("a"), "regular msg 'a' should remain");
-  assert.ok(block.directMessageIds.includes("d"), "regular msg 'd' should remain");
+  assert.ok(
+    !block.directMessageIds.includes("b"),
+    "tool-call 'b' should be excluded",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("c"),
+    "tool-result 'c' should be excluded",
+  );
+  assert.ok(
+    block.directMessageIds.includes("a"),
+    "regular msg 'a' should remain",
+  );
+  assert.ok(
+    block.directMessageIds.includes("d"),
+    "regular msg 'd' should remain",
+  );
   // Bug 39 regression: effectiveMessageIds must also exclude protected tool
   // messages, otherwise the block would mark them as covered and hide them.
-  assert.ok(!block.effectiveMessageIds.includes("b"), "tool-call 'b' excluded from effective coverage");
-  assert.ok(!block.effectiveMessageIds.includes("c"), "tool-result 'c' excluded from effective coverage");
-  assert.ok(block.effectiveMessageIds.includes("a"), "regular msg 'a' in effective coverage");
-  assert.ok(block.effectiveMessageIds.includes("d"), "regular msg 'd' in effective coverage");
+  assert.ok(
+    !block.effectiveMessageIds.includes("b"),
+    "tool-call 'b' excluded from effective coverage",
+  );
+  assert.ok(
+    !block.effectiveMessageIds.includes("c"),
+    "tool-result 'c' excluded from effective coverage",
+  );
+  assert.ok(
+    block.effectiveMessageIds.includes("a"),
+    "regular msg 'a' in effective coverage",
+  );
+  assert.ok(
+    block.effectiveMessageIds.includes("d"),
+    "regular msg 'd' in effective coverage",
+  );
 });
 
 test("Feature 2: protected tool messages are filtered out, not appended", () => {
@@ -91,15 +139,37 @@ test("Feature 2: protected tool messages are filtered out, not appended", () => 
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(!block.directMessageIds.includes("b"), "protected skill tool-call excluded from compressed set");
-  assert.ok(!block.directMessageIds.includes("c"), "protected skill tool-result excluded");
+  assert.ok(
+    !block.directMessageIds.includes("b"),
+    "protected skill tool-call excluded from compressed set",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("c"),
+    "protected skill tool-result excluded",
+  );
   // Bug 39 regression: effectiveMessageIds must match directMessageIds here
   // (no consumed blocks), so protected messages are excluded from both.
-  assert.ok(!block.effectiveMessageIds.includes("b"), "protected skill tool-call excluded from effective coverage");
-  assert.ok(!block.effectiveMessageIds.includes("c"), "protected skill tool-result excluded from effective coverage");
-  assert.ok(!block.summary.includes("Protected:"), "no protected content folded into summary");
-  assert.ok(!block.summary.includes('{"name":"git-master"}'), "protected tool content not leaked into summary");
-  assert.equal(block.summary, validSummary, "summary is exactly what the author wrote");
+  assert.ok(
+    !block.effectiveMessageIds.includes("b"),
+    "protected skill tool-call excluded from effective coverage",
+  );
+  assert.ok(
+    !block.effectiveMessageIds.includes("c"),
+    "protected skill tool-result excluded from effective coverage",
+  );
+  assert.ok(
+    !block.summary.includes("Protected:"),
+    "no protected content folded into summary",
+  );
+  assert.ok(
+    !block.summary.includes('{"name":"git-master"}'),
+    "protected tool content not leaked into summary",
+  );
+  assert.equal(
+    block.summary,
+    validSummary,
+    "summary is exactly what the author wrote",
+  );
 });
 
 test("Feature 2: non-protected tool-call is NOT excluded", () => {
@@ -121,16 +191,30 @@ test("Feature 2: non-protected tool-call is NOT excluded", () => {
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(block.directMessageIds.includes("b"), "non-protected bash tool-call should be compressed");
-  assert.ok(block.directMessageIds.includes("c"), "non-protected bash tool-result should be compressed");
-  assert.ok(!block.summary.includes("Protected:"), "no protected content appended for non-protected tools");
+  assert.ok(
+    block.directMessageIds.includes("b"),
+    "non-protected bash tool-call should be compressed",
+  );
+  assert.ok(
+    block.directMessageIds.includes("c"),
+    "non-protected bash tool-result should be compressed",
+  );
+  assert.ok(
+    !block.summary.includes("Protected:"),
+    "no protected content appended for non-protected tools",
+  );
 });
 
 test("Feature 2: compress tool itself is always protected", () => {
   const core = createCore();
   const messages = [
     msg("a", longText),
-    toolCall("b", "compress", "call1", '{"content":[{"startId":"m00001","endId":"m00001","summary":"test"}]}'),
+    toolCall(
+      "b",
+      "compress",
+      "call1",
+      '{"content":[{"startId":"m00001","endId":"m00001","summary":"test"}]}',
+    ),
     toolResult("c", "call1", "compressed"),
     msg("d", longText),
   ];
@@ -145,8 +229,14 @@ test("Feature 2: compress tool itself is always protected", () => {
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(!block.directMessageIds.includes("b"), "compress tool-call should be excluded");
-  assert.ok(!block.directMessageIds.includes("c"), "compress tool-result should be excluded");
+  assert.ok(
+    !block.directMessageIds.includes("b"),
+    "compress tool-call should be excluded",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("c"),
+    "compress tool-result should be excluded",
+  );
 });
 
 test("Feature 3: isToolProtected custom predicate excludes matching tools", () => {
@@ -174,9 +264,18 @@ test("Feature 3: isToolProtected custom predicate excludes matching tools", () =
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(!block.directMessageIds.includes("b"), "write to .env should be excluded by predicate");
-  assert.ok(!block.directMessageIds.includes("c"), "write result should be excluded too");
-  assert.ok(!block.summary.includes("Protected:"), "no protected content folded into summary");
+  assert.ok(
+    !block.directMessageIds.includes("b"),
+    "write to .env should be excluded by predicate",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("c"),
+    "write result should be excluded too",
+  );
+  assert.ok(
+    !block.summary.includes("Protected:"),
+    "no protected content folded into summary",
+  );
 });
 
 test("Feature 3: wildcard pattern in protectedTools works", () => {
@@ -198,7 +297,10 @@ test("Feature 3: wildcard pattern in protectedTools works", () => {
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(!block.directMessageIds.includes("b"), "skill-* pattern should match skill-git-master");
+  assert.ok(
+    !block.directMessageIds.includes("b"),
+    "skill-* pattern should match skill-git-master",
+  );
 });
 
 test("Feature 3: predicate returning false does not protect", () => {
@@ -223,7 +325,10 @@ test("Feature 3: predicate returning false does not protect", () => {
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(block.directMessageIds.includes("b"), "predicate=false should not protect");
+  assert.ok(
+    block.directMessageIds.includes("b"),
+    "predicate=false should not protect",
+  );
 });
 
 test("Feature 2+3: both protectedTools and isToolProtected work together", () => {
@@ -239,7 +344,8 @@ test("Feature 2+3: both protectedTools and isToolProtected work together", () =>
   const state = setupRefs(messages);
   const config = cfg({
     protectedTools: ["skill"],
-    isToolProtected: (name, input) => name === "edit" && !!input?.includes(".pem"),
+    isToolProtected: (name, input) =>
+      name === "edit" && !!input?.includes(".pem"),
   });
 
   const result = core.applyCompression({
@@ -250,21 +356,42 @@ test("Feature 2+3: both protectedTools and isToolProtected work together", () =>
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(!block.directMessageIds.includes("b"), "skill excluded by protectedTools");
+  assert.ok(
+    !block.directMessageIds.includes("b"),
+    "skill excluded by protectedTools",
+  );
   assert.ok(!block.directMessageIds.includes("c"), "skill result excluded");
-  assert.ok(!block.directMessageIds.includes("d"), "edit excluded by predicate");
+  assert.ok(
+    !block.directMessageIds.includes("d"),
+    "edit excluded by predicate",
+  );
   assert.ok(!block.directMessageIds.includes("e"), "edit result excluded");
   assert.ok(block.directMessageIds.includes("a"), "regular msg remains");
   assert.ok(block.directMessageIds.includes("f"), "regular msg remains");
-  assert.ok(!block.summary.includes("Protected: skill"), "skill content NOT folded into summary");
-  assert.ok(!block.summary.includes("Protected: edit"), "edit content NOT folded into summary");
+  assert.ok(
+    !block.summary.includes("Protected: skill"),
+    "skill content NOT folded into summary",
+  );
+  assert.ok(
+    !block.summary.includes("Protected: edit"),
+    "edit content NOT folded into summary",
+  );
 });
 
 test("compress tool is ALWAYS protected, even with empty protectedTools", () => {
   const core = createCore();
   const messages = [
     msg("a", longText),
-    toolCall("b", "compress", "call1", JSON.stringify({ content: [{ startId: "m00001", endId: "m00001", summary: "x".repeat(60) }] })),
+    toolCall(
+      "b",
+      "compress",
+      "call1",
+      JSON.stringify({
+        content: [
+          { startId: "m00001", endId: "m00001", summary: "x".repeat(60) },
+        ],
+      }),
+    ),
     toolResult("c", "call1", "compressed"),
     msg("d", longText),
   ];
@@ -280,8 +407,14 @@ test("compress tool is ALWAYS protected, even with empty protectedTools", () => 
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(!block.directMessageIds.includes("b"), "compress tool-call excluded regardless of config");
-  assert.ok(!block.directMessageIds.includes("c"), "compress tool-result excluded regardless of config");
+  assert.ok(
+    !block.directMessageIds.includes("b"),
+    "compress tool-call excluded regardless of config",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("c"),
+    "compress tool-result excluded regardless of config",
+  );
   assert.ok(block.directMessageIds.includes("a"), "regular msg remains");
   assert.ok(block.directMessageIds.includes("d"), "regular msg remains");
 });
@@ -293,7 +426,13 @@ test("compress tool-result is protected by toolCallId pairing even without toolN
   const messages = [
     msg("a", longText),
     toolCall("b", "compress", "callX", "{}"),
-    { id: "c", role: "tool", contentType: "tool-result", toolCallId: "callX", text: "result".repeat(50) },
+    {
+      id: "c",
+      role: "tool",
+      contentType: "tool-result",
+      toolCallId: "callX",
+      text: "result".repeat(50),
+    },
     msg("d", longText),
   ];
   const state = setupRefs(messages);
@@ -307,8 +446,14 @@ test("compress tool-result is protected by toolCallId pairing even without toolN
   });
 
   const block = result.state.blocks[0]!;
-  assert.ok(!block.directMessageIds.includes("b"), "compress tool-call excluded");
-  assert.ok(!block.directMessageIds.includes("c"), "compress tool-result (no toolName) excluded via pairing");
+  assert.ok(
+    !block.directMessageIds.includes("b"),
+    "compress tool-call excluded",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("c"),
+    "compress tool-result (no toolName) excluded via pairing",
+  );
   assert.ok(block.directMessageIds.includes("a"), "regular msg remains");
   assert.ok(block.directMessageIds.includes("d"), "regular msg remains");
 });

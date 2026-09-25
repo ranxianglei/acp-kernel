@@ -44,9 +44,11 @@ function isSyntheticOrPruned(
   message: CoreMessage,
   state: CompressionState,
 ): boolean {
-  if (message.text?.startsWith("[Compressed conversation section]")) return true;
+  if (message.text?.startsWith("[Compressed conversation section]"))
+    return true;
   for (const block of state.blocks) {
-    if (block.active && block.effectiveMessageIds.includes(message.id)) return true;
+    if (block.active && block.effectiveMessageIds.includes(message.id))
+      return true;
   }
   return false;
 }
@@ -98,7 +100,11 @@ export function computeProtectedRefs(
   // Rule 2: last N tokens (expand backward from tail)
   if (preserveTokens > 0) {
     let tokenAccum = 0;
-    for (let i = visible.length - 1; i >= 0 && tokenAccum < preserveTokens; i--) {
+    for (
+      let i = visible.length - 1;
+      i >= 0 && tokenAccum < preserveTokens;
+      i--
+    ) {
       result.add(visible[i]!.ref);
       tokenAccum += visible[i]!.tokens;
     }
@@ -299,7 +305,9 @@ export function buildCompressibleRanges(
       cur.chars = (cur.chars ?? 0) + info.chars;
       if (info.isUser) cur.userMsgs = (cur.userMsgs ?? 0) + 1;
       if (info.isTool) {
-        cur.toolPct = Math.round((cur.toolPct * (cur.count - 1) + 100) / cur.count);
+        cur.toolPct = Math.round(
+          (cur.toolPct * (cur.count - 1) + 100) / cur.count,
+        );
       } else {
         cur.toolPct = Math.round((cur.toolPct * (cur.count - 1)) / cur.count);
       }

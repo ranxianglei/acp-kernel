@@ -39,7 +39,9 @@ function buildConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock {
+function makeBlock(
+  overrides: Partial<CompressionBlock> = {},
+): CompressionBlock {
   return {
     blockId: "b0",
     runId: "r0",
@@ -107,11 +109,7 @@ test("hideConsumedCompressCalls: hides BOTH tool-call AND tool-result for consum
   const result = hideConsumedCompressCalls(state, messages);
 
   assert.equal(result.hidden, 2, "should hide both tool-call and tool-result");
-  assert.equal(
-    result.messages.length,
-    2,
-    "only user text messages remain",
-  );
+  assert.equal(result.messages.length, 2, "only user text messages remain");
   const ids = result.messages.map((m) => m.id);
   assert.ok(ids.includes("u1"), "first user message kept");
   assert.ok(ids.includes("u2"), "second user message kept");
@@ -197,10 +195,7 @@ test("prune: strips orphaned tool-result when tool-call is in compression range"
   const result = prune(messages, state);
 
   const resultIds = result.map((m) => m.id);
-  assert.ok(
-    !resultIds.includes("a1"),
-    "tool-call in range should be pruned",
-  );
+  assert.ok(!resultIds.includes("a1"), "tool-call in range should be pruned");
   assert.ok(
     !resultIds.includes("a1r"),
     "orphaned tool-result should be stripped",
@@ -255,7 +250,12 @@ test("computeProtectedRefs: last visible user message is protected when preserve
   const messages: CoreMessage[] = [
     { id: "u0", role: "user", contentType: "text", text: "first user" },
     ...makeMessages(20),
-    { id: "uLast", role: "user", contentType: "text", text: "most recent user" },
+    {
+      id: "uLast",
+      role: "user",
+      contentType: "text",
+      text: "most recent user",
+    },
     { id: "a1", role: "assistant", contentType: "text", text: "reply" },
     { id: "a2", role: "assistant", contentType: "text", text: "reply2" },
   ];
@@ -316,7 +316,12 @@ test("computeProtectedRefs: first user message also gets protected by token zone
 
 test("prune: first user message pruned when covered (no duplication)", () => {
   const messages: CoreMessage[] = [
-    { id: "u0", role: "user", contentType: "text", text: "critical first prompt" },
+    {
+      id: "u0",
+      role: "user",
+      contentType: "text",
+      text: "critical first prompt",
+    },
     { id: "a0", role: "assistant", contentType: "text", text: "reply" },
     { id: "u1", role: "user", contentType: "text", text: "second" },
     { id: "a1", role: "assistant", contentType: "text", text: "reply2" },
@@ -340,14 +345,8 @@ test("prune: first user message pruned when covered (no duplication)", () => {
     resultIds.includes("u0"),
     "first user message always survives (even when covered — some providers reject 0-user)",
   );
-  assert.ok(
-    !resultIds.includes("a0"),
-    "covered assistant message is pruned",
-  );
-  assert.ok(
-    !resultIds.includes("u1"),
-    "covered second user message is pruned",
-  );
+  assert.ok(!resultIds.includes("a0"), "covered assistant message is pruned");
+  assert.ok(!resultIds.includes("u1"), "covered second user message is pruned");
   assert.ok(
     resultIds.some((id) => id.startsWith("acp_summary_")),
     "summary is inserted",

@@ -6,12 +6,12 @@ import { defaultCountTokens } from "./tokenize.js";
 import type { CompressionState, CoreMessage } from "./types.js";
 
 export interface RebuildResult {
-    state: CompressionState;
-    blocksRebuilt: number;
+  state: CompressionState;
+  blocksRebuilt: number;
 }
 
 export interface RebuildPorts {
-    countTokens?: (text: string) => number;
+  countTokens?: (text: string) => number;
 }
 
 /**
@@ -25,43 +25,55 @@ export interface RebuildPorts {
  * inputs are salvaged instead of silently dropped.
  */
 export function rebuildCompressionState(
-    state: CompressionState,
-    messages: CoreMessage[],
-    config: import("./types.js").Config,
-    ports: RebuildPorts = {},
+  state: CompressionState,
+  messages: CoreMessage[],
+  config: import("./types.js").Config,
+  ports: RebuildPorts = {},
 ): RebuildResult {
-    const core = createCore({ countTokens: ports.countTokens ?? defaultCountTokens });
-    const refResult = assignRefs(messages, {
-        existing: state.messageRefs,
-        nextIndex: highestUsedIndex(state.messageRefs) + 1,
-        shouldSkip: (m) => m.id.startsWith(RETRIEVED_ID_PREFIX),
+  const core = createCore({
+    countTokens: ports.countTokens ?? defaultCountTokens,
+  });
+  const refResult = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: highestUsedIndex(state.messageRefs) + 1,
+    shouldSkip: (m) => m.id.startsWith(RETRIEVED_ID_PREFIX),
+  });
+  let working: CompressionState = { ...state, messageRefs: refResult.map };
+
+  const invocations = collectCompressInvocations(messages);
+  let blocksRebuilt = 0;
+
+  for (const invocation of invocations) {
+    const { ranges } = parseCompressArgs(invocation.raw, {
+      callId: invocation.callId,
     });
-    let working: CompressionState = { ...state, messageRefs: refResult.map };
+    if (ranges.length === 0) continue;
+    const result = core.applyCompression({
+      ranges,
+      messages,
+      state: working,
+      config,
+    });
+    working = result.state;
+    blocksRebuilt += result.result.blocksCreated;
+  }
 
-    const invocations = collectCompressInvocations(messages);
-    let blocksRebuilt = 0;
-
-    for (const invocation of invocations) {
-        const { ranges } = parseCompressArgs(invocation.raw, { callId: invocation.callId });
-        if (ranges.length === 0) continue;
-        const result = core.applyCompression({ ranges, messages, state: working, config });
-        working = result.state;
-        blocksRebuilt += result.result.blocksCreated;
-    }
-
-    return { state: working, blocksRebuilt };
+  return { state: working, blocksRebuilt };
 }
 
 interface CompressInvocation {
-    callId: string | undefined;
-    raw: string;
+  callId: string | undefined;
+  raw: string;
 }
 
-function collectCompressInvocations(messages: CoreMessage[]): CompressInvocation[] {
-    const invocations: CompressInvocation[] = [];
-    for (const message of messages) {
-        if (message.toolName !== "compress" || message.contentType !== "tool-call") continue;
-        invocations.push({ callId: message.toolCallId, raw: message.text ?? "" });
-    }
-    return invocations;
+function collectCompressInvocations(
+  messages: CoreMessage[],
+): CompressInvocation[] {
+  const invocations: CompressInvocation[] = [];
+  for (const message of messages) {
+    if (message.toolName !== "compress" || message.contentType !== "tool-call")
+      continue;
+    invocations.push({ callId: message.toolCallId, raw: message.text ?? "" });
+  }
+  return invocations;
 }

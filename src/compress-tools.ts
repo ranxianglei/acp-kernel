@@ -115,11 +115,13 @@ export const COMPRESS_PARAMETERS = {
     },
     startId: {
       type: "string",
-      description: "Flat single-range form (no content): mNNNNN ref at the start of the range",
+      description:
+        "Flat single-range form (no content): mNNNNN ref at the start of the range",
     },
     endId: {
       type: "string",
-      description: "Flat single-range form (no content): mNNNNN ref at the end of the range",
+      description:
+        "Flat single-range form (no content): mNNNNN ref at the end of the range",
     },
     startRef: {
       type: "string",
@@ -131,7 +133,8 @@ export const COMPRESS_PARAMETERS = {
     },
     summary: {
       type: "string",
-      description: "Flat single-range form (no content): self-contained summary replacing the range",
+      description:
+        "Flat single-range form (no content): self-contained summary replacing the range",
     },
   },
 };
@@ -447,7 +450,7 @@ export const ACP_STATUS_TOOL_OPENAI = {
 };
 
 export const ACP_CACHE_TOOL_DESCRIPTION =
-  "Prompt-cache reconciliation: grand ledger (total input/cached/output, overall hit rate) with every request's miss split into new content / compression re-pay / upstream-ttl-or-client-rewrite (unattributed stable-prefix misses), plus per-fold economics (breakeven turns vs measured cadence). Defaults to a compact summary (totals + verdicts + anomalies only); pass detail=\"full\" for every fold and line item. Read-only. Call when asked about cache hits, cache invalidation, or what compression costs.";
+  'Prompt-cache reconciliation: grand ledger (total input/cached/output, overall hit rate) with every request\'s miss split into new content / compression re-pay / upstream-ttl-or-client-rewrite (unattributed stable-prefix misses), plus per-fold economics (breakeven turns vs measured cadence). Defaults to a compact summary (totals + verdicts + anomalies only); pass detail="full" for every fold and line item. Read-only. Call when asked about cache hits, cache invalidation, or what compression costs.';
 
 export const ACP_CACHE_TOOL_OPENAI = {
   type: "function" as const,
@@ -793,4 +796,3 @@ export const RETRIEVE_TOOL_RESPONSES = {
   description: RETRIEVE_TOOL_DESCRIPTION,
   parameters: RETRIEVE_PARAMETERS,
 };
-

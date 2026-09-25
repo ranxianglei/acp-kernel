@@ -24,13 +24,15 @@
 
 ## 2. Rules humans actually enforce (evidence)
 
-> Rule text lives in `AGENTS.md` §7.1–§7.3; below is *why* each exists.
+> Rule text lives in `AGENTS.md` §7.1–§7.3; below is _why_ each exists.
 
 ### 2.A Already codified in AGENTS.md
+
 §2 Key Design Principles (esp. #3 single-owner content, #6 message-id immutability), §4 Git
 Safety, §5 Release Workflow, §6 Code Review ("at least 2 separate agents").
 
 ### 2.B Implicit rules observed in review threads
+
 - **Never split a tool call from its result** in prune/compress/fold
   ([#286](https://github.com/ranxianglei/acp-kernel/issues/286) /
   [#287](https://github.com/ranxianglei/acp-kernel/pull/287) /
@@ -54,8 +56,10 @@ Safety, §5 Release Workflow, §6 Code Review ("at least 2 separate agents").
 ## 3. What AI cannot reliably self-judge (blind spots)
 
 ### 3.1 Kernel-owned contracts — the incident proving each is load-bearing
-> Definitions live in `AGENTS.md` §7.3 (always human-gated). Below is only *why* each is
+
+> Definitions live in `AGENTS.md` §7.3 (always human-gated). Below is only _why_ each is
 > non-negotiable:
+
 1. **Message-id / ref immutability** — a re-issued number silently misattributes on decompress
    (**wrong content, not an error**); #176 was reverted for exactly this.
 2. **Wire-artifact format** (tag / `acp_summary` / token-snapshot freezing) — changing shape breaks
@@ -70,11 +74,13 @@ Safety, §5 Release Workflow, §6 Code Review ("at least 2 separate agents").
    reintroduces feedback-loop over-compression.
 
 ### 3.2 Structural constraints that stay human
+
 Zero runtime deps (§2 principle 1 — a new dep lands inside every adapter's inline bundle),
 platform-agnostic (§2 principle 5 — no host API / file I/O / network creep into the core), and the
 state schema (explicit in/out; changing its shape is cross-repo).
 
 ## Appendix
+
 - **Gate + must-stay-human list + reviewer checklist:** see `AGENTS.md` §7.4 / §7.5 (single source
   of truth). Because a contract change is cross-repo by construction, it also follows the manual
   cross-repo rule: release acp-kernel first, verify `npm view acp-kernel version`, then bump adapters.

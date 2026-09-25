@@ -24,23 +24,28 @@ import { docFeatures } from "../doc-cache.js";
  * hybrid default.
  */
 export const fuzzyAlgorithm: SearchAlgorithm = {
-    name: "fuzzy",
-    description: "Character bigram overlap. Typo-tolerant, script-agnostic, high recall.",
-    score(docs: SearchDoc[], query: string): ScoredBlock[] {
-        // Gate (see header): Latin short tokens are noise, 2-char CJK words
-        // are real terms — admit the latter so 缓存/登录 reach the scorer.
-        const qTokens = query.toLowerCase().split(/[\s,]+/).filter((t) => t.length >= 4 || (t.length >= 2 && CJK.test(t)));
-        if (qTokens.length === 0) return docs.map((d) => ({ ref: d.ref, score: 0 }));
+  name: "fuzzy",
+  description:
+    "Character bigram overlap. Typo-tolerant, script-agnostic, high recall.",
+  score(docs: SearchDoc[], query: string): ScoredBlock[] {
+    // Gate (see header): Latin short tokens are noise, 2-char CJK words
+    // are real terms — admit the latter so 缓存/登录 reach the scorer.
+    const qTokens = query
+      .toLowerCase()
+      .split(/[\s,]+/)
+      .filter((t) => t.length >= 4 || (t.length >= 2 && CJK.test(t)));
+    if (qTokens.length === 0)
+      return docs.map((d) => ({ ref: d.ref, score: 0 }));
 
-        const qGrams = new Set<string>();
-        for (const t of qTokens) for (const g of charBigrams(t)) qGrams.add(g);
-        if (qGrams.size === 0) return docs.map((d) => ({ ref: d.ref, score: 0 }));
+    const qGrams = new Set<string>();
+    for (const t of qTokens) for (const g of charBigrams(t)) qGrams.add(g);
+    if (qGrams.size === 0) return docs.map((d) => ({ ref: d.ref, score: 0 }));
 
-        return docs.map((d) => {
-            const docGrams = docFeatures(d.text).grams; // memoized bigram set
-            let hits = 0;
-            for (const g of qGrams) if (docGrams.has(g)) hits++;
-            return { ref: d.ref, score: hits / qGrams.size };
-        });
-    },
+    return docs.map((d) => {
+      const docGrams = docFeatures(d.text).grams; // memoized bigram set
+      let hits = 0;
+      for (const g of qGrams) if (docGrams.has(g)) hits++;
+      return { ref: d.ref, score: hits / qGrams.size };
+    });
+  },
 };

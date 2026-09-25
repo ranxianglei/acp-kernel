@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderNudgeText } from "../src/nudge-text.js";
-import type { NudgeDecision, CompressibleRange, BlockSpan } from "../src/types.js";
+import type {
+  NudgeDecision,
+  CompressibleRange,
+  BlockSpan,
+} from "../src/types.js";
 
 function makeRanges(count: number): CompressibleRange[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -29,8 +33,14 @@ function makeDecision(overrides: Partial<NudgeDecision> = {}): NudgeDecision {
 test("gentle mode: voice and header text", () => {
   const result = renderNudgeText(makeDecision({ contextUsage: 0.5 }));
   assert.equal(result.voice, "gentle");
-  assert.ok(result.text.includes("efficiency nudge"), "should contain gentle header");
-  assert.ok(result.text.includes("not an overflow warning"), "should reassure it's not overflow");
+  assert.ok(
+    result.text.includes("efficiency nudge"),
+    "should contain gentle header",
+  );
+  assert.ok(
+    result.text.includes("not an overflow warning"),
+    "should reassure it's not overflow",
+  );
 });
 
 test("gentle mode: tail tip is conditional and licenses deferral (#1198)", () => {
@@ -41,12 +51,29 @@ test("gentle mode: tail tip is conditional and licenses deferral (#1198)", () =>
   // Emergency mode keeps its unconditional directive and must not inherit
   // this line.
   const gentle = renderNudgeText(makeDecision({ contextUsage: 0.5 }));
-  assert.ok(gentle.text.includes("If you compress"), "tip must be conditional on the model choosing to compress");
-  assert.ok(!gentle.text.includes("Compress all ranges in one call"), "unconditional compress-all directive must be gone");
-  assert.ok(gentle.text.includes("they reappear in later nudges"), "skipped ranges must be framed as deferrable, not lost");
-  const emergency = renderNudgeText(makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }));
-  assert.ok(!emergency.text.includes("If you compress"), "emergency stays unconditional");
-  assert.ok(emergency.text.includes("compress now"), "emergency keeps its mandatory directive");
+  assert.ok(
+    gentle.text.includes("If you compress"),
+    "tip must be conditional on the model choosing to compress",
+  );
+  assert.ok(
+    !gentle.text.includes("Compress all ranges in one call"),
+    "unconditional compress-all directive must be gone",
+  );
+  assert.ok(
+    gentle.text.includes("they reappear in later nudges"),
+    "skipped ranges must be framed as deferrable, not lost",
+  );
+  const emergency = renderNudgeText(
+    makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }),
+  );
+  assert.ok(
+    !emergency.text.includes("If you compress"),
+    "emergency stays unconditional",
+  );
+  assert.ok(
+    emergency.text.includes("compress now"),
+    "emergency keeps its mandatory directive",
+  );
 });
 
 test("emergency mode: voice and header text", () => {
@@ -57,22 +84,34 @@ test("emergency mode: voice and header text", () => {
     }),
   );
   assert.equal(result.voice, "emergency");
-  assert.ok(result.text.includes("Context limit reached"), "should contain emergency header");
+  assert.ok(
+    result.text.includes("Context limit reached"),
+    "should contain emergency header",
+  );
   assert.ok(result.text.includes("compress now"), "should demand compression");
 });
 
 test("gentle mode does NOT contain emergency language", () => {
   const result = renderNudgeText(makeDecision({ contextUsage: 0.5 }));
   assert.ok(!result.text.includes("MUST compress"), "gentle should not demand");
-  assert.ok(!result.text.includes("⚠️"), "gentle should not have warning symbol");
+  assert.ok(
+    !result.text.includes("⚠️"),
+    "gentle should not have warning symbol",
+  );
 });
 
 test("emergency mode does NOT contain gentle language", () => {
   const result = renderNudgeText(
     makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }),
   );
-  assert.ok(!result.text.includes("EFFICIENCY NUDGE"), "emergency should not be gentle");
-  assert.ok(!result.text.includes("not an overflow warning"), "emergency should not reassure");
+  assert.ok(
+    !result.text.includes("EFFICIENCY NUDGE"),
+    "emergency should not be gentle",
+  );
+  assert.ok(
+    !result.text.includes("not an overflow warning"),
+    "emergency should not reassure",
+  );
 });
 
 test("tier-2 distillation: text contains tier header", () => {
@@ -90,15 +129,27 @@ test("tier-3 distillation: text contains tier header", () => {
 test("tier-2 distillation: guidance warns raw messages in span are absorbed", () => {
   const result = renderNudgeText(makeDecision({ tier: 2 }));
   assert.ok(result.text.includes("raw"), "should mention raw messages in span");
-  assert.ok(result.text.includes("absorbed"), "should state raw messages are absorbed into the tier-2 block");
-  assert.ok(result.text.includes("HOW TO COMPRESS"), "should direct raw messages to HOW TO COMPRESS rules");
+  assert.ok(
+    result.text.includes("absorbed"),
+    "should state raw messages are absorbed into the tier-2 block",
+  );
+  assert.ok(
+    result.text.includes("HOW TO COMPRESS"),
+    "should direct raw messages to HOW TO COMPRESS rules",
+  );
 });
 
 test("tier-3 condensation: guidance warns raw messages in span are absorbed", () => {
   const result = renderNudgeText(makeDecision({ tier: 3 }));
   assert.ok(result.text.includes("raw"), "should mention raw messages in span");
-  assert.ok(result.text.includes("absorbed"), "should state raw messages are absorbed into the tier-3 block");
-  assert.ok(result.text.includes("HOW TO COMPRESS"), "should direct raw messages to HOW TO COMPRESS rules");
+  assert.ok(
+    result.text.includes("absorbed"),
+    "should state raw messages are absorbed into the tier-3 block",
+  );
+  assert.ok(
+    result.text.includes("HOW TO COMPRESS"),
+    "should direct raw messages to HOW TO COMPRESS rules",
+  );
 });
 
 test("emergency + tier 2: emergency voice with distillation guidance", () => {
@@ -131,10 +182,22 @@ test("both modes include compressible ranges", () => {
     makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }),
   );
 
-  for (const [label, result] of [["gentle", gentle], ["emergency", emergency]] as const) {
-    assert.ok(result.text.includes("Compressible ranges"), `${label} should list ranges`);
-    assert.ok(result.text.includes("m00001"), `${label} should contain range ref`);
-    assert.ok(result.text.includes("1.0K") || result.text.includes("6.0K"), `${label} should show token estimate`);
+  for (const [label, result] of [
+    ["gentle", gentle],
+    ["emergency", emergency],
+  ] as const) {
+    assert.ok(
+      result.text.includes("Compressible ranges"),
+      `${label} should list ranges`,
+    );
+    assert.ok(
+      result.text.includes("m00001"),
+      `${label} should contain range ref`,
+    );
+    assert.ok(
+      result.text.includes("1.0K") || result.text.includes("6.0K"),
+      `${label} should show token estimate`,
+    );
   }
 });
 
@@ -144,11 +207,26 @@ test("both modes include compression guide (KEEP/DROP)", () => {
     makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }),
   );
 
-  for (const [label, result] of [["gentle", gentle], ["emergency", emergency]] as const) {
-    assert.ok(result.text.includes("KEEP VERBATIM"), `${label} should include KEEP rules`);
-    assert.ok(result.text.includes("DROP"), `${label} should include DROP rules`);
-    assert.ok(result.text.includes("PRIORITY"), `${label} should include priority ordering`);
-    assert.ok(result.text.includes("file paths"), `${label} should mention file paths rule`);
+  for (const [label, result] of [
+    ["gentle", gentle],
+    ["emergency", emergency],
+  ] as const) {
+    assert.ok(
+      result.text.includes("KEEP VERBATIM"),
+      `${label} should include KEEP rules`,
+    );
+    assert.ok(
+      result.text.includes("DROP"),
+      `${label} should include DROP rules`,
+    );
+    assert.ok(
+      result.text.includes("PRIORITY"),
+      `${label} should include priority ordering`,
+    );
+    assert.ok(
+      result.text.includes("file paths"),
+      `${label} should mention file paths rule`,
+    );
   }
 });
 
@@ -156,7 +234,10 @@ test("empty compressible ranges handled gracefully", () => {
   const result = renderNudgeText(
     makeDecision({ compressibleRanges: [], contextUsage: 0.5 }),
   );
-  assert.ok(result.text.includes("No specific ranges"), "should handle empty ranges");
+  assert.ok(
+    result.text.includes("No specific ranges"),
+    "should handle empty ranges",
+  );
 });
 
 test("percentage is NOT shown (only token amounts)", () => {
@@ -187,8 +268,15 @@ test("over-limit renders with emergency voice (MAJOR-2 fix)", () => {
       breakdown: { overLimit: 1 },
     }),
   );
-  assert.equal(result.voice, "emergency", "over-limit should use emergency voice, not gentle");
-  assert.ok(!result.text.includes("not an overflow warning"), "should NOT contain gentle reassurance");
+  assert.equal(
+    result.voice,
+    "emergency",
+    "over-limit should use emergency voice, not gentle",
+  );
+  assert.ok(
+    !result.text.includes("not an overflow warning"),
+    "should NOT contain gentle reassurance",
+  );
 });
 
 function makeSpans(n: number): BlockSpan[] {
@@ -201,9 +289,13 @@ function makeSpans(n: number): BlockSpan[] {
 }
 
 test("gentle nudge renders active block map", () => {
-  const result = renderNudgeText(makeDecision({ activeBlockSpans: makeSpans(2) }));
+  const result = renderNudgeText(
+    makeDecision({ activeBlockSpans: makeSpans(2) }),
+  );
   assert.ok(
-    result.text.includes("Active blocks (2): b1=m00001–m00009 · b2=m00011–m00019"),
+    result.text.includes(
+      "Active blocks (2): b1=m00001–m00009 · b2=m00011–m00019",
+    ),
     "should list each active block with its ref span",
   );
 });
@@ -215,18 +307,32 @@ test("block map marks non-tier-1 blocks with tier suffix", () => {
 });
 
 test("block map truncates beyond 8 blocks, keeping newest", () => {
-  const result = renderNudgeText(makeDecision({ activeBlockSpans: makeSpans(10) }));
-  assert.ok(result.text.includes("Active blocks (10): …+2 older · "), "should show hidden count");
-  assert.ok(!result.text.includes("b1="), "oldest hidden blocks must not be listed");
+  const result = renderNudgeText(
+    makeDecision({ activeBlockSpans: makeSpans(10) }),
+  );
+  assert.ok(
+    result.text.includes("Active blocks (10): …+2 older · "),
+    "should show hidden count",
+  );
+  assert.ok(
+    !result.text.includes("b1="),
+    "oldest hidden blocks must not be listed",
+  );
   assert.ok(result.text.includes("b8="));
   assert.ok(result.text.includes("b10="));
 });
 
 test("no block map line when absent or empty", () => {
   const r1 = renderNudgeText(makeDecision());
-  assert.ok(!r1.text.includes("Active blocks"), "absent activeBlockSpans → no line");
+  assert.ok(
+    !r1.text.includes("Active blocks"),
+    "absent activeBlockSpans → no line",
+  );
   const r2 = renderNudgeText(makeDecision({ activeBlockSpans: [] }));
-  assert.ok(!r2.text.includes("Active blocks"), "empty activeBlockSpans → no line");
+  assert.ok(
+    !r2.text.includes("Active blocks"),
+    "empty activeBlockSpans → no line",
+  );
 });
 
 test("emergency nudge also renders block map", () => {
@@ -243,8 +349,24 @@ test("emergency nudge also renders block map", () => {
 
 test("range lines annotate user message count", () => {
   const ranges: CompressibleRange[] = [
-    { startRef: "m00001", endRef: "m00005", count: 5, tokens: 2000, toolPct: 0.5, textPct: 0.5, userMsgs: 3 },
-    { startRef: "m00010", endRef: "m00011", count: 2, tokens: 500, toolPct: 1, textPct: 0, userMsgs: 1 },
+    {
+      startRef: "m00001",
+      endRef: "m00005",
+      count: 5,
+      tokens: 2000,
+      toolPct: 0.5,
+      textPct: 0.5,
+      userMsgs: 3,
+    },
+    {
+      startRef: "m00010",
+      endRef: "m00011",
+      count: 2,
+      tokens: 500,
+      toolPct: 1,
+      textPct: 0,
+      userMsgs: 1,
+    },
   ];
   const result = renderNudgeText(makeDecision({ compressibleRanges: ranges }));
   assert.ok(result.text.includes("· 3 user msgs"));
@@ -253,5 +375,8 @@ test("range lines annotate user message count", () => {
 
 test("no user-msg annotation when count is zero or absent", () => {
   const result = renderNudgeText(makeDecision());
-  assert.ok(!result.text.includes("user msg"), "makeRanges fixtures carry no userMsgs");
+  assert.ok(
+    !result.text.includes("user msg"),
+    "makeRanges fixtures carry no userMsgs",
+  );
 });

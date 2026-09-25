@@ -10,7 +10,10 @@ test("viableRanges drops fragmented ranges below the floor", () => {
     { startRef: "m00200", endRef: "m00201", tokens: 4_700 },
   ];
   const kept = viableRanges(ranges);
-  assert.deepEqual(kept.map((r) => r.tokens), [1_000, 4_700]);
+  assert.deepEqual(
+    kept.map((r) => r.tokens),
+    [1_000, 4_700],
+  );
   assert.equal(VIABLE_RANGE_MIN_TOKENS, 200);
 });
 

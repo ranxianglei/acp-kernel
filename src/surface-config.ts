@@ -83,10 +83,13 @@ export function cloneWithDescriptions(
 }
 
 function cloneNode(node: unknown, overrides: Record<string, string>): unknown {
-  if (Array.isArray(node)) return node.map((item) => cloneNode(item, overrides));
+  if (Array.isArray(node))
+    return node.map((item) => cloneNode(item, overrides));
   if (node && typeof node === "object") {
     const out: Record<string, unknown> = {};
-    for (const [name, value] of Object.entries(node as Record<string, unknown>)) {
+    for (const [name, value] of Object.entries(
+      node as Record<string, unknown>,
+    )) {
       const cloned = cloneNode(value, overrides);
       if (
         Object.hasOwn(overrides, name) &&
@@ -135,7 +138,9 @@ export function applyAcpToolOverrides<T extends AcpToolLike>(
         ...tool,
         function: {
           ...tool.function,
-          ...(ov.description !== undefined ? { description: ov.description } : {}),
+          ...(ov.description !== undefined
+            ? { description: ov.description }
+            : {}),
           ...(ov.paramDescriptions
             ? {
                 parameters: cloneWithDescriptions(
@@ -154,7 +159,9 @@ export function applyAcpToolOverrides<T extends AcpToolLike>(
       ...(ov.description !== undefined ? { description: ov.description } : {}),
       ...(ov.paramDescriptions
         ? hasInputSchema
-          ? { input_schema: cloneWithDescriptions(schema, ov.paramDescriptions) }
+          ? {
+              input_schema: cloneWithDescriptions(schema, ov.paramDescriptions),
+            }
           : { parameters: cloneWithDescriptions(schema, ov.paramDescriptions) }
         : {}),
     } as T;

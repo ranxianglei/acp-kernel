@@ -703,11 +703,7 @@ test("consumed plus unknown ranges keep the already-compressed message", () => {
 test("first compress of a fresh session with foreign refs reports a new generation, not a prior compress (billion-context#387)", () => {
   const core = createCore();
   const state = createInitialState();
-  const messages = [
-    msg("u", "the task"),
-    msg("a", "alpha"),
-    msg("b", "beta"),
-  ];
+  const messages = [msg("u", "the task"), msg("a", "alpha"), msg("b", "beta")];
   state.messageRefs = assignRefs(messages, {
     existing: state.messageRefs,
     nextIndex: 1,

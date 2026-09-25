@@ -33,16 +33,31 @@ const COMBINATORS = ["oneOf", "allOf", "anyOf", "not"] as const;
 
 type ToolLike = { name?: string };
 
-function schemaOf(tool: ToolLike & Record<string, unknown>, shape: string): Record<string, unknown> {
-  if (shape === "anthropic") return tool.input_schema as Record<string, unknown>;
+function schemaOf(
+  tool: ToolLike & Record<string, unknown>,
+  shape: string,
+): Record<string, unknown> {
+  if (shape === "anthropic")
+    return tool.input_schema as Record<string, unknown>;
   if (shape === "google") return tool.parameters as Record<string, unknown>;
-  const fn = tool.function as { parameters?: Record<string, unknown> } | undefined;
-  return (tool.parameters as Record<string, unknown> | undefined) ?? fn?.parameters ?? {};
+  const fn = tool.function as
+    { parameters?: Record<string, unknown> } | undefined;
+  return (
+    (tool.parameters as Record<string, unknown> | undefined) ??
+    fn?.parameters ??
+    {}
+  );
 }
 
-function assertPlainTopLevel(tool: ToolLike & Record<string, unknown>, shape: string): void {
+function assertPlainTopLevel(
+  tool: ToolLike & Record<string, unknown>,
+  shape: string,
+): void {
   const schema = schemaOf(tool, shape);
-  assert.ok(schema && typeof schema === "object", `${tool.name}: ${shape} schema missing`);
+  assert.ok(
+    schema && typeof schema === "object",
+    `${tool.name}: ${shape} schema missing`,
+  );
   for (const key of COMBINATORS) {
     assert.ok(
       schema[key] === undefined,
@@ -51,7 +66,10 @@ function assertPlainTopLevel(tool: ToolLike & Record<string, unknown>, shape: st
   }
 }
 
-function walk(list: readonly (ToolLike & Record<string, unknown>)[], shape: string): void {
+function walk(
+  list: readonly (ToolLike & Record<string, unknown>)[],
+  shape: string,
+): void {
   for (const tool of list) assertPlainTopLevel(tool, shape);
 }
 
@@ -65,15 +83,27 @@ test("anthropic input_schema: no top-level combinators on any tool", () => {
 test("openai function.parameters: no top-level combinators on any tool", () => {
   walk(ACP_TOOLS_OPENAI, "openai");
   assertPlainTopLevel(ABSORB_TOOL_OPENAI as Record<string, unknown>, "openai");
-  assertPlainTopLevel(IMAGE_FULL_TOOL_OPENAI as Record<string, unknown>, "openai");
-  assertPlainTopLevel(RETRIEVE_TOOL_OPENAI as Record<string, unknown>, "openai");
+  assertPlainTopLevel(
+    IMAGE_FULL_TOOL_OPENAI as Record<string, unknown>,
+    "openai",
+  );
+  assertPlainTopLevel(
+    RETRIEVE_TOOL_OPENAI as Record<string, unknown>,
+    "openai",
+  );
 });
 
 test("responses flat parameters: no top-level combinators on any tool", () => {
   walk(ACP_TOOLS_RESPONSES, "responses");
   walk(ACP_READONLY_TOOLS_RESPONSES, "responses");
-  assertPlainTopLevel(IMAGE_FULL_TOOL_RESPONSES as Record<string, unknown>, "responses");
-  assertPlainTopLevel(RETRIEVE_TOOL_RESPONSES as Record<string, unknown>, "responses");
+  assertPlainTopLevel(
+    IMAGE_FULL_TOOL_RESPONSES as Record<string, unknown>,
+    "responses",
+  );
+  assertPlainTopLevel(
+    RETRIEVE_TOOL_RESPONSES as Record<string, unknown>,
+    "responses",
+  );
 });
 
 test("google functionDeclarations parameters: no top-level combinators on any tool", () => {

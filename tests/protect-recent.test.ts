@@ -72,7 +72,12 @@ test("applyCompression fails when the range is ENTIRELY within the recent zone",
   // is nothing left to compress, so the range must still fail.
   const result = core.applyCompression({
     ranges: [
-      { startRef: "m00006", endRef: "m00008", summary: "trying to compress the recent zone", topic: "bad" },
+      {
+        startRef: "m00006",
+        endRef: "m00008",
+        summary: "trying to compress the recent zone",
+        topic: "bad",
+      },
     ],
     messages,
     state,
@@ -99,22 +104,44 @@ test("applyCompression excludes protected tail and compresses the rest (partial 
   // and surfaced as a warning rather than failing the whole range.
   const result = core.applyCompression({
     ranges: [
-      { startRef: "m00005", endRef: "m00007", summary: "overlapping the recent zone", topic: "partial" },
+      {
+        startRef: "m00005",
+        endRef: "m00007",
+        summary: "overlapping the recent zone",
+        topic: "partial",
+      },
     ],
     messages,
     state,
     config: cfg,
   });
 
-  assert.equal(result.result.blocksCreated, 1, "unprotected head still compressed");
-  assert.equal(result.result.errors.length, 0, "no error — overlap is non-fatal");
+  assert.equal(
+    result.result.blocksCreated,
+    1,
+    "unprotected head still compressed",
+  );
+  assert.equal(
+    result.result.errors.length,
+    0,
+    "no error — overlap is non-fatal",
+  );
   assert.equal(result.result.warnings.length, 1, "a warning is surfaced");
   assert.match(result.result.warnings[0]!, /Excluded.*protected.*m0000[67]/i);
   // The created block must NOT cover the protected messages.
   const block = result.state.blocks[result.state.blocks.length - 1]!;
-  assert.ok(!block.effectiveMessageIds.includes("f"), "m00006 raw id not covered");
-  assert.ok(!block.effectiveMessageIds.includes("g"), "m00007 raw id not covered");
-  assert.ok(block.directMessageIds.includes("e"), "m00005 raw id IS compressed");
+  assert.ok(
+    !block.effectiveMessageIds.includes("f"),
+    "m00006 raw id not covered",
+  );
+  assert.ok(
+    !block.effectiveMessageIds.includes("g"),
+    "m00007 raw id not covered",
+  );
+  assert.ok(
+    block.directMessageIds.includes("e"),
+    "m00005 raw id IS compressed",
+  );
 });
 
 test("applyCompression excludes the most recent user message and compresses the rest", () => {
@@ -131,14 +158,23 @@ test("applyCompression excludes the most recent user message and compresses the 
 
   const result = core.applyCompression({
     ranges: [
-      { startRef: "m00002", endRef: "m00003", summary: "grabbing the last user msg", topic: "partial" },
+      {
+        startRef: "m00002",
+        endRef: "m00003",
+        summary: "grabbing the last user msg",
+        topic: "partial",
+      },
     ],
     messages,
     state,
     config: cfg,
   });
 
-  assert.equal(result.result.blocksCreated, 1, "assistant msg still compressed");
+  assert.equal(
+    result.result.blocksCreated,
+    1,
+    "assistant msg still compressed",
+  );
   assert.equal(result.result.errors.length, 0);
   assert.equal(result.result.warnings.length, 1);
   assert.match(result.result.warnings[0]!, /Excluded.*protected.*m00003/i);
@@ -156,16 +192,29 @@ test("applyCompression still allows compressing messages strictly before the rec
   // m00001..m00003 are well before the last 3 (m00006..m00008) → must succeed.
   const result = core.applyCompression({
     ranges: [
-      { startRef: "m00001", endRef: "m00003", summary: "compressing older messages is allowed", topic: "ok" },
+      {
+        startRef: "m00001",
+        endRef: "m00003",
+        summary: "compressing older messages is allowed",
+        topic: "ok",
+      },
     ],
     messages,
     state,
     config: cfg,
   });
 
-  assert.equal(result.result.blocksCreated, 1, "older range still compressible");
+  assert.equal(
+    result.result.blocksCreated,
+    1,
+    "older range still compressible",
+  );
   assert.equal(result.result.errors.length, 0);
-  assert.equal(result.result.warnings.length, 0, "no warnings for a clean range");
+  assert.equal(
+    result.result.warnings.length,
+    0,
+    "no warnings for a clean range",
+  );
 });
 
 test("applyCompression fails by default when the whole range is protected (no explicit set)", () => {
@@ -183,7 +232,12 @@ test("applyCompression fails by default when the whole range is protected (no ex
 
   const result = core.applyCompression({
     ranges: [
-      { startRef: "m00002", endRef: "m00003", summary: "should be refused by default protection", topic: "bad" },
+      {
+        startRef: "m00002",
+        endRef: "m00003",
+        summary: "should be refused by default protection",
+        topic: "bad",
+      },
     ],
     messages,
     state,
@@ -191,7 +245,11 @@ test("applyCompression fails by default when the whole range is protected (no ex
     // intentionally NO protectedMessageIds
   });
 
-  assert.equal(result.result.blocksCreated, 0, "default protection applies without explicit set");
+  assert.equal(
+    result.result.blocksCreated,
+    0,
+    "default protection applies without explicit set",
+  );
   assert.match(result.result.errors[0]!, /protected/i);
 });
 
@@ -203,7 +261,14 @@ function toolResult(
   text: string,
   toolCallId = "tc-" + id,
 ): CoreMessage {
-  return { id, role: "tool", contentType: "tool-result", toolName, toolCallId, text };
+  return {
+    id,
+    role: "tool",
+    contentType: "tool-result",
+    toolName,
+    toolCallId,
+    text,
+  };
 }
 
 test("computeProtectedRefs excludes decompress tool results from the recent zone", async () => {
@@ -221,7 +286,10 @@ test("computeProtectedRefs excludes decompress tool results from the recent zone
 
   const protectedRefs = computeProtectedRefs(messages, state, cfg);
   // m00004 is the decompress result — must NOT be in the protected zone.
-  assert.ok(!protectedRefs.has("m00004"), "decompress result not protected by recent zone");
+  assert.ok(
+    !protectedRefs.has("m00004"),
+    "decompress result not protected by recent zone",
+  );
   // The last USER message (m00003) is still protected by Rule 3.
   assert.ok(protectedRefs.has("m00003"), "last user message still protected");
 });
@@ -241,16 +309,29 @@ test("applyCompression can compress a decompress tool result in the recent tail"
 
   const result = core.applyCompression({
     ranges: [
-      { startRef: "m00004", endRef: "m00004", summary: "compressing the decompress result", topic: "reclaim" },
+      {
+        startRef: "m00004",
+        endRef: "m00004",
+        summary: "compressing the decompress result",
+        topic: "reclaim",
+      },
     ],
     messages,
     state,
     config: cfg,
   });
 
-  assert.equal(result.result.blocksCreated, 1, "decompress result is compressible despite being in the tail");
+  assert.equal(
+    result.result.blocksCreated,
+    1,
+    "decompress result is compressible despite being in the tail",
+  );
   assert.equal(result.result.errors.length, 0);
-  assert.equal(result.result.warnings.length, 0, "no warning — it is genuinely outside the protected zone");
+  assert.equal(
+    result.result.warnings.length,
+    0,
+    "no warning — it is genuinely outside the protected zone",
+  );
 });
 
 test("warnings accumulate across multiple ranges in one batch", () => {
@@ -267,14 +348,27 @@ test("warnings accumulate across multiple ranges in one batch", () => {
   // Both should produce warnings, and both unprotected heads should compress.
   const result = core.applyCompression({
     ranges: [
-      { startRef: "m00004", endRef: "m00009", summary: "first partial range summary", topic: "a" },
-      { startRef: "m00010", endRef: "m00010", summary: "second range fully protected tail", topic: "b" },
+      {
+        startRef: "m00004",
+        endRef: "m00009",
+        summary: "first partial range summary",
+        topic: "a",
+      },
+      {
+        startRef: "m00010",
+        endRef: "m00010",
+        summary: "second range fully protected tail",
+        topic: "b",
+      },
     ],
     messages,
     state,
     config: cfg,
   });
 
-  assert.ok(result.result.blocksCreated >= 1, "at least the unprotected head compresses");
+  assert.ok(
+    result.result.blocksCreated >= 1,
+    "at least the unprotected head compresses",
+  );
   assert.ok(result.result.warnings.length >= 1, "warnings surfaced");
 });

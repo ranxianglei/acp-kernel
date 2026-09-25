@@ -39,10 +39,14 @@ export function renderMessage(m: CoreMessage): string {
       parts.push(m.text ?? "");
       break;
     case "tool-call":
-      parts.push(`\`${m.toolName ?? "?"}(${m.toolCallId ?? ""})\` args: ${m.text ?? ""}`);
+      parts.push(
+        `\`${m.toolName ?? "?"}(${m.toolCallId ?? ""})\` args: ${m.text ?? ""}`,
+      );
       break;
     case "tool-result":
-      parts.push(`\`${m.toolName ?? "?"}(${m.toolCallId ?? ""})\` → ${m.text ?? ""}`);
+      parts.push(
+        `\`${m.toolName ?? "?"}(${m.toolCallId ?? ""})\` → ${m.text ?? ""}`,
+      );
       break;
     case "reasoning":
       parts.push(`_reasoning_: ${m.text ?? ""}`);
@@ -61,16 +65,21 @@ export function renderHandoff(input: HandoffInput): string {
   if (meta.label) lines.push(`- label: ${meta.label}`);
   lines.push(`- session id: ${meta.sessionId}`);
   for (const bullet of meta.extraBullets ?? []) lines.push(bullet);
-  if (meta.contextTokens) lines.push(`- last context tokens: ~${meta.contextTokens}`);
-  lines.push(`- compression blocks: ${state.blocks.length} (active ${state.blocks.filter((b) => b.active).length})`);
+  if (meta.contextTokens)
+    lines.push(`- last context tokens: ~${meta.contextTokens}`);
+  lines.push(
+    `- compression blocks: ${state.blocks.length} (active ${state.blocks.filter((b) => b.active).length})`,
+  );
   lines.push("");
   const folded = input.folded === true;
   const view = full || folded ? coreMessages : prune(coreMessages, state);
-  lines.push(full && !folded
-    ? `## Full conversation (${coreMessages.length} messages)`
-    : folded
-      ? `## Conversation (persisted folded snapshot, ${coreMessages.length} messages)`
-      : `## Conversation (folded view as the model saw it, ${coreMessages.length} client messages)`);
+  lines.push(
+    full && !folded
+      ? `## Full conversation (${coreMessages.length} messages)`
+      : folded
+        ? `## Conversation (persisted folded snapshot, ${coreMessages.length} messages)`
+        : `## Conversation (folded view as the model saw it, ${coreMessages.length} client messages)`,
+  );
   lines.push("");
   if (view.length === 0) {
     lines.push("No conversation messages to export.");
@@ -108,5 +117,7 @@ export function matchSession<T extends { id: string }>(
   if (exact.length > 0) return exact;
   const byLabel = sessions.filter((s) => labelOf(s) === selector);
   if (byLabel.length > 0) return byLabel;
-  return sessions.filter((s) => s.id.startsWith(selector) || (labelOf(s) ?? "").startsWith(selector));
+  return sessions.filter(
+    (s) => s.id.startsWith(selector) || (labelOf(s) ?? "").startsWith(selector),
+  );
 }

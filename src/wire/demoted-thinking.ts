@@ -29,20 +29,20 @@
  * uses the same bare rendering), not parsed. */
 
 export type DemotedSplit = {
-    reasoning: string;
-    text: string;
+  reasoning: string;
+  text: string;
 };
 
 type DelimitedForm = {
-    open: string;
-    close: string;
+  open: string;
+  close: string;
 };
 
 /** The three inline tag forms hosts actually emit (see file comment). */
 const FORMS: readonly DelimitedForm[] = [
-    { open: "<think>\n", close: "\n</think>" },
-    { open: "<thinking>\n", close: "\n</thinking>" },
-    { open: "```thinking\n", close: "\n```" },
+  { open: "<think>\n", close: "\n</think>" },
+  { open: "<thinking>\n", close: "\n</thinking>" },
+  { open: "```thinking\n", close: "\n```" },
 ];
 
 /** If `content` starts with one or more inline demoted-thinking blocks,
@@ -52,26 +52,26 @@ const FORMS: readonly DelimitedForm[] = [
  *  content as-is. Malformed (unterminated) or empty blocks do not match;
  *  the content is then treated as plain text, never dropped. */
 export function splitDemotedThinking(content: string): DemotedSplit | null {
-    let rest = content;
-    const parts: string[] = [];
-    for (;;) {
-        let matched = false;
-        for (const form of FORMS) {
-            if (!rest.startsWith(form.open)) continue;
-            const end = rest.indexOf(form.close, form.open.length);
-            if (end < 0) continue;
-            const inner = rest.slice(form.open.length, end);
-            if (inner.length === 0) continue;
-            parts.push(inner);
-            rest = rest.slice(end + form.close.length);
-            // Glue the demotion renderer inserts between a demoted block
-            // and the block that follows it.
-            if (rest.startsWith("\n")) rest = rest.slice(1);
-            matched = true;
-            break;
-        }
-        if (!matched) break;
+  let rest = content;
+  const parts: string[] = [];
+  for (;;) {
+    let matched = false;
+    for (const form of FORMS) {
+      if (!rest.startsWith(form.open)) continue;
+      const end = rest.indexOf(form.close, form.open.length);
+      if (end < 0) continue;
+      const inner = rest.slice(form.open.length, end);
+      if (inner.length === 0) continue;
+      parts.push(inner);
+      rest = rest.slice(end + form.close.length);
+      // Glue the demotion renderer inserts between a demoted block
+      // and the block that follows it.
+      if (rest.startsWith("\n")) rest = rest.slice(1);
+      matched = true;
+      break;
     }
-    if (parts.length === 0) return null;
-    return { reasoning: parts.join("\n"), text: rest };
+    if (!matched) break;
+  }
+  if (parts.length === 0) return null;
+  return { reasoning: parts.join("\n"), text: rest };
 }

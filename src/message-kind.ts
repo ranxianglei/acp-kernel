@@ -9,5 +9,7 @@ import type { CoreMessage } from "./types.js";
  * (issue #390).
  */
 export function isToolMessage(message: CoreMessage): boolean {
-    return message.contentType === "tool-call" || message.contentType === "tool-result";
+  return (
+    message.contentType === "tool-call" || message.contentType === "tool-result"
+  );
 }

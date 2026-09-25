@@ -60,7 +60,13 @@ function buildCarrierScenario() {
     nextIndex: 1,
   }).map;
   const first = core.applyCompression({
-    ranges: [{ startRef: "m00002", endRef: "m00005", summary: "block A distills the refactor" }],
+    ranges: [
+      {
+        startRef: "m00002",
+        endRef: "m00005",
+        summary: "block A distills the refactor",
+      },
+    ],
     messages,
     state,
     config: config(),
@@ -82,7 +88,13 @@ function buildCarrierScenario() {
 test("plain message-ref range skips a live host checkpoint carrier and keeps it visible (#335)", () => {
   const { core, state, messages, blockA } = buildCarrierScenario();
   const second = core.applyCompression({
-    ranges: [{ startRef: "m00001", endRef: "m00008", summary: "plain range across the checkpoint" }],
+    ranges: [
+      {
+        startRef: "m00001",
+        endRef: "m00008",
+        summary: "plain range across the checkpoint",
+      },
+    ],
     messages,
     state,
     config: config(),
@@ -90,10 +102,17 @@ test("plain message-ref range skips a live host checkpoint carrier and keeps it 
   assert.equal(second.result.blocksCreated, 1);
   assert.equal(second.result.errors.length, 0);
   const blockB = second.state.blocks[second.state.blocks.length - 1]!;
-  assert.ok(!blockB.effectiveMessageIds.includes("7"), "carrier must not be folded into the plain range block");
+  assert.ok(
+    !blockB.effectiveMessageIds.includes("7"),
+    "carrier must not be folded into the plain range block",
+  );
   assert.ok(!blockB.directMessageIds.includes("7"));
   assert.ok(blockB.effectiveMessageIds.includes("8"));
-  assert.ok(blockB.effectiveMessageIds.includes("2") && blockB.effectiveMessageIds.includes("5"), "the block's own range is still re-covered");
+  assert.ok(
+    blockB.effectiveMessageIds.includes("2") &&
+      blockB.effectiveMessageIds.includes("5"),
+    "the block's own range is still re-covered",
+  );
   assert.ok(
     (second.result.warnings ?? []).some((w) => w.includes("checkpoint")),
     "the skip must be reported, not silent",
@@ -137,7 +156,13 @@ test("block-ref boundary (bN..bM) folds host checkpoint carriers — distillatio
     config: config(),
   }).state;
   const distilled = core.applyCompression({
-    ranges: [{ startRef: "b1", endRef: "b2", summary: "tier two across both blocks and the carrier" }],
+    ranges: [
+      {
+        startRef: "b1",
+        endRef: "b2",
+        summary: "tier two across both blocks and the carrier",
+      },
+    ],
     messages,
     state,
     config: config(),
@@ -146,7 +171,10 @@ test("block-ref boundary (bN..bM) folds host checkpoint carriers — distillatio
   assert.equal(distilled.result.errors.length, 0);
   const t2 = distilled.state.blocks[distilled.state.blocks.length - 1]!;
   assert.equal(t2.tier, 2);
-  assert.ok(t2.effectiveMessageIds.includes("6"), "block-boundary distillation folds the carrier");
+  assert.ok(
+    t2.effectiveMessageIds.includes("6"),
+    "block-boundary distillation folds the carrier",
+  );
   assert.ok(
     !(distilled.result.warnings ?? []).some((w) => w.includes("checkpoint")),
     "no checkpoint warning on the distillation path",
@@ -172,16 +200,31 @@ test("stale carriers (block inactive or unknown) fold like ordinary messages", (
     nextIndex: 9,
   }).map;
   const result = core.applyCompression({
-    ranges: [{ startRef: "m00001", endRef: "m00011", summary: "plain range over stale carriers" }],
+    ranges: [
+      {
+        startRef: "m00001",
+        endRef: "m00011",
+        summary: "plain range over stale carriers",
+      },
+    ],
     messages,
     state,
     config: config(),
   });
   assert.equal(result.result.blocksCreated, 1);
   const block = result.state.blocks[result.state.blocks.length - 1]!;
-  assert.ok(block.effectiveMessageIds.includes("9"), "inactive-block carrier folds");
-  assert.ok(block.effectiveMessageIds.includes("10"), "unknown-block carrier folds");
-  assert.ok(block.effectiveMessageIds.includes("7"), "carrier of the now-dead block folds too");
+  assert.ok(
+    block.effectiveMessageIds.includes("9"),
+    "inactive-block carrier folds",
+  );
+  assert.ok(
+    block.effectiveMessageIds.includes("10"),
+    "unknown-block carrier folds",
+  );
+  assert.ok(
+    block.effectiveMessageIds.includes("7"),
+    "carrier of the now-dead block folds too",
+  );
 });
 
 test("dsh shape: plain range with tool-pair growth consumes the old block yet skips its carrier (#335 exact scenario)", () => {
@@ -189,13 +232,55 @@ test("dsh shape: plain range with tool-pair growth consumes the old block yet sk
   let state = createInitialState();
   const messages: CoreMessage[] = [
     msg("1", "user one"),
-    { id: "2", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c1", text: "{}" },
-    { id: "2#c1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c2", text: "{}" },
-    { id: "3", role: "user", contentType: "tool-result", toolName: "bash", toolCallId: "c1", text: "result c1" },
-    { id: "4", role: "user", contentType: "tool-result", toolName: "bash", toolCallId: "c2", text: "" },
+    {
+      id: "2",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "c1",
+      text: "{}",
+    },
+    {
+      id: "2#c1",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "c2",
+      text: "{}",
+    },
+    {
+      id: "3",
+      role: "user",
+      contentType: "tool-result",
+      toolName: "bash",
+      toolCallId: "c1",
+      text: "result c1",
+    },
+    {
+      id: "4",
+      role: "user",
+      contentType: "tool-result",
+      toolName: "bash",
+      toolCallId: "c2",
+      text: "",
+    },
     msg("5", "user two"),
-    { id: "6", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c3", text: "{}" },
-    { id: "7", role: "user", contentType: "tool-result", toolName: "bash", toolCallId: "c3", text: "" },
+    {
+      id: "6",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "c3",
+      text: "{}",
+    },
+    {
+      id: "7",
+      role: "user",
+      contentType: "tool-result",
+      toolName: "bash",
+      toolCallId: "c3",
+      text: "",
+    },
     msg("8", "user three"),
   ];
   state.messageRefs = assignRefs(messages, {
@@ -203,7 +288,13 @@ test("dsh shape: plain range with tool-pair growth consumes the old block yet sk
     nextIndex: 1,
   }).map;
   state = core.applyCompression({
-    ranges: [{ startRef: "m00002", endRef: "m00006", summary: "block A distills the tool work" }],
+    ranges: [
+      {
+        startRef: "m00002",
+        endRef: "m00006",
+        summary: "block A distills the tool work",
+      },
+    ],
     messages,
     state,
     config: config(),
@@ -224,7 +315,13 @@ test("dsh shape: plain range with tool-pair growth consumes the old block yet sk
   }).map;
   const lastRef = `m${String(messages.length).padStart(5, "0")}`;
   const second = core.applyCompression({
-    ranges: [{ startRef: "m00001", endRef: lastRef, summary: "plain range over everything" }],
+    ranges: [
+      {
+        startRef: "m00001",
+        endRef: lastRef,
+        summary: "plain range over everything",
+      },
+    ],
     messages,
     state,
     config: config(),
@@ -232,15 +329,30 @@ test("dsh shape: plain range with tool-pair growth consumes the old block yet sk
   assert.equal(second.result.blocksCreated, 1);
   assert.equal(second.result.errors.length, 0);
   const blockB = second.state.blocks[second.state.blocks.length - 1]!;
-  assert.ok(!blockB.effectiveMessageIds.includes("9"), "carrier of the consumed block must still be skipped");
+  assert.ok(
+    !blockB.effectiveMessageIds.includes("9"),
+    "carrier of the consumed block must still be skipped",
+  );
   assert.ok(!blockB.directMessageIds.includes("9"));
   assert.ok(
     (second.result.warnings ?? []).some((w) => w.includes("checkpoint")),
     "skip is reported",
   );
-  const blockACopy = second.state.blocks.find((b) => b.blockId === blockA.blockId)!;
-  assert.equal(blockACopy.active, false, "tool-pair growth re-scan consumes the nested block (dsh ledger shape)");
-  assert.ok(blockB.directBlockIds.includes(blockA.blockId), "parents link recorded");
+  const blockACopy = second.state.blocks.find(
+    (b) => b.blockId === blockA.blockId,
+  )!;
+  assert.equal(
+    blockACopy.active,
+    false,
+    "tool-pair growth re-scan consumes the nested block (dsh ledger shape)",
+  );
+  assert.ok(
+    blockB.directBlockIds.includes(blockA.blockId),
+    "parents link recorded",
+  );
   const visible = prune(messages, second.state);
-  assert.ok(visible.some((m) => m.id === "9"), "carrier stays visible");
+  assert.ok(
+    visible.some((m) => m.id === "9"),
+    "carrier stays visible",
+  );
 });

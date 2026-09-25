@@ -43,7 +43,17 @@ const TAG_OPEN = LT + "acp ";
 const TAG_CLOSE = LT + "/acp" + GT;
 
 function acpTag(ref: string, tokens: number, type: string): string {
-  return TAG_OPEN + 'tokens="' + formatTokens(tokens) + '" type="' + type + '"' + GT + ref + TAG_CLOSE;
+  return (
+    TAG_OPEN +
+    'tokens="' +
+    formatTokens(tokens) +
+    '" type="' +
+    type +
+    '"' +
+    GT +
+    ref +
+    TAG_CLOSE
+  );
 }
 
 function renderMessage(
@@ -67,7 +77,13 @@ function renderMessage(
   // Strip own stale tag BEFORE computing tokens (idempotency).
   // Match the message's own ref only — foreign tags survive (content-corruption fix).
   const ownTagRe = new RegExp(
-    "^" + escapeRegex(TAG_OPEN) + "[^>]*" + GT + escapeRegex(ref) + escapeRegex(TAG_CLOSE) + "\\n?",
+    "^" +
+      escapeRegex(TAG_OPEN) +
+      "[^>]*" +
+      GT +
+      escapeRegex(ref) +
+      escapeRegex(TAG_CLOSE) +
+      "\\n?",
   );
   const cleanText = (message.text || "").replace(ownTagRe, "");
 
@@ -89,8 +105,7 @@ function renderMessage(
 export function renderVisibleRefs(
   messages: CoreMessage[],
   state: CompressionState,
-  countTokens: (text: string) => number = (text) =>
-    Math.ceil(text.length / 4),
+  countTokens: (text: string) => number = (text) => Math.ceil(text.length / 4),
   strategy: RenderStrategy = "all",
 ): CoreMessage[] {
   // Legacy behavior: recompute tokens every render (snapshot = null).

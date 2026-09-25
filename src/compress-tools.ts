@@ -80,6 +80,16 @@ const COMPRESS_RANGE_OBJECT = {
  *  single-range form ({startId|startRef, endId|endRef, summary}, no content).
  *  Pre-validating hosts must never kill a call the kernel would honor; do not
  *  narrow this below the parser without re-checking parse-compress-input.ts.
+ *
+ *  Wire-legality constraint (bili #1299, fixed after the #374 follow-up
+ *  regressed it): the TOP LEVEL must stay a plain object schema — no
+ *  `oneOf`/`allOf`/`anyOf`/`not`. Anthropic rejects tool input_schema with
+ *  top-level combinators (400 on every request carrying the tool), so the
+ *  content-vs-flat alternation lives in the descriptions and is enforced by
+ *  parseCompressInput, never by a top-level combinator or `required` (a
+ *  top-level `required: ["content"]` would let strict hosts kill the flat
+ *  form). Nested combinators (properties.content.items.anyOf) are legal on
+ *  every wire — see tests/wire-schema-top-level.test.ts.
  */
 export const COMPRESS_PARAMETERS = {
   type: "object",
@@ -124,13 +134,6 @@ export const COMPRESS_PARAMETERS = {
       description: "Flat single-range form (no content): self-contained summary replacing the range",
     },
   },
-  anyOf: [
-    { required: ["content"] },
-    {
-      required: ["summary"],
-      anyOf: [{ required: ["startId", "endId"] }, { required: ["startRef", "endRef"] }],
-    },
-  ],
 };
 
 export const COMPRESS_TOOL = {

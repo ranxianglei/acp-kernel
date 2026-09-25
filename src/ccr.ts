@@ -394,7 +394,7 @@ export function storeCoveredOriginals(
     if (text.length === 0) continue;
     const ref = refForRaw(state.messageRefs, message.id);
     if (!ref || ref === BLOCKED_REF) continue;
-    if (isStoredPlaceholderText(text) && hasStoredRef(current, ref)) continue;
+    if (isStoredPlaceholderText(text)) continue;
     current = storeOriginal(current, {
       ref,
       rawId: message.id,

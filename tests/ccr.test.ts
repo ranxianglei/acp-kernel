@@ -807,6 +807,65 @@ test("storeCoveredOriginals skips reasoning and keeps earlier CCR originals (fir
   assert.ok(!hasStoredRef(store, "m00003"));
 });
 
+test("storeCoveredOriginals never persists placeholder text as an original (issue #432)", () => {
+  const core = createCore({ countTokens });
+  const original = bigText();
+  const messages: CoreMessage[] = [
+    toolCall("c1", "call1", "bash"),
+    toolResult("r1", "call1", "bash", original),
+    { id: "u2", role: "user", contentType: "text", text: "follow up question" },
+    {
+      id: "a2",
+      role: "assistant",
+      contentType: "text",
+      text: "follow up answer here",
+    },
+    {
+      id: "u3",
+      role: "user",
+      contentType: "text",
+      text: "tail user message stays recent",
+    },
+    {
+      id: "a3",
+      role: "assistant",
+      contentType: "text",
+      text: "tail assistant reply stays recent",
+    },
+  ];
+  const seeded = core.processTurn({
+    messages,
+    state: createInitialState(),
+    config: ccrConfig(),
+    tokenCount: 1000,
+  });
+  assert.ok(isStoredPlaceholderText(seeded.messages[1].text ?? ""));
+  const compressed = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00004", summary: "S".repeat(60) }],
+    messages: seeded.messages,
+    state: seeded.state,
+    config: defaultConfig(100000, {
+      compress: { minCompressRange: 0 },
+      preserveRecentMessages: 1,
+      preserveRecentTokens: 0,
+    }),
+  });
+  const block = compressed.state.blocks.find((b) => b.active)!;
+  const store = storeCoveredOriginals(
+    createContentStore(),
+    seeded.messages,
+    compressed.state,
+    [block.blockId],
+    countTokens,
+  );
+  assert.ok(!hasStoredRef(store, "m00002"));
+  const foundR1 = retrieveByRef(store, "m00002");
+  assert.equal(foundR1.ok, false);
+  const foundU2 = retrieveByRef(store, "m00003");
+  assert.ok(foundU2.ok);
+  if (foundU2.ok) assert.equal(foundU2.text, "follow up question");
+});
+
 test("absorb minToolTokens default raised 1000 -> 4000 (issue #352 disclosure)", () => {
   assert.equal(DEFAULT_ABSORB_CONFIG.minToolTokens, 4000);
   assert.equal(defaultConfig(100000).absorb?.minToolTokens, 4000);

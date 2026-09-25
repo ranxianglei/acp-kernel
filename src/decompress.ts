@@ -1,3 +1,4 @@
+import { resolveBlockSpan } from "./block-map.js";
 import { SUMMARY_HEADER } from "./prune.js";
 import { clampPrefix } from "./truncate.js";
 import type { CompressionBlock, CompressionState, CoreMessage } from "./types.js";
@@ -216,4 +217,66 @@ function formatMessage(message: CoreMessage): string {
 function numericPart(blockId: string): number {
     const match = /^b(\d+)$/.exec(blockId);
     return match && match[1] !== undefined ? Number(match[1]) : 0;
+}
+
+export interface InlineRestoreResult {
+    restored: true;
+    blockId: string;
+    /** m-ref of the block span's first message; omitted when not derivable
+     *  (e.g. a multi-segment restore), in which case the adapter degrades to a
+     *  generic re-fold hint. */
+    restoredStartRef?: string;
+    /** m-ref of the block span's last message (see restoredStartRef). */
+    restoredEndRef?: string;
+}
+
+/** Inline-decompress marker for refold-in-place (#398): flags a block whose
+ *  content was restored into the live conversation so compress() may refold it
+ *  in place later. The block stays ACTIVE and no refs or ids move — only the
+ *  flag flips, so ref immutability holds. Returns metadata for the host's
+ *  re-fold guidance; `result` is null when the block does not exist. */
+export function markBlockRestoredInline(
+    state: CompressionState,
+    blockId: string,
+): { state: CompressionState; result: InlineRestoreResult | null } {
+    const existing = state.blocks.find((b) => b.blockId === blockId);
+    if (!existing) return { state, result: null };
+    const blocks = state.blocks.map((block) =>
+        block.blockId === blockId ? { ...block, restoredInline: true } : block,
+    );
+    const span = resolveBlockSpan(existing, state.messageRefs.byRaw);
+    const result: InlineRestoreResult = {
+        restored: true,
+        blockId,
+        ...(span
+            ? { restoredStartRef: span.startRef, restoredEndRef: span.endRef }
+            : {}),
+    };
+    return { state: { ...state, blocks }, result };
+}
+
+/** All ACTIVE ancestors of a block (#398), nearest generation first: a block
+ *  P is an ancestor when its directBlockIds (the blocks it folded) reach
+ *  blockId; the walk keeps climbing through inactive intermediates up to live
+ *  parents. Used to enforce the refold rule that no unrecovered folded tier
+ *  sits above a restored block. */
+export function activeAncestorIds(
+    state: CompressionState,
+    blockId: string,
+): string[] {
+    const out: string[] = [];
+    const visited = new Set<string>([blockId]);
+    let frontier: string[] = [blockId];
+    while (frontier.length > 0) {
+        const next: string[] = [];
+        for (const block of state.blocks) {
+            if (visited.has(block.blockId)) continue;
+            if (!block.directBlockIds.some((id) => frontier.includes(id))) continue;
+            visited.add(block.blockId);
+            if (block.active) out.push(block.blockId);
+            next.push(block.blockId);
+        }
+        frontier = next;
+    }
+    return out;
 }

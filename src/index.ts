@@ -105,14 +105,17 @@ export {
   parseBlockIdArg,
   findBlocksOverlappingMessages,
   findActiveAncestor,
+  activeAncestorIds,
   deactivateBlock,
   buildRestoredContentPreview,
   collectBlockContent,
+  markBlockRestoredInline,
 } from "./decompress.js";
 export type {
   DeactivateOptions,
   CollectedContentResult,
   CollectContentOptions,
+  InlineRestoreResult,
 } from "./decompress.js";
 export { buildStatusReport, buildRecap } from "./report.js";
 export type { StatusReportOptions, StatusReportMeta } from "./report.js";

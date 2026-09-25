@@ -257,17 +257,28 @@ test("prune orders multiple summaries by their anchor position", () => {
 // ─── #421: id-less host-shaped messages must not crash the pipeline ────────
 
 test("processTurn tolerates id-less host-shaped messages (pre-#233 lenience, #421)", () => {
-    // 0.0.90's syncBlocks fed message.id straight into baseIdOf → TypeError
-    // for entries that every earlier release silently digested. Subid
-    // coverage only applies to messages that actually carry a string id.
-    const core = createCore();
-    const config = defaultConfig(200000);
-    const messages = Array.from({ length: 12 }, (_, i) =>
-        i % 2 === 0
-            ? { role: "user", content: { type: "text", text: `u${i} ${"lorem ".repeat(i % 7)}` } }
-            : { role: "assistant", content: [{ type: "text", text: `a${i} ${"ipsum ".repeat(i % 5)}` }] },
-    ) as never as Parameters<typeof core.processTurn>[0]["messages"];
-    const turn = core.processTurn({ messages, state: createInitialState(config), config, tokenCount: 90_000 });
-    assert.ok(Array.isArray(turn.messages), "turn completes without throwing");
-    assert.equal(turn.state.blocks.length, 0, "no blocks from a crash-free pass");
+  // 0.0.90's syncBlocks fed message.id straight into baseIdOf → TypeError
+  // for entries that every earlier release silently digested. Subid
+  // coverage only applies to messages that actually carry a string id.
+  const core = createCore();
+  const config = defaultConfig(200000);
+  const messages = Array.from({ length: 12 }, (_, i) =>
+    i % 2 === 0
+      ? {
+          role: "user",
+          content: { type: "text", text: `u${i} ${"lorem ".repeat(i % 7)}` },
+        }
+      : {
+          role: "assistant",
+          content: [{ type: "text", text: `a${i} ${"ipsum ".repeat(i % 5)}` }],
+        },
+  ) as never as Parameters<typeof core.processTurn>[0]["messages"];
+  const turn = core.processTurn({
+    messages,
+    state: createInitialState(config),
+    config,
+    tokenCount: 90_000,
+  });
+  assert.ok(Array.isArray(turn.messages), "turn completes without throwing");
+  assert.equal(turn.state.blocks.length, 0, "no blocks from a crash-free pass");
 });

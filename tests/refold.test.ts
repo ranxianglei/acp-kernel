@@ -408,6 +408,55 @@ test("full-anchor view: re-compressing a restored span refolds in place, identic
   assert.equal(block.active, true);
 });
 
+test("full-anchor view: restored span below minCompressRange still refolds in place (size-gate bypass)", () => {
+  const core = createCore();
+  // Short by design: the 10-message span is ~320 chars < minCompressRange (500),
+  // so only the pure-refold gate bypass lets the full view reach the refold path.
+  const messages = makeMessages(12);
+  const ids = messages.slice(0, 10).map((m) => m.id);
+  const { state: marked } = markBlockRestoredInline(
+    makeState(messages, [
+      makeBlock({
+        blockId: "b1",
+        effectiveMessageIds: ids,
+        startRef: "m00001",
+        endRef: "m00010",
+      }),
+    ]),
+    "b1",
+  );
+  const ranges = [
+    {
+      startRef: "m00001",
+      endRef: "m00010",
+      summary: NEW_SUMMARY,
+      topic: "refold",
+    },
+  ];
+
+  const full = core.applyCompression({
+    ranges,
+    messages: [anchor("b1"), ...messages], // full session projection + anchor
+    state: marked,
+    config: config(),
+  });
+  const pruned = core.applyCompression({
+    ranges,
+    messages: [],
+    state: marked,
+    config: config(),
+  });
+
+  assert.deepEqual(full.result.errors, []);
+  assert.equal(full.result.blocksCreated, 1);
+  assert.equal(pruned.result.blocksCreated, 1, "same count as the pruned view");
+  assert.deepEqual(full.state.blocks, pruned.state.blocks, "same end state");
+  assert.equal(full.state.nextBlockId, 2, "no new block id allocated");
+  assert.equal(full.state.blocks[0]!.blockId, "b1", "block id stays stable");
+  assert.equal(full.state.blocks[0]!.summary, NEW_SUMMARY);
+  assert.equal(full.state.blocks[0]!.restoredInline, false, "marker cleared");
+});
+
 test("full-anchor view: span fully covered by an un-restored block still dies in the livelock guard, error text verbatim", () => {
   const core = createCore();
   const messages = longMessages(10);

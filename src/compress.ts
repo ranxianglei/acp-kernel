@@ -414,24 +414,37 @@ export function createCore(ports: Ports = {}): CompressionCore {
       else if (resolution.status === "unknown") unknownCount++;
     }
 
-    // Refold-in-place (#398): classify consumed ranges against the restored-
-    // inline rule BEFORE the size gate so a pure refold never trips
-    // minCompressRange (it re-summarizes an already-folded block, no fresh
-    // messages involved).
+    // Refold-in-place (#398/#400): classify ranges against the restored-inline
+    // rule BEFORE the size gate so a pure refold never trips minCompressRange
+    // (it re-summarizes an already-folded block, no fresh messages involved).
+    // #400: full-log hosts (Pi) keep inline-restored originals in the view, so
+    // the same request RESOLVES (status ok, every id already covered) instead
+    // of classifying as consumed — a resolving range whose whole span is
+    // covered is a refold candidate too, otherwise the gate rejects the batch
+    // before the per-range loop can reach the refold path.
     const refoldDecisions = new Map<
       (typeof input.ranges)[number],
       RefoldDecision
     >();
-    for (const spec of consumedRanges) {
-      refoldDecisions.set(spec, evaluateRefold(state, spec));
+    const isRefoldCandidate = (resolution: RangeResolution): boolean =>
+      resolution.status === "consumed" ||
+      (resolution.status === "ok" &&
+        resolution.resolved.boundaryKind !== "block" &&
+        resolution.resolved.messageIds.every((id) =>
+          preExistingCoverage.has(id),
+        ));
+    for (const [spec, resolution] of classifications) {
+      if (isRefoldCandidate(resolution)) {
+        refoldDecisions.set(spec, evaluateRefold(state, spec));
+      }
     }
     const allRefold =
       input.ranges.length > 0 &&
-      resolvableCount === 0 &&
       unknownCount === 0 &&
-      classifications.size === consumedRanges.length &&
-      [...refoldDecisions.values()].every(
-        (decision) => decision.kind === "refold",
+      [...classifications.entries()].every(
+        ([spec, resolution]) =>
+          isRefoldCandidate(resolution) &&
+          refoldDecisions.get(spec)?.kind === "refold",
       );
 
     // Overlap detection uses resolved boundary indices, not messageIds: a

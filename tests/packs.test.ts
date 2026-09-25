@@ -103,6 +103,34 @@ test("lean acpTags carries BOTH the summary-trust guardrail and the post-compres
   assert.ok(!tags.includes("continue the task from them"), "inverted phrasing must be gone (#265)");
 });
 
+test("lean acpTags states ref stability across compression (no false renumbering claim, #417)", () => {
+  const pi = leanPack.surface.adapters?.pi as {
+    promptSections: Record<string, string | null>;
+  };
+  const tags = pi.promptSections.acpTags ?? "";
+  assert.ok(
+    tags.includes(
+      "Message refs remain stable across compression within the same session state.",
+    ),
+    "stability wording must be present",
+  );
+  assert.ok(
+    !tags.includes("may be renumbered"),
+    "false per-compress renumbering claim must be gone",
+  );
+  for (const marker of [
+    'call acp_status with { scope: "uncompressed" }',
+    "then retry in the same turn using the reported refs",
+    "never guess offsets",
+    "Batch target ranges in one call",
+  ]) {
+    assert.ok(
+      tags.includes(marker),
+      `retained failure-handling rule missing: ${marker}`,
+    );
+  }
+});
+
 test("lean pack retains summary-trust guardrail (regression: inverted 'settled history' removed)", () => {
   const pi = leanPack.surface.adapters?.["pi"] as { promptSections?: Record<string, unknown> } | undefined;
   const ps = pi?.promptSections ?? {};

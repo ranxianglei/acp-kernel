@@ -1,7 +1,8 @@
 import { clampPrefix } from "./truncate.js";
 import { isToolMessage } from "./message-kind.js";
-import { refForRaw } from "./refs.js";
+import { BLOCKED_REF, refForRaw } from "./refs.js";
 import { countMessageTokens } from "./tokenize.js";
+import { segmentGroups } from "./segment.js";
 import type {
   CompressionBlock,
   CompressionState,
@@ -81,6 +82,8 @@ interface VisibleMessageInfo {
   tool: string;
   isTool: boolean;
   index: number;
+  isUser: boolean;
+  gapBefore: boolean;
 }
 
 function collectVisible(
@@ -112,20 +115,37 @@ function collectVisible(
       toolCallNames.set(message.toolCallId, message.toolName);
     }
   }
+  // A numbered-ref message that is not shown (covered by a block) consumes a
+  // slot and opens a gap — same array-adjacency rule buildCompressibleRanges
+  // applies to its skipped entries. Unrefed / BLOCKED / zero-token entries
+  // consume no slot.
+  let pendingGap = false;
   messages.forEach((message, index) => {
-    if (coveredIds.has(message.id)) return;
     const ref = refForRaw(state.messageRefs, message.id);
     if (!ref) return;
     const tokens = countMessageTokens(message, countTokens);
-    const isTool = isToolMessage(message);
-    const tool = isTool
-      ? (message.toolName ??
-        (message.toolCallId
-          ? toolCallNames.get(message.toolCallId)
-          : undefined) ??
-        "tool")
-      : "text";
-    if (tokens > 0) visible.push({ ref, tokens, tool, isTool, index });
+    if (!coveredIds.has(message.id) && tokens > 0) {
+      const isTool = isToolMessage(message);
+      const tool = isTool
+        ? (message.toolName ??
+          (message.toolCallId
+            ? toolCallNames.get(message.toolCallId)
+            : undefined) ??
+          "tool")
+        : "text";
+      visible.push({
+        ref,
+        tokens,
+        tool,
+        isTool,
+        index,
+        isUser: message.role === "user",
+        gapBefore: pendingGap,
+      });
+      pendingGap = false;
+      return;
+    }
+    if (ref !== BLOCKED_REF && tokens > 0) pendingGap = true;
   });
   return { visible, summaryTokens };
 }
@@ -185,7 +205,7 @@ export function buildStatusReport(
     if (view === "messages") {
       return renderMessageDrilldown(visible, toolFilter, sort, limit);
     }
-    return renderUncompressedRanges(visible);
+    return renderUncompressedRanges(visible, sort, limit);
   }
 
   return renderOverview(
@@ -304,7 +324,11 @@ function renderOverview(
   return lines.join("\n");
 }
 
-function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
+function renderUncompressedRanges(
+  visible: VisibleMessageInfo[],
+  sort: string,
+  limit: number,
+): string {
   const lines: string[] = [];
   const totalTokens = visible.reduce((s, m) => s + m.tokens, 0);
   lines.push(
@@ -315,21 +339,17 @@ function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
     lines.push("  (no uncompressed messages)");
     return lines.join("\n");
   }
-  // Merge consecutive messages into ranges (by numeric ref), aggregating
-  // token counts and dominant tool so the view reads as blocks, not a
-  // per-message firehose — mirroring the Compressible Ranges output.
+  // Segment via the shared primitive (segment.ts) — identical split rules to
+  // buildCompressibleRanges — then aggregate token counts and dominant tool
+  // so the view reads as blocks, not a per-message firehose.
   interface Merged {
     startRef: string;
     endRef: string;
-    startNum: number;
+    startIndex: number;
     count: number;
     tokens: number;
     toolTokens: Map<string, number>;
   }
-  const refNum = (ref: string): number => {
-    const m = ref.match(/\d+/);
-    return m ? parseInt(m[0], 10) : 0;
-  };
   const dominantTool = (toolTokens: Map<string, number>): string => {
     let best = "text";
     let bestN = -1;
@@ -342,37 +362,40 @@ function renderUncompressedRanges(visible: VisibleMessageInfo[]): string {
     return best;
   };
   const merged: Merged[] = [];
-  for (const m of visible) {
-    const num = refNum(m.ref);
-    const last = merged[merged.length - 1];
-    if (last && num === last.startNum + last.count) {
-      last.endRef = m.ref;
-      last.count += 1;
-      last.tokens += m.tokens;
-      last.toolTokens.set(
-        m.tool,
-        (last.toolTokens.get(m.tool) ?? 0) + m.tokens,
-      );
-    } else {
-      const toolTokens = new Map<string, number>([[m.tool, m.tokens]]);
-      merged.push({
-        startRef: m.ref,
-        endRef: m.ref,
-        startNum: num,
-        count: 1,
-        tokens: m.tokens,
-        toolTokens,
-      });
+  for (const group of segmentGroups(visible)) {
+    const first = group[0]!;
+    const r: Merged = {
+      startRef: first.ref,
+      endRef: first.ref,
+      startIndex: first.index,
+      count: 1,
+      tokens: first.tokens,
+      toolTokens: new Map<string, number>([[first.tool, first.tokens]]),
+    };
+    for (let i = 1; i < group.length; i++) {
+      const m = group[i]!;
+      r.endRef = m.ref;
+      r.count += 1;
+      r.tokens += m.tokens;
+      r.toolTokens.set(m.tool, (r.toolTokens.get(m.tool) ?? 0) + m.tokens);
     }
+    merged.push(r);
   }
-  for (const r of merged.slice(0, 30)) {
+  // Array index is the correct time proxy even on surface-replace hosts,
+  // where mid-array summary nodes carry fresh HIGH refs and numeric-ref
+  // ordering would mis-sort equal-size ranges.
+  if (sort !== "time")
+    merged.sort((a, b) => b.tokens - a.tokens || a.startIndex - b.startIndex);
+  lines.push(`Sorted by ${sort === "time" ? "time" : "size"}`);
+  lines.push("");
+  for (const r of merged.slice(0, limit)) {
     const range = r.count === 1 ? r.startRef : `${r.startRef}–${r.endRef}`;
     lines.push(
       `  ${range}  (${r.count} msgs, ${formatTokens(r.tokens)}${r.count > 1 ? ` (${Math.round(r.tokens / r.count)}/msg)` : ""}) ${dominantTool(r.toolTokens)}`,
     );
   }
-  if (merged.length > 30) {
-    lines.push(`  ... and ${merged.length - 30} more ranges`);
+  if (merged.length > limit) {
+    lines.push(`  ... and ${merged.length - limit} more ranges`);
   }
   return lines.join("\n");
 }

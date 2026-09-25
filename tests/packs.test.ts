@@ -131,6 +131,16 @@ test("lean acpTags states ref stability across compression (no false renumbering
   }
 });
 
+test("builtin packs never claim refs are renumbered after compression (#417)", () => {
+  for (const pack of [defaultPack, leanPack]) {
+    assert.doesNotMatch(
+      JSON.stringify(pack),
+      /renumber/i,
+      `${pack.name} must not claim refs are renumbered`,
+    );
+  }
+});
+
 test("lean pack retains summary-trust guardrail (regression: inverted 'settled history' removed)", () => {
   const pi = leanPack.surface.adapters?.["pi"] as { promptSections?: Record<string, unknown> } | undefined;
   const ps = pi?.promptSections ?? {};

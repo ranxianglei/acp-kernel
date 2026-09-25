@@ -406,3 +406,78 @@ test("a batch mixing a too-small live range with a restorable range keeps the le
     "nothing applied when the batch gate rejects",
   );
 });
+
+test("a batch whose fresh part meets minCompressRange applies the refold AND compresses the fresh part", () => {
+  const core = createCore();
+  const longMessages: CoreMessage[] = Array.from({ length: 20 }, (_, i) => ({
+    id: `msg-${i + 1}`,
+    role: "assistant",
+    contentType: "text",
+    text: `content ${i + 1} ${"x".repeat(80)}`,
+  }));
+  const ids = longMessages.slice(0, 10).map((m) => m.id);
+  const { state: marked } = markBlockRestoredInline(
+    makeState(longMessages, [
+      makeBlock({ blockId: "b1", effectiveMessageIds: ids }),
+    ]),
+    "b1",
+  );
+  const visible = longMessages.slice(10);
+
+  const result = core.applyCompression({
+    ranges: [
+      { startRef: "m00001", endRef: "m00010", summary: NEW_SUMMARY },
+      { startRef: "m00011", endRef: "m00020", summary: NEW_SUMMARY },
+    ],
+    messages: visible,
+    state: marked,
+    config: config(),
+  });
+
+  assert.deepEqual(result.result.errors, []);
+  assert.equal(result.result.blocksCreated, 2);
+  const b1 = result.state.blocks.find((block) => block.blockId === "b1")!;
+  assert.equal(b1.summary, NEW_SUMMARY, "refolded in place");
+  assert.equal(b1.restoredInline, false);
+  const fresh = result.state.blocks.filter((block) => block.blockId !== "b1");
+  assert.equal(fresh.length, 1, "fresh part compressed into one new block");
+  assert.equal(fresh[0]!.active, true);
+  assert.deepEqual(
+    fresh[0]!.effectiveMessageIds,
+    visible.map((m) => m.id),
+  );
+  assert.equal(result.state.nextBlockId, 3, "exactly one new id allocated");
+});
+
+test("a block-ref range (b1..b1) over a restored hidden block refolds in place", () => {
+  const core = createCore();
+  const messages = makeMessages(10);
+  const ids = messages.map((m) => m.id);
+  const { state: marked } = markBlockRestoredInline(
+    makeState(messages, [
+      makeBlock({
+        blockId: "b1",
+        effectiveMessageIds: ids,
+        startRef: "m00001",
+        endRef: "m00010",
+      }),
+    ]),
+    "b1",
+  );
+
+  const result = core.applyCompression({
+    ranges: [{ startRef: "b1", endRef: "b1", summary: NEW_SUMMARY }],
+    messages: [],
+    state: marked,
+    config: config(),
+  });
+
+  assert.deepEqual(result.result.errors, []);
+  assert.equal(result.result.blocksCreated, 1);
+  assert.equal(result.state.blocks.length, 1);
+  const block = result.state.blocks[0]!;
+  assert.equal(block.blockId, "b1");
+  assert.equal(block.summary, NEW_SUMMARY);
+  assert.equal(block.restoredInline, false);
+  assert.equal(result.state.nextBlockId, 2, "no new block id allocated");
+});

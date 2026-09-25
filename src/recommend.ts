@@ -31,6 +31,7 @@ import {
 } from "./protected.js";
 import { countMessageTokens } from "./tokenize.js";
 import { computeIntegrityWithdrawals } from "./turn-integrity.js";
+import { segmentGroups } from "./segment.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,20 +80,12 @@ export function computeProtectedRefs(
 
   for (const msg of messages) {
     if (isSyntheticOrPruned(msg, state)) continue;
-    // Exclude configured large-result tools from the recent-zone window.
-    // These are big inline payloads (restorations, file bodies, command
-    // output) that the model should be free to compress again immediately;
-    // counting them toward the last-N window would make them un-compressible
-    // and hide them from recommendations. The message stays fully visible —
-    // this only affects protection scope.
-    if (
-      isNeverPreserveRecent(
-        msg,
-        config.neverPreserveRecentTools,
-        config.preserveRecentTools,
-      )
-    )
-      continue;
+    // Exclude decompress-style tool results from the recent-zone window.
+    // These are large inline restorations that the model should be free to
+    // compress again immediately; counting them toward the last-N window
+    // would make them un-compressible and hide them from recommendations.
+    // The message stays fully visible — this only affects protection scope.
+    if (isNeverPreserveRecent(msg)) continue;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
     visible.push({ ref, tokens: countMessageTokens(msg, countTokens) });
@@ -279,50 +272,45 @@ export function buildCompressibleRanges(
     compressibleMsgs = kept;
   }
 
-  // Build compressible groups (split at real array gaps and at user messages
-  // once a group has >= 3 messages). Splitting at user boundaries keeps each
-  // compressible range aligned to roughly one user turn, instead of producing
-  // one giant range spanning many turns. Mirrors opencode-acp's
-  // buildCompressibleRanges condition.
+  // Build compressible groups via the shared segmentation primitive (segment.ts):
+  // split at real array gaps and at user messages once a group has >= 3 messages.
+  // Splitting at user boundaries keeps each range aligned to roughly one turn.
   const compressible: CompressibleRange[] = [];
-  let cur: CompressibleRange | null = null;
-
-  for (const info of compressibleMsgs) {
-    if (cur && ((info.isUser && cur.count >= 3) || info.gapBefore)) {
-      compressible.push(cur);
-      cur = null;
-    }
-    if (!cur) {
-      cur = {
-        startRef: info.ref,
-        endRef: info.ref,
-        count: 1,
-        tokens: info.tokens,
-        chars: info.chars,
-        toolPct: info.isTool ? 100 : 0,
-        textPct: info.isTool ? 0 : 100,
-        userMsgs: info.isUser ? 1 : 0,
-        startIndex: info.index,
-        endIndex: info.index,
-      };
-    } else {
-      cur.endRef = info.ref;
-      cur.endIndex = info.index;
-      cur.count++;
-      cur.tokens += info.tokens;
-      cur.chars = (cur.chars ?? 0) + info.chars;
-      if (info.isUser) cur.userMsgs = (cur.userMsgs ?? 0) + 1;
+  for (const group of segmentGroups(compressibleMsgs)) {
+    const first = group[0]!;
+    const range: CompressibleRange = {
+      startRef: first.ref,
+      endRef: first.ref,
+      startIndex: first.index,
+      endIndex: first.index,
+      count: 1,
+      tokens: first.tokens,
+      chars: first.chars,
+      toolPct: first.isTool ? 100 : 0,
+      textPct: first.isTool ? 0 : 100,
+      userMsgs: first.isUser ? 1 : 0,
+    };
+    for (let i = 1; i < group.length; i++) {
+      const info = group[i]!;
+      range.endRef = info.ref;
+      range.endIndex = info.index;
+      range.count++;
+      range.tokens += info.tokens;
+      range.chars = (range.chars ?? 0) + info.chars;
+      if (info.isUser) range.userMsgs = (range.userMsgs ?? 0) + 1;
       if (info.isTool) {
-        cur.toolPct = Math.round(
-          (cur.toolPct * (cur.count - 1) + 100) / cur.count,
+        range.toolPct = Math.round(
+          (range.toolPct * (range.count - 1) + 100) / range.count,
         );
       } else {
-        cur.toolPct = Math.round((cur.toolPct * (cur.count - 1)) / cur.count);
+        range.toolPct = Math.round(
+          (range.toolPct * (range.count - 1)) / range.count,
+        );
       }
-      cur.textPct = 100 - cur.toolPct;
+      range.textPct = 100 - range.toolPct;
     }
+    compressible.push(range);
   }
-  if (cur) compressible.push(cur);
 
   // Build protected groups (contiguous)
   const protectedRanges: ProtectedRange[] = [];

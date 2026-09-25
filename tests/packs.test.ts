@@ -231,3 +231,11 @@ test("file pack round-trips through dir source into resolver", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("builtin packs never claim refs are renumbered after compression (#417)", () => {
+  for (const pack of [defaultPack, leanPack]) {
+    const all = JSON.stringify(pack);
+    assert.doesNotMatch(all, /renumber/i, `${pack.name} must not claim refs are renumbered`);
+  }
+  assert.match(leanPack.surface.adapters?.pi?.promptSections?.acpTags ?? "", /Refs remain stable across compression/);
+});

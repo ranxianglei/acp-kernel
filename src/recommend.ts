@@ -80,12 +80,20 @@ export function computeProtectedRefs(
 
   for (const msg of messages) {
     if (isSyntheticOrPruned(msg, state)) continue;
-    // Exclude decompress-style tool results from the recent-zone window.
-    // These are large inline restorations that the model should be free to
-    // compress again immediately; counting them toward the last-N window
-    // would make them un-compressible and hide them from recommendations.
-    // The message stays fully visible — this only affects protection scope.
-    if (isNeverPreserveRecent(msg)) continue;
+    // Exclude configured large-result tools from the recent-zone window.
+    // These are big inline payloads (restorations, file bodies, command
+    // output) that the model should be free to compress again immediately;
+    // counting them toward the last-N window would make them un-compressible
+    // and hide them from recommendations. The message stays fully visible —
+    // this only affects protection scope.
+    if (
+      isNeverPreserveRecent(
+        msg,
+        config.neverPreserveRecentTools,
+        config.preserveRecentTools,
+      )
+    )
+      continue;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
     visible.push({ ref, tokens: countMessageTokens(msg, countTokens) });

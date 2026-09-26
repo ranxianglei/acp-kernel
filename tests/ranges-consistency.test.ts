@@ -6,7 +6,12 @@ import type { StatusReportOptions } from "../src/report.js";
 import { createInitialState } from "../src/state.js";
 import { assignRefs } from "../src/refs.js";
 import { defaultCountTokens } from "../src/tokenize.js";
-import type { Config, CompressionBlock, CoreMessage, CompressionState } from "../src/types.js";
+import type {
+  Config,
+  CompressionBlock,
+  CoreMessage,
+  CompressionState,
+} from "../src/types.js";
 
 function config(overrides: Partial<Config> = {}): Config {
   return {
@@ -31,16 +36,32 @@ function config(overrides: Partial<Config> = {}): Config {
   };
 }
 
-function msg(id: string, text: string, role: CoreMessage["role"] = "user"): CoreMessage {
+function msg(
+  id: string,
+  text: string,
+  role: CoreMessage["role"] = "user",
+): CoreMessage {
   return { id, role, contentType: "text", text };
 }
 
 function toolMsg(id: string, toolName: string): CoreMessage {
-  return { id, role: "assistant", contentType: "tool-call", toolName, text: `call ${toolName}` };
+  return {
+    id,
+    role: "assistant",
+    contentType: "tool-call",
+    toolName,
+    text: `call ${toolName}`,
+  };
 }
 
-function assignAll(messages: CoreMessage[], state = createInitialState()): CompressionState {
-  state.messageRefs = assignRefs(messages, { existing: state.messageRefs, nextIndex: 1 }).map;
+function assignAll(
+  messages: CoreMessage[],
+  state = createInitialState(),
+): CompressionState {
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
   return state;
 }
 
@@ -70,7 +91,9 @@ interface ParsedRange {
 // Parses the range lines of an uncompressed-ranges report:
 //   "  m00001\u2013m00009  (9 msgs, 1.2K (80/msg)) bash" / "  m00010  (1 msgs, 3) text"
 function parseRanges(report: string): ParsedRange[] {
-  return [...report.matchAll(/^  (m\d+)(?:\u2013(m\d+))?\s+\((\d+) msgs,/gm)].map((m) => ({
+  return [
+    ...report.matchAll(/^  (m\d+)(?:\u2013(m\d+))?\s+\((\d+) msgs,/gm),
+  ].map((m) => ({
     startRef: m[1]!,
     endRef: m[2] ?? m[1]!,
     count: Number(m[3]),
@@ -114,19 +137,34 @@ test("cross-view: append-only host — uncompressed view splits identically to c
   const state = assignAll(messages);
   const cfg = config();
 
-  const recommended = buildCompressibleRanges(messages, state, cfg, undefined, defaultCountTokens).compressible.map(
-    (r) => ({ startRef: r.startRef, endRef: r.endRef, count: r.count }),
-  );
+  const recommended = buildCompressibleRanges(
+    messages,
+    state,
+    cfg,
+    undefined,
+    defaultCountTokens,
+  ).compressible.map((r) => ({
+    startRef: r.startRef,
+    endRef: r.endRef,
+    count: r.count,
+  }));
   // sort:"time" puts both views in chronological order so the SPLIT is compared
   // (the default size-descending display order is asserted separately below).
   const reported = uncompressedRanges(state, messages, { sort: "time" });
 
-  assert.deepEqual(reported, recommended, "both views must segment the same session identically");
+  assert.deepEqual(
+    reported,
+    recommended,
+    "both views must segment the same session identically",
+  );
   assert.deepEqual(reported, [
     { startRef: "m00001", endRef: "m00004", count: 4 },
     { startRef: "m00005", endRef: "m00011", count: 7 },
   ]);
-  assert.ok(reported.length > 1, "turn-aware splitting must not collapse dense refs into one range");
+  assert.ok(
+    reported.length > 1,
+    "turn-aware splitting must not collapse dense refs into one range",
+  );
 });
 
 test("cross-view: coverage gap splits both views at the same place", () => {
@@ -144,9 +182,17 @@ test("cross-view: coverage gap splits both views at the same place", () => {
   state.blocks.push(block({ effectiveMessageIds: ["c"] }));
   const cfg = config();
 
-  const recommended = buildCompressibleRanges(messages, state, cfg, undefined, defaultCountTokens).compressible.map(
-    (r) => ({ startRef: r.startRef, endRef: r.endRef, count: r.count }),
-  );
+  const recommended = buildCompressibleRanges(
+    messages,
+    state,
+    cfg,
+    undefined,
+    defaultCountTokens,
+  ).compressible.map((r) => ({
+    startRef: r.startRef,
+    endRef: r.endRef,
+    count: r.count,
+  }));
   // sort:"time" puts both views in chronological order so the SPLIT is compared
   // (the default size-descending display order is asserted separately below).
   const reported = uncompressedRanges(state, messages, { sort: "time" });
@@ -168,7 +214,9 @@ test("uncompressed view: ref-map holes do NOT fragment ranges (surface-replace h
   const e = msg("e", "v".repeat(2000), "assistant");
   const state = assignAll([a, msg("b", "y"), msg("c", "z"), msg("d", "w"), e]);
   const reported = uncompressedRanges(state, [a, e]);
-  assert.deepEqual(reported, [{ startRef: "m00001", endRef: "m00005", count: 2 }]);
+  assert.deepEqual(reported, [
+    { startRef: "m00001", endRef: "m00005", count: 2 },
+  ]);
 });
 
 test("uncompressed view: mid-array summary node extends the range, never a descending pair", () => {
@@ -179,10 +227,18 @@ test("uncompressed view: mid-array summary node extends the range, never a desce
   const a = msg("a", "x".repeat(2000), "assistant");
   const d = msg("d", "w".repeat(2000), "assistant");
   const e = msg("e", "v".repeat(2000), "assistant");
-  const summary = msg("s", "Summary of the compressed span: did the work.", "assistant");
+  const summary = msg(
+    "s",
+    "Summary of the compressed span: did the work.",
+    "assistant",
+  );
   const s1 = assignAll([a, msg("b", "y"), msg("c", "z"), d, e]);
   const state = assignAll([a, summary, d, e], s1);
-  assert.equal(state.messageRefs.byRaw["s"], "m00006", "summary node gets a fresh high ref");
+  assert.equal(
+    state.messageRefs.byRaw["s"],
+    "m00006",
+    "summary node gets a fresh high ref",
+  );
 
   const reported = uncompressedRanges(state, [a, summary, d, e]);
   assert.equal(reported.length, 1);
@@ -190,7 +246,8 @@ test("uncompressed view: mid-array summary node extends the range, never a desce
   assert.equal(reported[0]!.endRef, "m00005");
   assert.equal(reported[0]!.count, 4);
   assert.ok(
-    Number(reported[0]!.endRef.slice(1)) >= Number(reported[0]!.startRef.slice(1)),
+    Number(reported[0]!.endRef.slice(1)) >=
+      Number(reported[0]!.startRef.slice(1)),
     "startRef must never exceed endRef",
   );
 });
@@ -204,25 +261,43 @@ test("uncompressed view: synthetic node WITH a ref stays visible (documented div
   // per-view membership predicate differs.
   const a = msg("a", "x".repeat(2000), "assistant");
   const e = msg("e", "v".repeat(2000), "assistant");
-  const synthetic = msg("s", "[Compressed conversation section] earlier work summarized.", "assistant");
+  const synthetic = msg(
+    "s",
+    "[Compressed conversation section] earlier work summarized.",
+    "assistant",
+  );
   const s1 = assignAll([a, msg("b", "y"), msg("c", "z"), msg("d", "w"), e]);
   const state = assignAll([a, synthetic, e], s1);
   const cfg = config();
 
-  const recommended = buildCompressibleRanges([a, synthetic, e], state, cfg, undefined, defaultCountTokens)
-    .compressible.map((r) => ({ startRef: r.startRef, endRef: r.endRef, count: r.count }));
+  const recommended = buildCompressibleRanges(
+    [a, synthetic, e],
+    state,
+    cfg,
+    undefined,
+    defaultCountTokens,
+  ).compressible.map((r) => ({
+    startRef: r.startRef,
+    endRef: r.endRef,
+    count: r.count,
+  }));
   assert.deepEqual(recommended, [
     { startRef: "m00001", endRef: "m00001", count: 1 },
     { startRef: "m00005", endRef: "m00005", count: 1 },
   ]);
 
   const reported = uncompressedRanges(state, [a, synthetic, e]);
-  assert.deepEqual(reported, [{ startRef: "m00001", endRef: "m00005", count: 3 }]);
+  assert.deepEqual(reported, [
+    { startRef: "m00001", endRef: "m00005", count: 3 },
+  ]);
 });
 
 // ─── Display enhancements preserved from PR #165 (#413 req 2) ─────────────────
 
-function displaySession(): { state: CompressionState; messages: CoreMessage[] } {
+function displaySession(): {
+  state: CompressionState;
+  messages: CoreMessage[];
+} {
   const messages = [
     msg("u1", "q".repeat(10)),
     msg("a1", "a".repeat(10), "assistant"),
@@ -249,8 +324,12 @@ test("uncompressed view: default sort is size-descending with a Sorted-by header
   });
   assert.ok(report.includes("Sorted by size"));
   // Ranges: m00001\u2013m00004 (small), m00005\u2013m00011 (large), m00012\u2013m00013 (small)
-  assert.ok(report.indexOf("m00005\u2013m00011") < report.indexOf("m00001\u2013m00004"));
-  assert.ok(report.indexOf("m00001\u2013m00004") < report.indexOf("m00012\u2013m00013"));
+  assert.ok(
+    report.indexOf("m00005\u2013m00011") < report.indexOf("m00001\u2013m00004"),
+  );
+  assert.ok(
+    report.indexOf("m00001\u2013m00004") < report.indexOf("m00012\u2013m00013"),
+  );
 });
 
 test("uncompressed view: sort:'time' restores chronological order", () => {
@@ -261,8 +340,12 @@ test("uncompressed view: sort:'time' restores chronological order", () => {
     sort: "time",
   });
   assert.ok(report.includes("Sorted by time"));
-  assert.ok(report.indexOf("m00001\u2013m00004") < report.indexOf("m00005\u2013m00011"));
-  assert.ok(report.indexOf("m00005\u2013m00011") < report.indexOf("m00012\u2013m00013"));
+  assert.ok(
+    report.indexOf("m00001\u2013m00004") < report.indexOf("m00005\u2013m00011"),
+  );
+  assert.ok(
+    report.indexOf("m00005\u2013m00011") < report.indexOf("m00012\u2013m00013"),
+  );
 });
 
 test("uncompressed view: limit truncates and reports remaining ranges", () => {

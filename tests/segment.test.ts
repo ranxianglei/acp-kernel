@@ -16,12 +16,22 @@ test("segmentGroups: single item yields one group", () => {
 });
 
 test("segmentGroups: contiguous non-user items stay in one group", () => {
-  const items = [item("m00001"), item("m00002"), item("m00003"), item("m00004")];
+  const items = [
+    item("m00001"),
+    item("m00002"),
+    item("m00003"),
+    item("m00004"),
+  ];
   assert.deepEqual(segmentGroups(items), [items]);
 });
 
 test("segmentGroups: user message splits once the current group holds >= 3 items", () => {
-  const items = [item("m00001"), item("m00002"), item("m00003"), item("m00004", true)];
+  const items = [
+    item("m00001"),
+    item("m00002"),
+    item("m00003"),
+    item("m00004", true),
+  ];
   const groups = segmentGroups(items);
   assert.equal(groups.length, 2);
   assert.deepEqual(groups[0], items.slice(0, 3));
@@ -29,7 +39,12 @@ test("segmentGroups: user message splits once the current group holds >= 3 items
 });
 
 test("segmentGroups: user message does not split a group of < 3 items", () => {
-  const items = [item("m00001"), item("m00002"), item("m00003", true), item("m00004")];
+  const items = [
+    item("m00001"),
+    item("m00002"),
+    item("m00003", true),
+    item("m00004"),
+  ];
   assert.deepEqual(segmentGroups(items), [items]);
 });
 
@@ -42,7 +57,11 @@ test("segmentGroups: gapBefore always starts a new group", () => {
 });
 
 test("segmentGroups: consecutive gaps keep splitting", () => {
-  const items = [item("m00001"), item("m00005", false, true), item("m00009", false, true)];
+  const items = [
+    item("m00001"),
+    item("m00005", false, true),
+    item("m00009", false, true),
+  ];
   assert.equal(segmentGroups(items).length, 3);
 });
 

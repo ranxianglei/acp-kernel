@@ -31,7 +31,9 @@ export interface SegmentItem {
  * Unrefed / BLOCKED entries consume no slot. Dense append-only hosts: both
  * rules coincide, so behavior is byte-identical to the old merge.
  */
-export function segmentGroups<T extends SegmentItem>(items: readonly T[]): T[][] {
+export function segmentGroups<T extends SegmentItem>(
+  items: readonly T[],
+): T[][] {
   const groups: T[][] = [];
   let cur: T[] | null = null;
   for (const item of items) {

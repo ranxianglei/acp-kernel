@@ -121,6 +121,8 @@ export type {
 } from "./decompress.js";
 export { buildStatusReport, buildRecap } from "./report.js";
 export type { StatusReportOptions, StatusReportMeta } from "./report.js";
+export { segmentGroups } from "./segment.js";
+export type { SegmentItem } from "./segment.js";
 export {
   buildCacheReport,
   computeFoldEconomics,

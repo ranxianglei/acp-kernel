@@ -135,3 +135,31 @@ test("the content description still teaches the line form and the string form", 
   assert.ok(desc.includes("m00150–m00220"), "line-form header example kept");
   assert.ok(desc.includes("JSON-encoded array"), "stringified-array form documented");
 });
+
+test("typed alternatives preserve the former schema's acceptance set", () => {
+  const content = COMPRESS_PARAMETERS.properties.content;
+  const entries = content.anyOf[0].items!.anyOf;
+  const { required: _required, ...object } = entries[1];
+  const former = {
+    ...COMPRESS_PARAMETERS,
+    properties: {
+      ...COMPRESS_PARAMETERS.properties,
+      content: {
+        type: ["array", "string"],
+        items: { anyOf: [entries[0], { ...object, anyOf: entries.slice(1).map(({ required }) => ({ required })) }] },
+      },
+    },
+  };
+  const values: unknown[] = [undefined, null, false, 42, "s", [], {}, ["line"], [42]];
+  const keys = ["startId", "endId", "startRef", "endRef", "summary", "topic"];
+  for (let mask = 0; mask < 1 << keys.length; mask++) {
+    const range = Object.fromEntries(keys.filter((_, i) => mask & (1 << i)).map((key) => [key, "s"]));
+    values.push([range], ["line", range], [{ ...range, extra: true }]);
+    for (const key of keys) values.push([{ ...range, [key]: 42 }]);
+  }
+  for (const content of values) {
+    for (const input of [{ content }, { content, startId: "m1", endId: "m2", summary: "s" }]) {
+      assert.equal(validate(COMPRESS_PARAMETERS, input), validate(former, input), JSON.stringify(input));
+    }
+  }
+});

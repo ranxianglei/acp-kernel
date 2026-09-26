@@ -22,8 +22,8 @@ import {
  * combinator. Anthropic rejects `tools[].input_schema` containing
  * `oneOf`/`allOf`/`anyOf` at the top level with a 400 on every request that
  * carries the tool — one top-level anyOf in COMPRESS_PARAMETERS took down the
- * whole Claude lane of billion-context 0.1.148. Nested combinators (under a
- * property or items) are legal on every wire and stay allowed.
+ * whole Claude lane of billion-context 0.1.148. Nested alternatives must
+ * additionally satisfy each provider's type and property requirements.
  *
  * This walks every exported wire shape so a future schema change fails HERE
  * instead of in production traffic.
@@ -81,12 +81,16 @@ test("google functionDeclarations parameters: no top-level combinators on any to
   assertPlainTopLevel(ABSORB_TOOL_GOOGLE as Record<string, unknown>, "google");
 });
 
-test("nested combinators remain allowed (items.anyOf stays legal on every wire)", () => {
-  // The line-form/object-form alternation inside content.items is nested —
-  // legal everywhere. This pins the boundary: combinator-freedom is a TOP
-  // LEVEL requirement only.
+test("content alternatives use scalar types and self-contained object branches", () => {
   const params = ACP_TOOLS_OPENAI[0].function.parameters as {
-    properties: { content: { items?: { anyOf?: unknown[] } } };
+    properties: { content: { anyOf: { type: string; items?: { anyOf: { type: string; properties?: object; required?: string[] }[] } }[] } };
   };
-  assert.ok(Array.isArray(params.properties.content.items?.anyOf));
+  const alternatives = params.properties.content.anyOf;
+  assert.deepEqual(alternatives.map((entry) => entry.type), ["array", "string"]);
+  const entries = alternatives[0].items!.anyOf;
+  assert.deepEqual(entries.map((entry) => entry.type), ["string", "object", "object"]);
+  for (const entry of entries.slice(1)) {
+    assert.ok(entry.properties);
+    for (const key of entry.required!) assert.ok(key in entry.properties!);
+  }
 });

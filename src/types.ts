@@ -279,6 +279,10 @@ export interface CompressionState {
    *  this set and keeps the clear "cannot be anchored" error. Optional for
    *  pre-feature persisted states. */
   hiddenOrphanRefs?: string[];
+  /** Last config-validation error set emitted for this session (#346 warn-once
+   *  dedup): re-warn only when the set changes (config edit), not every turn.
+   *  Optional: persisted states from before dedup lack it. */
+  lastConfigWarnings?: string[];
   nextBlockId: number;
   nextRunId: number;
 }

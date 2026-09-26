@@ -220,6 +220,122 @@ test("validation: all checks disabled (0s) allows any input", () => {
   assert.equal(result.result.errors.length, 0);
 });
 
+function captureWarns(fn: () => void): string[] {
+  const original = console.warn;
+  const captured: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    captured.push(args.map(String).join(" "));
+  };
+  try {
+    fn();
+  } finally {
+    console.warn = original;
+  }
+  return captured;
+}
+
+test("config validation: min>max warns once across repeated turns, not per turn (#346)", () => {
+  const core = createCore();
+  const messages = [msg("a", longText), msg("b", longText)];
+  let state = setupRefs(messages);
+  const config = defaultConfig(200000, { nudge: { maxContextLimitPct: 0.35 } });
+
+  const w1 = captureWarns(() => {
+    state = core.processTurn({ messages, state, config, tokenCount: 5000 }).state;
+  });
+  assert.equal(w1.length, 1);
+  assert.match(w1[0]!, /nudge\.minContextLimitPct must not exceed nudge\.maxContextLimitPct/);
+
+  const w2 = captureWarns(() => {
+    state = core.processTurn({ messages, state, config, tokenCount: 5000 }).state;
+  });
+  assert.equal(w2.length, 0);
+
+  const w3 = captureWarns(() => {
+    state = core.processTurn({ messages, state, config, tokenCount: 5000 }).state;
+  });
+  assert.equal(w3.length, 0);
+});
+
+test("config validation: re-warns when the validation error set changes", () => {
+  const core = createCore();
+  const messages = [msg("a", longText), msg("b", longText)];
+  let state = setupRefs(messages);
+  const configA = defaultConfig(200000, { nudge: { maxContextLimitPct: 0.35 } });
+  const configB = defaultConfig(200000, { nudge: { maxContextLimitPct: 0.99 } });
+
+  let w = captureWarns(() => {
+    state = core.processTurn({ messages, state, config: configA, tokenCount: 5000 }).state;
+  });
+  assert.equal(w.length, 1);
+
+  w = captureWarns(() => {
+    state = core.processTurn({ messages, state, config: configB, tokenCount: 5000 }).state;
+  });
+  assert.equal(w.length, 1);
+  assert.match(w[0]!, /nudge\.maxContextLimitPct must not exceed nudge\.emergencyThresholdPct/);
+
+  w = captureWarns(() => {
+    state = core.processTurn({ messages, state, config: configB, tokenCount: 5000 }).state;
+  });
+  assert.equal(w.length, 0);
+});
+
+test("config validation: re-warns when config becomes invalid again after being valid", () => {
+  const core = createCore();
+  const messages = [msg("a", longText), msg("b", longText)];
+  let state = setupRefs(messages);
+  const invalid = defaultConfig(200000, { nudge: { maxContextLimitPct: 0.35 } });
+  const valid = defaultConfig(200000);
+
+  let w = captureWarns(() => {
+    state = core.processTurn({ messages, state, config: invalid, tokenCount: 5000 }).state;
+  });
+  assert.equal(w.length, 1);
+
+  w = captureWarns(() => {
+    state = core.processTurn({ messages, state, config: valid, tokenCount: 5000 }).state;
+  });
+  assert.equal(w.length, 0);
+  assert.deepEqual(state.lastConfigWarnings, []);
+
+  w = captureWarns(() => {
+    state = core.processTurn({ messages, state, config: invalid, tokenCount: 5000 }).state;
+  });
+  assert.equal(w.length, 1);
+  assert.match(w[0]!, /nudge\.minContextLimitPct must not exceed nudge\.maxContextLimitPct/);
+});
+
+test("config validation: valid config never warns and stores empty set", () => {
+  const core = createCore();
+  const messages = [msg("a", longText), msg("b", longText)];
+  let state = setupRefs(messages);
+  const config = defaultConfig(200000);
+
+  const w = captureWarns(() => {
+    state = core.processTurn({ messages, state, config, tokenCount: 5000 }).state;
+  });
+  assert.equal(w.length, 0);
+  assert.deepEqual(state.lastConfigWarnings, []);
+});
+
+test("config validation: dedup memory survives JSON round-trip (host persist/load)", () => {
+  const core = createCore();
+  const messages = [msg("a", longText), msg("b", longText)];
+  let state = setupRefs(messages);
+  const config = defaultConfig(200000, { nudge: { maxContextLimitPct: 0.35 } });
+
+  captureWarns(() => {
+    state = core.processTurn({ messages, state, config, tokenCount: 5000 }).state;
+  });
+
+  const restored = JSON.parse(JSON.stringify(state)) as typeof state;
+  const w = captureWarns(() => {
+    state = core.processTurn({ messages, state: restored, config, tokenCount: 5000 }).state;
+  });
+  assert.equal(w.length, 0);
+});
+
 test("validation: errors are collected per-range in batch compress", () => {
   const core = createCore();
   const messages = [

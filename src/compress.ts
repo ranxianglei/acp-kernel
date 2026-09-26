@@ -692,12 +692,19 @@ export function createCore(ports: Ports = {}): CompressionCore {
   }
 
   function processTurn(input: ProcessTurnInput): ProcessTurnResult {
+    // #346: warn once per distinct error set, not once per turn. The set lives
+    // on state so the dedup survives host persist/reload between turns.
     const configErrors = validateConfig(input.config);
-    if (configErrors.length > 0) {
+    if (
+      configErrors.length > 0 &&
+      !sameWarningSet(input.state.lastConfigWarnings, configErrors)
+    ) {
       console.warn(
         `[acp-kernel] Config validation warnings: ${configErrors.join("; ")}. Thresholds may not fire correctly.`,
       );
     }
+    input.state.lastConfigWarnings =
+      configErrors.length > 0 ? [...configErrors] : [];
     const contentStore = input.contentStore ?? createContentStore();
     const ctx: PipelineContext = {
       config: input.config,
@@ -1664,6 +1671,17 @@ function pendingByTier(
   return out;
 }
 
+// #346: order-insensitive comparison of validation-error sets (warn-once dedup).
+function sameWarningSet(
+  a: readonly string[] | undefined,
+  b: readonly string[],
+): boolean {
+  if (!a || a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((v, i) => v === sb[i]);
+}
+
 function decideNudge(input: NudgeInput): NudgeDecision {
   const { config, state, tokenCount, recommendation, countTokens } = input;
   const limit = config.modelContextLimit;
@@ -1970,6 +1988,7 @@ function cloneState(state: CompressionState): CompressionState {
     rules: (state.rules ?? []).map((rule) => ({ ...rule })),
     nextRuleId: state.nextRuleId,
     terminalStreak: state.terminalStreak,
+    lastConfigWarnings: [...(state.lastConfigWarnings ?? [])],
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
     hiddenOrphanRefs: state.hiddenOrphanRefs

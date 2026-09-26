@@ -43,81 +43,81 @@ const cjkSegmenter = new Intl.Segmenter("zh", { granularity: "word" });
  * preserved — this also covers single-char queries like "验".
  */
 function cjkRunTokens(segs: string[]): string[] {
-    const words = segs.filter((w) => w.length >= 2);
-    if (words.length > 0) return words;
-    const run = segs.join("");
-    const out: string[] = [];
-    for (let i = 0; i < run.length - 1; i++) out.push(run.slice(i, i + 2));
-    for (const ch of run) out.push(ch);
-    return out;
+  const words = segs.filter((w) => w.length >= 2);
+  if (words.length > 0) return words;
+  const run = segs.join("");
+  const out: string[] = [];
+  for (let i = 0; i < run.length - 1; i++) out.push(run.slice(i, i + 2));
+  for (const ch of run) out.push(ch);
+  return out;
 }
 
 export interface TokenizeOptions {
-    stem?: boolean;
+  stem?: boolean;
 }
 
 export function tokenize(text: string, opts: TokenizeOptions = {}): string[] {
-    const lower = text.toLowerCase();
-    const tokens: string[] = [];
+  const lower = text.toLowerCase();
+  const tokens: string[] = [];
 
-    const latin = lower.match(LATIN_WORD) ?? [];
-    for (let w of latin) {
-        if (w.length >= 2) {
-            if (opts.stem) w = stem(w);
-            tokens.push(w);
-        }
+  const latin = lower.match(LATIN_WORD) ?? [];
+  for (let w of latin) {
+    if (w.length >= 2) {
+      if (opts.stem) w = stem(w);
+      tokens.push(w);
     }
+  }
 
-    // CJK: one segmenter pass over the whole text instead of one
-    // segment() call per CJK run. A segment() call has fixed overhead
-    // (~3µs), and run-heavy text (logs: dozens of short runs per line) made
-    // per-run calls 10-16× slower than one bulk pass. ICU never merges CJK
-    // words across non-CJK boundaries, so bulk segmentation yields the same
-    // words per run (differential-verified against the per-run
-    // implementation across a mixed-script stress corpus); run boundaries
-    // are re-derived below to keep the all-OOV bigram fallback.
-    //
-    // Guard: skip the segmenter entirely when the text has no CJK at all —
-    // the old code never called it for pure-Latin text, and a bulk pass
-    // would pay a full-text scan (12ms → 33ms per MB of English) for nothing.
-    if (!CJK.test(lower)) return tokens;
+  // CJK: one segmenter pass over the whole text instead of one
+  // segment() call per CJK run. A segment() call has fixed overhead
+  // (~3µs), and run-heavy text (logs: dozens of short runs per line) made
+  // per-run calls 10-16× slower than one bulk pass. ICU never merges CJK
+  // words across non-CJK boundaries, so bulk segmentation yields the same
+  // words per run (differential-verified against the per-run
+  // implementation across a mixed-script stress corpus); run boundaries
+  // are re-derived below to keep the all-OOV bigram fallback.
+  //
+  // Guard: skip the segmenter entirely when the text has no CJK at all —
+  // the old code never called it for pure-Latin text, and a bulk pass
+  // would pay a full-text scan (12ms → 33ms per MB of English) for nothing.
+  if (!CJK.test(lower)) return tokens;
 
-    // Group the bulk segments back into CJK runs: a non-CJK segment is a run
-    // boundary (the segmenter never puts non-CJK inside a CJK word segment).
-    const runSegs: string[][] = [];
-    let cur: string[] | null = null;
-    for (const s of cjkSegmenter.segment(lower)) {
-        const t = s.segment;
-        if (t.length === 0) continue;
-        if (CJK.test(t)) {
-            (cur ??= []).push(t);
-        } else if (cur) {
-            runSegs.push(cur);
-            cur = null;
-        }
+  // Group the bulk segments back into CJK runs: a non-CJK segment is a run
+  // boundary (the segmenter never puts non-CJK inside a CJK word segment).
+  const runSegs: string[][] = [];
+  let cur: string[] | null = null;
+  for (const s of cjkSegmenter.segment(lower)) {
+    const t = s.segment;
+    if (t.length === 0) continue;
+    if (CJK.test(t)) {
+      (cur ??= []).push(t);
+    } else if (cur) {
+      runSegs.push(cur);
+      cur = null;
     }
-    if (cur) runSegs.push(cur);
+  }
+  if (cur) runSegs.push(cur);
 
-    for (const segs of runSegs) {
-        tokens.push(...cjkRunTokens(segs));
-    }
+  for (const segs of runSegs) {
+    tokens.push(...cjkRunTokens(segs));
+  }
 
-    return tokens;
+  return tokens;
 }
 
 /** Character bigrams over arbitrary text — used by fuzzy matching. */
 export function charBigrams(text: string): string[] {
-    const grams: string[] = [];
-    for (let i = 0; i < text.length - 1; i++) {
-        const pair = text.slice(i, i + 2);
-        if (pair.trim().length === pair.length) grams.push(pair);
-    }
-    return grams;
+  const grams: string[] = [];
+  for (let i = 0; i < text.length - 1; i++) {
+    const pair = text.slice(i, i + 2);
+    if (pair.trim().length === pair.length) grams.push(pair);
+  }
+  return grams;
 }
 
 /** Term-frequency map. */
 export function tfMap(text: string, stem: boolean): Map<string, number> {
-    const m = new Map<string, number>();
-    for (const t of tokenize(text, { stem })) m.set(t, (m.get(t) ?? 0) + 1);
-    return m;
+  const m = new Map<string, number>();
+  for (const t of tokenize(text, { stem })) m.set(t, (m.get(t) ?? 0) + 1);
+  return m;
 }

@@ -155,7 +155,8 @@ function jpegBytes(w: number, h: number, app1Pad = 0): Uint8Array {
 }
 
 const OFF_CFG = () => defaultConfig(200_000);
-const ON_CFG = () => defaultConfig(200_000, { imageCompression: { enabled: true } });
+const ON_CFG = () =>
+  defaultConfig(200_000, { imageCompression: { enabled: true } });
 
 const PHONE: ImageMeta = {
   mediaType: "image/png",
@@ -215,7 +216,10 @@ function stateWithRefOnly(): CompressionState {
 
 function stateWithShrink(): CompressionState {
   const state = stateWithRefOnly();
-  return recordImageShrink(state, shrinkRecord("m00001", 2_000_000, 180_000, 2125, 765));
+  return recordImageShrink(
+    state,
+    shrinkRecord("m00001", 2_000_000, 180_000, 2125, 765),
+  );
 }
 
 test("pixelTileEstimate: known values and bounds", () => {
@@ -230,9 +234,16 @@ test("pixelTileEstimate: known values and bounds", () => {
 });
 
 test("estimateImageTokens: bytes mode counts ceil(base64len/4)", () => {
-  assert.equal(estimateImageTokens({ mediaType: "image/png", base64Length: 1003 }), 251);
   assert.equal(
-    estimateImageTokens({ mediaType: "image/png", base64Length: 1003, billing: "bytes" }),
+    estimateImageTokens({ mediaType: "image/png", base64Length: 1003 }),
+    251,
+  );
+  assert.equal(
+    estimateImageTokens({
+      mediaType: "image/png",
+      base64Length: 1003,
+      billing: "bytes",
+    }),
     251,
   );
 });
@@ -277,31 +288,70 @@ test("estimateImageTokens: pixels mode falls back to 16384 for unknown dims", ()
 });
 
 test("parseImageDimensions: PNG / GIF / BMP / WebP variants", () => {
-  assert.deepEqual(parseImageDimensions(pngBytes(1280, 960)), { width: 1280, height: 960 });
-  assert.deepEqual(parseImageDimensions(gifBytes(320, 200)), { width: 320, height: 200 });
-  assert.deepEqual(parseImageDimensions(bmpBytes(1024, 768)), { width: 1024, height: 768 });
-  assert.deepEqual(parseImageDimensions(bmpBytes(1024, -768)), { width: 1024, height: 768 });
-  assert.deepEqual(parseImageDimensions(webpVp8xBytes(640, 480)), { width: 640, height: 480 });
-  assert.deepEqual(parseImageDimensions(webpVp8lBytes(100, 200)), { width: 100, height: 200 });
-  assert.deepEqual(parseImageDimensions(webpVp8LossyBytes(800, 600)), { width: 800, height: 600 });
+  assert.deepEqual(parseImageDimensions(pngBytes(1280, 960)), {
+    width: 1280,
+    height: 960,
+  });
+  assert.deepEqual(parseImageDimensions(gifBytes(320, 200)), {
+    width: 320,
+    height: 200,
+  });
+  assert.deepEqual(parseImageDimensions(bmpBytes(1024, 768)), {
+    width: 1024,
+    height: 768,
+  });
+  assert.deepEqual(parseImageDimensions(bmpBytes(1024, -768)), {
+    width: 1024,
+    height: 768,
+  });
+  assert.deepEqual(parseImageDimensions(webpVp8xBytes(640, 480)), {
+    width: 640,
+    height: 480,
+  });
+  assert.deepEqual(parseImageDimensions(webpVp8lBytes(100, 200)), {
+    width: 100,
+    height: 200,
+  });
+  assert.deepEqual(parseImageDimensions(webpVp8LossyBytes(800, 600)), {
+    width: 800,
+    height: 600,
+  });
 });
 
 test("parseImageDimensions: JPEG SOF scan incl. APP1 skip", () => {
-  assert.deepEqual(parseImageDimensions(jpegBytes(1280, 960)), { width: 1280, height: 960 });
-  assert.deepEqual(parseImageDimensions(jpegBytes(1920, 1080, 60)), { width: 1920, height: 1080 });
+  assert.deepEqual(parseImageDimensions(jpegBytes(1280, 960)), {
+    width: 1280,
+    height: 960,
+  });
+  assert.deepEqual(parseImageDimensions(jpegBytes(1920, 1080, 60)), {
+    width: 1920,
+    height: 1080,
+  });
 });
 
 test("parseImageDimensions: unknown or truncated inputs → undefined", () => {
-  assert.equal(parseImageDimensions(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])), undefined);
-  assert.equal(parseImageDimensions(new Uint8Array([0x89, 0x50, 0x4e, 0x47])), undefined);
+  assert.equal(
+    parseImageDimensions(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])),
+    undefined,
+  );
+  assert.equal(
+    parseImageDimensions(new Uint8Array([0x89, 0x50, 0x4e, 0x47])),
+    undefined,
+  );
   assert.equal(parseImageDimensions(new Uint8Array([])), undefined);
 });
 
 test("parseImageDimensionsFromBase64: round-trips headers; JPEG needs the extended scan", () => {
   const png = Buffer.from(pngBytes(1568, 2248)).toString("base64");
-  assert.deepEqual(parseImageDimensionsFromBase64(png), { width: 1568, height: 2248 });
+  assert.deepEqual(parseImageDimensionsFromBase64(png), {
+    width: 1568,
+    height: 2248,
+  });
   const jpeg = Buffer.from(jpegBytes(1920, 1080, 60)).toString("base64");
-  assert.deepEqual(parseImageDimensionsFromBase64(jpeg), { width: 1920, height: 1080 });
+  assert.deepEqual(parseImageDimensionsFromBase64(jpeg), {
+    width: 1920,
+    height: 1080,
+  });
   assert.equal(parseImageDimensionsFromBase64(""), undefined);
   assert.equal(parseImageDimensionsFromBase64("bm90YW4gaW1hZ2U="), undefined);
 });
@@ -313,18 +363,38 @@ test("heuristic classifier: aspect band + short-side floor", () => {
   assert.equal(c.isScreenshotLike(DESKTOP), true);
   assert.equal(c.isScreenshotLike(SQUARE_PHOTO), false);
   assert.equal(c.isScreenshotLike(BANNER), false);
-  assert.equal(c.isScreenshotLike({ ...PHONE, width: 640, height: 960 }), false);
-  assert.equal(c.isScreenshotLike({ mediaType: "image/png", base64Length: 1000 }), false);
+  assert.equal(
+    c.isScreenshotLike({ ...PHONE, width: 640, height: 960 }),
+    false,
+  );
+  assert.equal(
+    c.isScreenshotLike({ mediaType: "image/png", base64Length: 1000 }),
+    false,
+  );
 });
 
 test("heuristic classifier: custom options", () => {
-  const c = createHeuristicClassifier({ aspectRatioMin: 2.0, aspectRatioMax: 3.0, minShortSide: 100 });
+  const c = createHeuristicClassifier({
+    aspectRatioMin: 2.0,
+    aspectRatioMax: 3.0,
+    minShortSide: 100,
+  });
   assert.equal(
-    c.isScreenshotLike({ mediaType: "image/png", base64Length: 0, width: 100, height: 300 }),
+    c.isScreenshotLike({
+      mediaType: "image/png",
+      base64Length: 0,
+      width: 100,
+      height: 300,
+    }),
     true,
   );
   assert.equal(
-    c.isScreenshotLike({ mediaType: "image/png", base64Length: 0, width: 800, height: 1200 }),
+    c.isScreenshotLike({
+      mediaType: "image/png",
+      base64Length: 0,
+      width: 800,
+      height: 1200,
+    }),
     false,
   );
 });
@@ -351,7 +421,11 @@ test("decideImageRoute: screenshot-like ≥ minTokens ⇒ downsample with recipe
   assert.equal(d.action, "downsample");
   assert.equal(d.reason, "downsample");
   assert.equal(d.estimatedTokens, 2125);
-  assert.deepEqual(d.recipe, { maxDimension: 1280, quality: 80, format: "webp" });
+  assert.deepEqual(d.recipe, {
+    maxDimension: 1280,
+    quality: 80,
+    format: "webp",
+  });
 });
 
 test("decideImageRoute: below-min-tokens passes untouched", () => {
@@ -369,10 +443,19 @@ test("decideImageRoute: below-min-tokens passes untouched", () => {
 });
 
 test("decideImageRoute: non-screenshot-like and non-image pass untouched", () => {
-  assert.equal(decideImageRoute(SQUARE_PHOTO, ON_CFG()).reason, "not-screenshot-like");
-  assert.equal(decideImageRoute(BANNER, ON_CFG()).reason, "not-screenshot-like");
   assert.equal(
-    decideImageRoute({ mediaType: "application/pdf", base64Length: 5_000_000 }, ON_CFG()).reason,
+    decideImageRoute(SQUARE_PHOTO, ON_CFG()).reason,
+    "not-screenshot-like",
+  );
+  assert.equal(
+    decideImageRoute(BANNER, ON_CFG()).reason,
+    "not-screenshot-like",
+  );
+  assert.equal(
+    decideImageRoute(
+      { mediaType: "application/pdf", base64Length: 5_000_000 },
+      ON_CFG(),
+    ).reason,
     "not-an-image",
   );
   assert.equal(
@@ -386,18 +469,34 @@ test("decideImageRoute: non-screenshot-like and non-image pass untouched", () =>
 
 test("decideImageRoute: custom config values flow into the recipe", () => {
   const cfg = defaultConfig(200_000, {
-    imageCompression: { enabled: true, minTokens: 100, maxDimension: 1000, quality: 60, format: "jpeg" },
+    imageCompression: {
+      enabled: true,
+      minTokens: 100,
+      maxDimension: 1000,
+      quality: 60,
+      format: "jpeg",
+    },
   });
   const d = decideImageRoute(PHONE, cfg);
-  assert.deepEqual(d.recipe, { maxDimension: 1000, quality: 60, format: "jpeg" });
+  assert.deepEqual(d.recipe, {
+    maxDimension: 1000,
+    quality: 60,
+    format: "jpeg",
+  });
 });
 
 test("decideImageRoute: pluggable classifier injection", () => {
   const alwaysTrue = { name: "always", isScreenshotLike: () => true };
   const alwaysFalse = { name: "never", isScreenshotLike: () => false };
-  assert.equal(decideImageRoute(SQUARE_PHOTO, ON_CFG(), alwaysTrue).action, "downsample");
+  assert.equal(
+    decideImageRoute(SQUARE_PHOTO, ON_CFG(), alwaysTrue).action,
+    "downsample",
+  );
   assert.equal(decideImageRoute(PHONE, ON_CFG(), alwaysFalse).action, "pass");
-  assert.equal(decideImageRoute(PHONE, ON_CFG(), alwaysFalse).reason, "not-screenshot-like");
+  assert.equal(
+    decideImageRoute(PHONE, ON_CFG(), alwaysFalse).reason,
+    "not-screenshot-like",
+  );
 });
 
 test("decideImageRoute: deterministic across repeated calls", () => {
@@ -418,12 +517,18 @@ test("decideImageRoute: deterministic across repeated calls", () => {
 
 test("recordImageShrink: appends record and bumps cumulative stats", () => {
   let state = createInitialState();
-  state = recordImageShrink(state, shrinkRecord("m00001", 2_000_000, 180_000, 2125, 765));
+  state = recordImageShrink(
+    state,
+    shrinkRecord("m00001", 2_000_000, 180_000, 2125, 765),
+  );
   assert.equal(state.stats.imagesShrunk, 1);
   assert.equal(state.stats.imageBytesSaved, 1_820_000);
   assert.equal(state.stats.imageTokensSaved, 1360);
   assert.equal(state.imageShrinks?.length, 1);
-  state = recordImageShrink(state, shrinkRecord("m00002", 1_000_000, 900_000, 2125, 765));
+  state = recordImageShrink(
+    state,
+    shrinkRecord("m00002", 1_000_000, 900_000, 2125, 765),
+  );
   assert.equal(state.stats.imagesShrunk, 2);
   assert.equal(state.stats.imageBytesSaved, 1_920_000);
 });
@@ -433,7 +538,10 @@ test("recordImageShrink: negative deltas clamp to zero; works on pre-feature sta
   delete legacy.imageShrinks;
   delete legacy.imageFullRestored;
   delete legacy.stats.imagesShrunk;
-  const grown = recordImageShrink(legacy, shrinkRecord("m00001", 1000, 1200, 700, 900));
+  const grown = recordImageShrink(
+    legacy,
+    shrinkRecord("m00001", 1000, 1200, 700, 900),
+  );
   assert.equal(grown.stats.imageBytesSaved, 0);
   assert.equal(grown.stats.imageTokensSaved, 0);
   assert.equal(grown.imageShrinks?.length, 1);
@@ -451,14 +559,25 @@ test("applyImageFull: happy path marks sticky restore", () => {
   const state = stateWithShrink();
   const out = applyImageFull({ ref: "m00001", state, config: ON_CFG() });
   assert.equal(out.ok, true);
-  assert.match(out.resultText, /^restored original-resolution image\(s\) for m00001 \(1 image\)/);
+  assert.match(
+    out.resultText,
+    /^restored original-resolution image\(s\) for m00001 \(1 image\)/,
+  );
   assert.deepEqual(out.state.imageFullRestored, ["m00001"]);
   assert.equal(isImageFullRestored(out.state, "m00001"), true);
 });
 
 test("applyImageFull: idempotent second call", () => {
-  const first = applyImageFull({ ref: "m00001", state: stateWithShrink(), config: ON_CFG() });
-  const second = applyImageFull({ ref: "m00001", state: first.state, config: ON_CFG() });
+  const first = applyImageFull({
+    ref: "m00001",
+    state: stateWithShrink(),
+    config: ON_CFG(),
+  });
+  const second = applyImageFull({
+    ref: "m00001",
+    state: first.state,
+    config: ON_CFG(),
+  });
   assert.equal(second.ok, true);
   assert.match(second.resultText, /^already restored \(m00001\)/);
   assert.deepEqual(second.state.imageFullRestored, ["m00001"]);
@@ -472,7 +591,11 @@ test("applyImageFull: failure modes use the FAILED marker", () => {
   assert.ok(unknown.resultText.startsWith(IMAGE_FULL_FAILURE_MARKER));
   assert.match(unknown.resultText, /ref m00099 does not exist/);
 
-  const noShrink = applyImageFull({ ref: "m00001", state: stateWithRefOnly(), config: ON_CFG() });
+  const noShrink = applyImageFull({
+    ref: "m00001",
+    state: stateWithRefOnly(),
+    config: ON_CFG(),
+  });
   assert.equal(noShrink.ok, false);
   assert.ok(noShrink.resultText.startsWith(IMAGE_FULL_FAILURE_MARKER));
   assert.match(noShrink.resultText, /no downscaled image/);
@@ -486,7 +609,11 @@ test("applyImageFull: failure modes use the FAILED marker", () => {
 
 test("resetImageFullState: clears ref-keyed entries, keeps stats and blocks", () => {
   const state = stateWithShrink();
-  const restored = applyImageFull({ ref: "m00001", state, config: ON_CFG() }).state;
+  const restored = applyImageFull({
+    ref: "m00001",
+    state,
+    config: ON_CFG(),
+  }).state;
   const reset = resetImageFullState(restored);
   assert.deepEqual(reset.imageFullRestored, []);
   assert.deepEqual(reset.imageShrinks, []);
@@ -507,9 +634,13 @@ test("buildImageFullSystemNote: byte-stable, count-aware, mentions the contract"
 test("parseImageFullInput: object, JSON string, aliases, trim", () => {
   assert.deepEqual(parseImageFullInput({ ref: "m00001" }), { ref: "m00001" });
   assert.deepEqual(parseImageFullInput('{"ref":"m00002"}'), { ref: "m00002" });
-  assert.deepEqual(parseImageFullInput({ messageId: "m00003" }), { ref: "m00003" });
+  assert.deepEqual(parseImageFullInput({ messageId: "m00003" }), {
+    ref: "m00003",
+  });
   assert.deepEqual(parseImageFullInput({ of: "m00004" }), { ref: "m00004" });
-  assert.deepEqual(parseImageFullInput({ ref: "  m00005  " }), { ref: "m00005" });
+  assert.deepEqual(parseImageFullInput({ ref: "  m00005  " }), {
+    ref: "m00005",
+  });
   assert.deepEqual(parseImageFullInput({ ref: "m00001" }, "call-9"), {
     ref: "m00001",
     callId: "call-9",
@@ -535,7 +666,9 @@ test("image_full tool schemas: three wire shapes, required ref", () => {
   assert.equal(IMAGE_FULL_TOOL.input_schema.properties.ref.type, "string");
   assert.equal(IMAGE_FULL_TOOL_OPENAI.type, "function");
   assert.equal(IMAGE_FULL_TOOL_OPENAI.function.name, "image_full");
-  assert.deepEqual(IMAGE_FULL_TOOL_OPENAI.function.parameters.required, ["ref"]);
+  assert.deepEqual(IMAGE_FULL_TOOL_OPENAI.function.parameters.required, [
+    "ref",
+  ]);
   assert.equal(IMAGE_FULL_TOOL_RESPONSES.type, "function");
   assert.deepEqual(IMAGE_FULL_TOOL_RESPONSES.parameters.required, ["ref"]);
 });
@@ -548,7 +681,10 @@ test("defaultConfig: imageCompression defaults are off with issue spec values", 
     quality: 80,
     format: "webp",
   });
-  assert.deepEqual(DEFAULT_IMAGE_COMPRESSION_CONFIG, defaultConfig(200_000).imageCompression);
+  assert.deepEqual(
+    DEFAULT_IMAGE_COMPRESSION_CONFIG,
+    defaultConfig(200_000).imageCompression,
+  );
 });
 
 test("defaultConfig: sub-field merge preserves other defaults (absorb-style)", () => {
@@ -566,13 +702,28 @@ test("defaultConfig: sub-field merge preserves other defaults (absorb-style)", (
 test("validateConfig: rejects invalid imageCompression fields", () => {
   const good = validateConfig(
     defaultConfig(200_000, {
-      imageCompression: { enabled: true, minTokens: 0, maxDimension: 16, quality: 1, format: "png" },
+      imageCompression: {
+        enabled: true,
+        minTokens: 0,
+        maxDimension: 16,
+        quality: 1,
+        format: "png",
+      },
     }),
   );
-  assert.deepEqual(good.filter((e) => e.startsWith("imageCompression")), []);
+  assert.deepEqual(
+    good.filter((e) => e.startsWith("imageCompression")),
+    [],
+  );
   const bad = validateConfig(
     defaultConfig(200_000, {
-      imageCompression: { enabled: true, minTokens: -1, maxDimension: 8, quality: 0, format: "gif" },
+      imageCompression: {
+        enabled: true,
+        minTokens: -1,
+        maxDimension: 8,
+        quality: 0,
+        format: "gif",
+      },
     }),
   );
   assert.deepEqual(bad, [
@@ -601,7 +752,11 @@ test("createInitialState seeds image counters and empty sticky arrays", () => {
 
 test("mergeCompressionState carries image fields through persist/load", () => {
   const state = stateWithShrink();
-  const restored = applyImageFull({ ref: "m00001", state, config: ON_CFG() }).state;
+  const restored = applyImageFull({
+    ref: "m00001",
+    state,
+    config: ON_CFG(),
+  }).state;
   const merged = mergeCompressionState(restored);
   assert.deepEqual(merged.imageFullRestored, ["m00001"]);
   assert.equal(merged.imageShrinks?.length, 1);

@@ -67,11 +67,17 @@ test("system content changes never shift conversation ids (restart regression)",
   // span fingerprint covering pos 0 breaks and restart replay is rejected.
   const a = openaiToCore({
     model: "m",
-    messages: [{ role: "system", content: "LIVE system, 45k chars of host state" }, ...conv],
+    messages: [
+      { role: "system", content: "LIVE system, 45k chars of host state" },
+      ...conv,
+    ],
   } as never);
   const b = openaiToCore({
     model: "m",
-    messages: [{ role: "system", content: "RECONSTRUCTED system, shorter" }, ...conv],
+    messages: [
+      { role: "system", content: "RECONSTRUCTED system, shorter" },
+      ...conv,
+    ],
   } as never);
   assert.deepEqual(
     a.msgs.map((m) => m.id),
@@ -80,8 +86,14 @@ test("system content changes never shift conversation ids (restart regression)",
 });
 
 test("mirrorOpenaiToCore converges with the live space regardless of systemText", () => {
-  const t = (text: string): MirrorMessage => ({ role: "user", blocks: [{ type: "text", text }] });
-  const a = (text: string): MirrorMessage => ({ role: "assistant", blocks: [{ type: "text", text }] });
+  const t = (text: string): MirrorMessage => ({
+    role: "user",
+    blocks: [{ type: "text", text }],
+  });
+  const a = (text: string): MirrorMessage => ({
+    role: "assistant",
+    blocks: [{ type: "text", text }],
+  });
   const view: MirrorMessage[] = [
     t("hello"),
     a("hi there"),
@@ -108,7 +120,10 @@ test("coreToOpenai output has no head system; injectOpenaiSystem re-injects it",
   } as never);
   const rebuilt = coreToOpenai(msgs);
   assert.notEqual(rebuilt[0]?.role, "system");
-  const withSystem = injectOpenaiSystem(rebuilt, [systemText, "compress prompt"]);
+  const withSystem = injectOpenaiSystem(rebuilt, [
+    systemText,
+    "compress prompt",
+  ]);
   assert.equal(withSystem[0]?.role, "system");
   assert.match(String(withSystem[0]?.content), /you are terse/);
   assert.match(String(withSystem[0]?.content), /compress prompt/);

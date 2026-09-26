@@ -32,7 +32,11 @@ test("applySectionOverrides with no overrides returns all defaults in order", ()
 
 test("applySectionOverrides replaces a section with the given string", () => {
   const out = applySectionOverrides(SECTIONS, { beta: "BETA\n\nCUSTOM" });
-  assert.deepEqual(out, ["ALPHA\n\nalpha body", "BETA\n\nCUSTOM", "GAMMA\n\ngamma body"]);
+  assert.deepEqual(out, [
+    "ALPHA\n\nalpha body",
+    "BETA\n\nCUSTOM",
+    "GAMMA\n\ngamma body",
+  ]);
 });
 
 test("applySectionOverrides removes a section on null (no empty gap)", () => {
@@ -42,7 +46,10 @@ test("applySectionOverrides removes a section on null (no empty gap)", () => {
 
 test("applySectionOverrides ignores unknown keys", () => {
   const out = applySectionOverrides(SECTIONS, { nope: "X" });
-  assert.deepEqual(out, SECTIONS.map(([, t]) => t));
+  assert.deepEqual(
+    out,
+    SECTIONS.map(([, t]) => t),
+  );
 });
 
 test("applySectionOverrides ignores malformed (non-string, non-null) values", () => {
@@ -60,9 +67,18 @@ test("applySectionOverrides ignores malformed (non-string, non-null) values", ()
 test("default builders are byte-identical to the published 0.0.46 output", () => {
   const fixture = (name: string) =>
     readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
-  assert.equal(buildCompressSystemPrompt(), fixture("prompt-function-default.txt"));
-  assert.equal(buildCompressTextSystemPrompt(), fixture("prompt-text-default.txt"));
-  assert.equal(buildCompressHybridSystemPrompt(), fixture("prompt-hybrid-default.txt"));
+  assert.equal(
+    buildCompressSystemPrompt(),
+    fixture("prompt-function-default.txt"),
+  );
+  assert.equal(
+    buildCompressTextSystemPrompt(),
+    fixture("prompt-text-default.txt"),
+  );
+  assert.equal(
+    buildCompressHybridSystemPrompt(),
+    fixture("prompt-hybrid-default.txt"),
+  );
 });
 
 test("function builder honors section replace and remove", () => {
@@ -70,16 +86,22 @@ test("function builder honors section replace and remove", () => {
     acpTags: "ACP TAGS\n\nCUSTOM TAG TEXT",
   });
   assert.ok(replaced.includes("CUSTOM TAG TEXT"));
-  assert.ok(!replaced.includes("NEVER echo, repeat, or reference these XML tags"));
+  assert.ok(
+    !replaced.includes("NEVER echo, repeat, or reference these XML tags"),
+  );
   assert.ok(replaced.includes("You have five context-management tools"));
 
-  const removed = buildCompressSystemPrompt(undefined, { summariesInContext: null });
+  const removed = buildCompressSystemPrompt(undefined, {
+    summariesInContext: null,
+  });
   assert.ok(!removed.includes("COMPRESSION SUMMARIES IN CONTEXT"));
   assert.ok(!removed.includes("MODEL-GENERATED summaries"));
   assert.ok(removed.endsWith("Use to find what to compress next."));
   assert.ok(!removed.includes("next.\n\n\n"));
 
-  const crossIgnored = buildCompressSystemPrompt(undefined, { textProtocol: "NOPE" });
+  const crossIgnored = buildCompressSystemPrompt(undefined, {
+    textProtocol: "NOPE",
+  });
   assert.equal(crossIgnored, buildCompressSystemPrompt());
 });
 
@@ -127,8 +149,14 @@ test("cloneWithDescriptions replaces top-level and nested parameter descriptions
     startId: "NEW-START",
   }) as ReturnType<typeof nestedSchema>;
   assert.equal(out.properties.topic.description, "NEW-TOPIC");
-  assert.equal(out.properties.content.items.properties.startId.description, "NEW-START");
-  assert.equal(out.properties.content.items.properties.endId.description, "END-DESC");
+  assert.equal(
+    out.properties.content.items.properties.startId.description,
+    "NEW-START",
+  );
+  assert.equal(
+    out.properties.content.items.properties.endId.description,
+    "END-DESC",
+  );
 });
 
 test("cloneWithDescriptions never mutates the input", () => {
@@ -167,11 +195,23 @@ test("applyAcpToolOverrides handles the anthropic shape (name + input_schema)", 
   assert.ok(compress);
   assert.equal(compress.description, "NEW-COMPRESS-DESC");
   const schema = compress.input_schema as {
-    properties: Record<string, { anyOf: { items?: { anyOf: { properties?: Record<string, { description?: string }> }[] } }[] }>;
+    properties: Record<
+      string,
+      {
+        anyOf: {
+          items?: {
+            anyOf: { properties?: Record<string, { description?: string }> }[];
+          };
+        }[];
+      }
+    >;
   };
-  const objectForms = schema.properties.content.anyOf[0].items!.anyOf.filter((v) => v.properties !== undefined);
+  const objectForms = schema.properties.content.anyOf[0].items!.anyOf.filter(
+    (v) => v.properties !== undefined,
+  );
   assert.equal(objectForms.length, 2);
-  for (const objectForm of objectForms) assert.equal(objectForm.properties!.startId!.description, "NEW-START");
+  for (const objectForm of objectForms)
+    assert.equal(objectForm.properties!.startId!.description, "NEW-START");
   const untouched = out.find((t) => t.name === "decompress");
   assert.equal(untouched, ACP_TOOLS_ANTHROPIC[1]);
 });
@@ -206,7 +246,8 @@ test("applyAcpToolOverrides without overrides copies the array but keeps tool re
   const out = applyAcpToolOverrides(ACP_TOOLS_ANTHROPIC);
   assert.notEqual(out, ACP_TOOLS_ANTHROPIC);
   assert.deepEqual(out, ACP_TOOLS_ANTHROPIC);
-  for (let i = 0; i < out.length; i++) assert.equal(out[i], ACP_TOOLS_ANTHROPIC[i]);
+  for (let i = 0; i < out.length; i++)
+    assert.equal(out[i], ACP_TOOLS_ANTHROPIC[i]);
 });
 
 test("applyAcpToolOverrides never mutates the shared tool constants", () => {

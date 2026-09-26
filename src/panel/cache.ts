@@ -36,7 +36,9 @@ function num(v: unknown): number {
 }
 
 /** Aggregate per-request cache usage into panel display numbers. */
-export function cacheHitStats(usages: readonly CacheUsageSample[]): CacheHitSummary {
+export function cacheHitStats(
+  usages: readonly CacheUsageSample[],
+): CacheHitSummary {
   let cacheRead = 0;
   let billedPrompt = 0;
   let requests = 0;

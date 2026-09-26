@@ -30,16 +30,16 @@ import { hashId } from "./util.js";
  * same cluster numbering (deterministic).
  */
 export function deriveMessageId(
-    role: string,
-    contentType: string,
-    text: string,
-    options: {
-        toolCallId?: string;
-        toolName?: string;
-    } = {},
+  role: string,
+  contentType: string,
+  text: string,
+  options: {
+    toolCallId?: string;
+    toolName?: string;
+  } = {},
 ): string {
-    const seed = `${role}|${contentType}|${options.toolCallId ?? ""}|${options.toolName ?? ""}|${text}`;
-    return "h_" + hashId(seed);
+  const seed = `${role}|${contentType}|${options.toolCallId ?? ""}|${options.toolName ?? ""}|${text}`;
+  return "h_" + hashId(seed);
 }
 
 /**
@@ -48,11 +48,11 @@ export function deriveMessageId(
  * Nth duplicate gets a `_${N}` suffix.
  */
 export class ClusterCounter {
-    private counts = new Map<string, number>();
+  private counts = new Map<string, number>();
 
-    next(baseId: string): string {
-        const n = this.counts.get(baseId) ?? 0;
-        this.counts.set(baseId, n + 1);
-        return n === 0 ? baseId : `${baseId}_${n}`;
-    }
+  next(baseId: string): string {
+    const n = this.counts.get(baseId) ?? 0;
+    this.counts.set(baseId, n + 1);
+    return n === 0 ? baseId : `${baseId}_${n}`;
+  }
 }

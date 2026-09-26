@@ -1,4 +1,9 @@
-export const WIRE_FORMATS = ["anthropic", "openai", "responses", "google"] as const;
+export const WIRE_FORMATS = [
+  "anthropic",
+  "openai",
+  "responses",
+  "google",
+] as const;
 export type WireFormat = (typeof WIRE_FORMATS)[number];
 
 export function isWireFormat(value: unknown): value is WireFormat {

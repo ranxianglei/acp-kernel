@@ -23,19 +23,21 @@ const W_BM25 = 0.7;
 const W_FUZZY = 0.3;
 
 export const hybridAlgorithm: SearchAlgorithm = {
-    name: "hybrid",
-    description: "Weighted BM25(stem) + fuzzy n-gram. Default — best precision + recall.",
-    score(docs: SearchDoc[], query: string): ScoredBlock[] {
-        const bm = bm25Algorithm.score(docs, query);
-        const fz = fuzzyAlgorithm.score(docs, query);
-        // reduce, not Math.max(...spread): the spread trips V8's argument limit (~65K–125K docs) → RangeError.
-        const maxBm = bm.reduce((m, r) => (r.score > m ? r.score : m), 1e-9);
-        const maxFz = fz.reduce((m, r) => (r.score > m ? r.score : m), 1e-9);
-        const bmMap = new Map(bm.map((r) => [r.ref, r.score / maxBm]));
-        const fzMap = new Map(fz.map((r) => [r.ref, r.score / maxFz]));
-        return docs.map((d) => ({
-            ref: d.ref,
-            score: W_BM25 * (bmMap.get(d.ref) ?? 0) + W_FUZZY * (fzMap.get(d.ref) ?? 0),
-        }));
-    },
+  name: "hybrid",
+  description:
+    "Weighted BM25(stem) + fuzzy n-gram. Default — best precision + recall.",
+  score(docs: SearchDoc[], query: string): ScoredBlock[] {
+    const bm = bm25Algorithm.score(docs, query);
+    const fz = fuzzyAlgorithm.score(docs, query);
+    // reduce, not Math.max(...spread): the spread trips V8's argument limit (~65K–125K docs) → RangeError.
+    const maxBm = bm.reduce((m, r) => (r.score > m ? r.score : m), 1e-9);
+    const maxFz = fz.reduce((m, r) => (r.score > m ? r.score : m), 1e-9);
+    const bmMap = new Map(bm.map((r) => [r.ref, r.score / maxBm]));
+    const fzMap = new Map(fz.map((r) => [r.ref, r.score / maxFz]));
+    return docs.map((d) => ({
+      ref: d.ref,
+      score:
+        W_BM25 * (bmMap.get(d.ref) ?? 0) + W_FUZZY * (fzMap.get(d.ref) ?? 0),
+    }));
+  },
 };

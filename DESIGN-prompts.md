@@ -16,10 +16,10 @@ drops the "KEEP VERBATIM file paths / signatures / decisions" guidance will
 quietly lose the strings a later `decompress` or `grep` needs. So customization
 must distinguish two classes of text:
 
-| Class | Examples | Override risk |
-|-------|----------|---------------|
+| Class            | Examples                                                                                                                | Override risk                               |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | **Load-bearing** | the 4 compression rules (`COMPRESS_PHILOSOPHY`, `HOW_TO_COMPRESS_RULES`, `TIER2_DISTILL_RULES`, `TIER3_CONDENSE_RULES`) | High — degrades summary quality / retrieval |
-| **Surface** | summary section header, status-report chrome, tool descriptions, nudge tone | Low — presentation only |
+| **Surface**      | summary section header, status-report chrome, tool descriptions, nudge tone                                             | Low — presentation only                     |
 
 Load-bearing overrides require explicit risk acknowledgement; surface overrides
 are free.
@@ -32,7 +32,7 @@ consistent:
 - **acp-kernel** owns the load-bearing rules as exported constants
   (`src/compression-rules.ts`) and the nudge renderer
   (`renderNudgeText` in `src/nudge-text.ts`) that embeds them. Crucially,
-  `processTurn` returns a *structured* `NudgeDecision`, not text — the host
+  `processTurn` returns a _structured_ `NudgeDecision`, not text — the host
   renders it, so nudge wording is already host-controllable.
 - **Adapters** (billion-context-pi, opencode-acp, …) own the system prompt and
   tool descriptions, and they inline the kernel's rule constants when composing
@@ -63,7 +63,7 @@ export interface Prompts {
   tier3CondenseRules: string;
 }
 
-export const defaultPrompts: Prompts;            // == the verbatim rule constants
+export const defaultPrompts: Prompts; // == the verbatim rule constants
 
 export function resolvePrompts(
   overrides?: Partial<Prompts>,
@@ -107,7 +107,7 @@ systemPrompt += prompts.compressPhilosophy + prompts.howToCompressRules;
 
 ## Layer 1 — prompt/tool surface overrides (shipped)
 
-Scope: open all *surface* text — standing-prompt sections, tool descriptions,
+Scope: open all _surface_ text — standing-prompt sections, tool descriptions,
 parameter descriptions — to free-form override. No risk gate: surface text is
 presentation, and defaults stay byte-identical when no override is given
 (regression-tested against 0.0.46 fixtures).
@@ -148,7 +148,7 @@ export function applyAcpToolOverrides<T extends AcpToolLike>(
   (header + body), `null` removes it, omitted keeps the default. Keys that do
   not belong to a given builder are ignored.
 - `cloneWithDescriptions` deep-clones a JSON tool schema and replaces the
-  `description` of every property whose *name* matches, at any nesting depth.
+  `description` of every property whose _name_ matches, at any nesting depth.
   Names and structure are fixed — only human-readable text moves.
 - `applyAcpToolOverrides` applies per-tool `description` + `paramDescriptions`
   to all three wire shapes (anthropic `input_schema`, openai
@@ -176,6 +176,7 @@ tier3.md
 ```
 
 Principles:
+
 - **Partial override + inheritance** — a set specifies only what it changes;
   everything else inherits kernel defaults. Forward-compatible: a new kernel
   prompt field does not break existing sets.
@@ -193,7 +194,9 @@ For billion-context-pi, `user-config.ts` (already reads `~/.pi/agent/acp.json`)
 gains:
 
 ```json
-{ "prompts": { "preset": "acp-prompt-pack-zen", "overrides": { "..." : "..." } } }
+{
+  "prompts": { "preset": "acp-prompt-pack-zen", "overrides": { "...": "..." } }
+}
 ```
 
 The same format works for every downstream (opencode-acp, omp-acp, …), so a
@@ -213,12 +216,12 @@ The kernel gains a `registerPromptSet` registry, matching the existing
 
 ## Risks & mitigations
 
-| Risk | Mitigation |
-|------|------------|
-| Compression-quality regression from bad rules | `acknowledgeRisk` gate; defaults stay the strongly-recommended path |
+| Risk                                                 | Mitigation                                                                                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Compression-quality regression from bad rules        | `acknowledgeRisk` gate; defaults stay the strongly-recommended path                                                                  |
 | Version drift (kernel changes `NudgeDecision` shape) | `Prompts` is data-only (no function fields), so it is stable across refactors; future renderer overrides would carry a version stamp |
-| Prompt injection via third-party packs | Prompt packs are trusted code (same trust level as any npm dep); documented in the trust model |
-| Tool-description / schema mismatch | Tool schemas stay kernel-owned and fixed; only human-readable descriptions are customizable |
+| Prompt injection via third-party packs               | Prompt packs are trusted code (same trust level as any npm dep); documented in the trust model                                       |
+| Tool-description / schema mismatch                   | Tool schemas stay kernel-owned and fixed; only human-readable descriptions are customizable                                          |
 
 ## Migration / rollout
 

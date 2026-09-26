@@ -43,7 +43,11 @@ function config(): Config {
   };
 }
 
-function msg(id: string, text: string, role: CoreMessage["role"] = "user"): CoreMessage {
+function msg(
+  id: string,
+  text: string,
+  role: CoreMessage["role"] = "user",
+): CoreMessage {
   return { id, role, contentType: "text", text };
 }
 
@@ -56,7 +60,9 @@ function makeState(ids: string[]): ReturnType<typeof createInitialState> {
   return state;
 }
 
-function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock {
+function makeBlock(
+  overrides: Partial<CompressionBlock> = {},
+): CompressionBlock {
   return {
     blockId: "b1",
     runId: "r1",
@@ -166,11 +172,15 @@ test("tier-distilled block created via bN..bM boundaries reports an m-ref span",
       { startRef: "m00001", endRef: "m00010", summary: "first ten" },
       { startRef: "m00011", endRef: "m00020", summary: "next ten" },
     ],
-    messages, state, config: config(),
+    messages,
+    state,
+    config: config(),
   }).state;
   state = core.applyCompression({
     ranges: [{ startRef: "b1", endRef: "b2", summary: "distilled" }],
-    messages, state, config: config(),
+    messages,
+    state,
+    config: config(),
   }).state;
   const t2 = state.blocks[state.blocks.length - 1]!;
   assert.equal(t2.tier, 2);
@@ -187,8 +197,18 @@ test("tier-distilled block created via bN..bM boundaries reports an m-ref span",
 test("activeBlockSpans skips inactive and unresolvable blocks, keeps order", () => {
   const state = makeState(["a", "b"]);
   state.blocks = [
-    makeBlock({ blockId: "b1", effectiveMessageIds: ["a"], startRef: "m00001", endRef: "m00001" }),
-    makeBlock({ blockId: "b2", active: false, startRef: "m00002", endRef: "m00002" }),
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: ["a"],
+      startRef: "m00001",
+      endRef: "m00001",
+    }),
+    makeBlock({
+      blockId: "b2",
+      active: false,
+      startRef: "m00002",
+      endRef: "m00002",
+    }),
     makeBlock({ blockId: "b3", effectiveMessageIds: ["vanished"], tier: 2 }),
   ];
   const spans = activeBlockSpans(state);
@@ -233,7 +253,12 @@ test("buildCompressibleRanges counts user messages per range", () => {
   ];
   const state = makeState(messages.map((m) => m.id));
   const cfg = config();
-  const protectedRefs = computeProtectedRefs(messages, state, cfg, defaultCountTokens);
+  const protectedRefs = computeProtectedRefs(
+    messages,
+    state,
+    cfg,
+    defaultCountTokens,
+  );
   const ranges = buildCompressibleRanges(
     messages,
     state,

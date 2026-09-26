@@ -5,6 +5,9 @@ import { clampPrefix } from "../truncate.js";
 
 export function topicFallback(summary: string): string {
   const first = summary.split(/[.\n]/)[0] ?? "";
-  const t = first.trim().replace(/^["'`]+/, "").trim();
+  const t = first
+    .trim()
+    .replace(/^["'`]+/, "")
+    .trim();
   return t.length <= 30 ? t : `${clampPrefix(t, 30).trimEnd()}…`;
 }

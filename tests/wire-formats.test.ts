@@ -7,7 +7,10 @@ import {
 } from "../src/wire/formats.js";
 
 test("WIRE_FORMATS lists exactly the codecs shipped by this package", () => {
-  assert.deepEqual([...WIRE_FORMATS], ["anthropic", "openai", "responses", "google"]);
+  assert.deepEqual(
+    [...WIRE_FORMATS],
+    ["anthropic", "openai", "responses", "google"],
+  );
   for (const f of WIRE_FORMATS) {
     assert.equal(isWireFormat(f), true);
   }

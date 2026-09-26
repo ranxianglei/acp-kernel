@@ -653,7 +653,9 @@ function formatCacheReportSummary(report: CacheReport): string {
     });
     const last = report.lines.length - 1;
     if (!shownIdx.includes(last)) shownIdx.push(last);
-    const kept = shownIdx.slice(Math.max(0, shownIdx.length - SUMMARY_ANOMALY_CAP));
+    const kept = shownIdx.slice(
+      Math.max(0, shownIdx.length - SUMMARY_ANOMALY_CAP),
+    );
     const anomalies = kept.filter((i) => {
       const l = report.lines[i];
       if (!l) return false;

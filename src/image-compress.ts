@@ -34,20 +34,24 @@ import type {
  * #1097's placeholder determinism).
  */
 
-export const DEFAULT_IMAGE_COMPRESSION_CONFIG: Required<ImageCompressionConfig> = {
-  enabled: false,
-  minTokens: 512,
-  maxDimension: 1280,
-  quality: 80,
-  format: "webp",
-};
+export const DEFAULT_IMAGE_COMPRESSION_CONFIG: Required<ImageCompressionConfig> =
+  {
+    enabled: false,
+    minTokens: 512,
+    maxDimension: 1280,
+    quality: 80,
+    format: "webp",
+  };
 
 /** Sub-field merge over defaults; hosts layer global → provider → model
  *  exactly like absorb (three levels). */
 export function resolveImageCompressionConfig(
   config: Config,
 ): Required<ImageCompressionConfig> {
-  return { ...DEFAULT_IMAGE_COMPRESSION_CONFIG, ...(config.imageCompression ?? {}) };
+  return {
+    ...DEFAULT_IMAGE_COMPRESSION_CONFIG,
+    ...(config.imageCompression ?? {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -85,11 +89,12 @@ function u16le(b: Uint8Array, off: number): number {
 
 function u32be(b: Uint8Array, off: number): number {
   return (
-    (byteAt(b, off) << 24) |
-    (byteAt(b, off + 1) << 16) |
-    (byteAt(b, off + 2) << 8) |
-    byteAt(b, off + 3)
-  ) >>> 0;
+    ((byteAt(b, off) << 24) |
+      (byteAt(b, off + 1) << 16) |
+      (byteAt(b, off + 2) << 8) |
+      byteAt(b, off + 3)) >>>
+    0
+  );
 }
 
 function i32le(b: Uint8Array, off: number): number {
@@ -154,9 +159,11 @@ export function parseImageDimensions(
       // VP8L: signature byte 0x2F, then a 4-byte pack: width-1 (14 bits),
       // height-1 (14 bits), version (4 bits).
       if (b[20] !== 0x2f) return undefined;
-      const w = ((byteAt(b, 22) & 0x3f) << 8 | byteAt(b, 21)) + 1;
+      const w = (((byteAt(b, 22) & 0x3f) << 8) | byteAt(b, 21)) + 1;
       const h =
-        ((byteAt(b, 24) & 0x0f) << 10) | (byteAt(b, 23) << 2) | ((byteAt(b, 22) & 0xc0) >> 6);
+        ((byteAt(b, 24) & 0x0f) << 10) |
+        (byteAt(b, 23) << 2) |
+        ((byteAt(b, 22) & 0xc0) >> 6);
       return w > 0 && h > 0 ? { width: w, height: h + 1 } : undefined;
     }
     if (b[12] === 0x56 && b[13] === 0x50 && b[14] === 0x38 && b[15] === 0x20) {
@@ -179,7 +186,11 @@ export function parseImageDimensions(
         continue;
       }
       const marker = byteAt(b, off + 1);
-      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) {
+      if (
+        marker === 0xd8 ||
+        marker === 0x01 ||
+        (marker >= 0xd0 && marker <= 0xd9)
+      ) {
         off += 2;
         continue;
       }
@@ -215,10 +226,14 @@ export function parseImageDimensionsFromBase64(
   b64: string,
 ): ImageDimensions | undefined {
   if (typeof b64 !== "string" || b64.length === 0) return undefined;
-  const head = parseImageDimensions(Buffer.from(b64.slice(0, HEADER_SCAN_CHARS), "base64"));
+  const head = parseImageDimensions(
+    Buffer.from(b64.slice(0, HEADER_SCAN_CHARS), "base64"),
+  );
   if (head) return head;
   if (b64.startsWith("/9j/") && b64.length > HEADER_SCAN_CHARS) {
-    return parseImageDimensions(Buffer.from(b64.slice(0, JPEG_SCAN_CHARS), "base64"));
+    return parseImageDimensions(
+      Buffer.from(b64.slice(0, JPEG_SCAN_CHARS), "base64"),
+    );
   }
   return undefined;
 }
@@ -227,7 +242,12 @@ export function parseImageDimensionsFromBase64(
  *  (providers bill small images enlarged), cap the long side at 2048, then
  *  85 + 170 per 512×512 tile. Bounds ≈ [765, 2805]. */
 export function pixelTileEstimate(width: number, height: number): number {
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
     return PIXEL_IMAGE_FALLBACK_TOKENS;
   }
   let sw = width;
@@ -359,7 +379,8 @@ export function decideImageRoute(
 ): ImageRoutingDecision {
   const cfg = resolveImageCompressionConfig(config);
   const estimatedTokens = estimateImageTokens(meta);
-  if (!cfg.enabled) return { action: "pass", reason: "disabled", estimatedTokens };
+  if (!cfg.enabled)
+    return { action: "pass", reason: "disabled", estimatedTokens };
   if (!meta.mediaType.startsWith("image/")) {
     return { action: "pass", reason: "not-an-image", estimatedTokens };
   }
@@ -373,7 +394,11 @@ export function decideImageRoute(
     action: "downsample",
     reason: "downsample",
     estimatedTokens,
-    recipe: { maxDimension: cfg.maxDimension, quality: cfg.quality, format: cfg.format },
+    recipe: {
+      maxDimension: cfg.maxDimension,
+      quality: cfg.quality,
+      format: cfg.format,
+    },
   };
 }
 
@@ -420,7 +445,8 @@ export function parseImageFullInput(
   if (typeof input === "string") {
     try {
       const parsed: unknown = JSON.parse(input);
-      if (parsed && typeof parsed === "object") obj = parsed as Record<string, unknown>;
+      if (parsed && typeof parsed === "object")
+        obj = parsed as Record<string, unknown>;
     } catch {
       obj = null;
     }
@@ -428,7 +454,9 @@ export function parseImageFullInput(
     obj = input as Record<string, unknown>;
   }
   if (!obj) {
-    onWarn?.(`[acp-image-full-input] rejected: not an object (${typeof input})`);
+    onWarn?.(
+      `[acp-image-full-input] rejected: not an object (${typeof input})`,
+    );
     return null;
   }
   let ref: string | undefined;
@@ -472,7 +500,10 @@ export function recordImageShrink(
   };
 }
 
-export function isImageFullRestored(state: CompressionState, ref: string): boolean {
+export function isImageFullRestored(
+  state: CompressionState,
+  ref: string,
+): boolean {
   return (state.imageFullRestored ?? []).includes(ref);
 }
 

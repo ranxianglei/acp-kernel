@@ -17,7 +17,8 @@
 // never sent unpaired). Shared across hosts
 // (proxy + in-process adapters) so "which field carries an image" has one home.
 
-export type StripProtocol = "anthropic" | "openai" | "responses" | "google" | null;
+export type StripProtocol =
+  "anthropic" | "openai" | "responses" | "google" | null;
 
 export interface StripResult {
   body: unknown;

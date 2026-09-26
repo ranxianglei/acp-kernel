@@ -294,7 +294,11 @@ test("miss bucket label is honest: upstream-ttl-or-client-rewrite, never ttl/oth
       /upstream-ttl-or-client-rewrite \(unattributed\)/,
       `${detail} mode must use the honest bucket label`,
     );
-    assert.match(text, /kernel cannot distinguish/, `${detail} mode keeps the uncertainty wording`);
+    assert.match(
+      text,
+      /kernel cannot distinguish/,
+      `${detail} mode keeps the uncertainty wording`,
+    );
     assert.ok(
       !text.includes("ttl/other"),
       `${detail} mode must not claim ttl/other (#392)`,
@@ -410,7 +414,12 @@ test("formatCacheReport detail:'full' keeps the legacy every-line listing", () =
 test("formatCacheReport summary lists every fold when few, with TTL spike idle gap", () => {
   const samples = [sample(0, 100_000, 99_000), sample(1, 100_000, 99_000)];
   const folds: FoldEvent[] = [
-    { at: T0 + 0.5 * min, tokensCompressed: 20_000, summaryTokens: 500, firstFoldStartTokens: 3_000 },
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 20_000,
+      summaryTokens: 500,
+      firstFoldStartTokens: 3_000,
+    },
   ];
   samples.push(sample(10, 100_000, 10_000));
   const text = formatCacheReport(buildCacheReport(samples, folds), "s4");

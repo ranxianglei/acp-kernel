@@ -39,7 +39,11 @@ test("tool arrays expose compress in every wire format", () => {
   assert.equal(names(ACP_READONLY_TOOLS_RESPONSES).includes("compress"), false);
   assert.equal(COMPRESS_TOOL.name, "compress");
   assert.equal(COMPRESS_TOOL_OPENAI.function?.name, "compress");
-  assert.deepEqual(COMPRESS_TOOL_OPENAI.function?.parameters?.properties?.content?.type, ["array", "string"]);
+  const params = COMPRESS_TOOL_OPENAI.function?.parameters as
+    | { properties: { content?: { type?: unknown; anyOf?: unknown[] } } }
+    | undefined;
+  assert.equal(params?.properties?.content?.type, undefined, "#447: union type removed from content");
+  assert.ok(Array.isArray(params?.properties?.content?.anyOf), "#447: typed anyOf alternatives present");
 });
 
 test("text tags are paired delimiters", () => {

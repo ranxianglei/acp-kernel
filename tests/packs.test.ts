@@ -237,11 +237,18 @@ test("lean surface applies to wire tools via applyAcpToolOverrides", () => {
   const compress = tools.find((t) => t.function.name === "compress");
   assert.ok(compress);
   assert.equal(compress.function.description, leanPack.surface.toolPrompts?.compress?.description);
-  const params = compress.function.parameters as { properties: { content: { items: { anyOf: { type: string; properties?: Record<string, { description?: string }> }[] } } } };
-  const objectForm = params.properties.content.items.anyOf!.find((v) => v.type === "object");
+  const params = compress.function.parameters as {
+    properties: {
+      content: {
+        anyOf: Array<{ items?: { anyOf?: Array<{ type: string; properties?: Record<string, { description?: string }> }> } }>;
+      };
+    };
+  };
+  const itemAlts = params.properties.content.anyOf[0].items?.anyOf ?? [];
+  const objectForm = itemAlts.find((v) => v.type === "object");
   assert.ok(objectForm?.properties?.startId);
   assert.equal(objectForm!.properties!.startId!.description, "Inclusive first mNNNNN or bN ref.");
-  const lineForm = params.properties.content.items.anyOf!.find((v) => v.type === "string");
+  const lineForm = itemAlts.find((v) => v.type === "string");
   assert.ok(lineForm, "line-form string variant is taught in the schema");
 });
 

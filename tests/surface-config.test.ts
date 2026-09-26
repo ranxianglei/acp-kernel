@@ -167,10 +167,15 @@ test("applyAcpToolOverrides handles the anthropic shape (name + input_schema)", 
   assert.ok(compress);
   assert.equal(compress.description, "NEW-COMPRESS-DESC");
   const schema = compress.input_schema as {
-    properties: Record<string, { items?: { anyOf?: { properties?: Record<string, { description?: string }> }[] } }>;
+    properties: Record<
+      string,
+      { anyOf?: Array<{ items?: { anyOf?: Array<{ properties?: Record<string, { description?: string }> }> } }> }
+    >;
   };
-  const objectForm = schema.properties.content.items!.anyOf!.find((v) => v.properties !== undefined);
-  assert.equal(objectForm!.properties!.startId!.description, "NEW-START");
+  const itemAlts = schema.properties.content.anyOf?.[0]?.items?.anyOf;
+  assert.ok(itemAlts, "#447: content array alternative keeps its items.anyOf");
+  const objectForm = itemAlts.find((v) => v.properties !== undefined);
+  assert.equal(objectForm?.properties?.startId?.description, "NEW-START");
   const untouched = out.find((t) => t.name === "decompress");
   assert.equal(untouched, ACP_TOOLS_ANTHROPIC[1]);
 });

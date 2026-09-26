@@ -37,39 +37,49 @@ export const ACP_SEARCH_CLOSE = "</acp_search>";
 export const ACP_DECOMPRESS_OPEN = "<acp_decompress>";
 export const ACP_DECOMPRESS_CLOSE = "</acp_decompress>";
 
-/** Object-form range entry. Both bound spellings are declared because
- *  parseCompressArgs accepts both (startRef/endRef canonical, startId/endId
- *  legacy drift) — a pre-validating host must reject nothing the kernel
- *  accepts (#374). */
-const COMPRESS_RANGE_OBJECT = {
-  type: "object",
-  properties: {
-    topic: { type: "string" },
-    startId: {
-      type: "string",
-      description: "mNNNNN ref at the start of the range",
-    },
-    endId: {
-      type: "string",
-      description: "mNNNNN ref at the end of the range",
-    },
-    startRef: {
-      type: "string",
-      description: "Alternate spelling of startId",
-    },
-    endRef: {
-      type: "string",
-      description: "Alternate spelling of endId",
-    },
-    summary: {
-      type: "string",
-      description: "Self-contained summary replacing the range",
-    },
+/** Shared property set for object-form range entries. Both bound spellings
+ *  are declared in every alternative because parseCompressArgs accepts both
+ *  (startRef/endRef canonical, startId/endId legacy drift) — a pre-validating
+ *  host must reject nothing the kernel accepts (#374). */
+const COMPRESS_RANGE_PROPERTIES = {
+  topic: { type: "string" },
+  startId: {
+    type: "string",
+    description: "mNNNNN ref at the start of the range",
   },
-  anyOf: [
-    { required: ["startId", "endId", "summary"] },
-    { required: ["startRef", "endRef", "summary"] },
-  ],
+  endId: {
+    type: "string",
+    description: "mNNNNN ref at the end of the range",
+  },
+  startRef: {
+    type: "string",
+    description: "Alternate spelling of startId",
+  },
+  endRef: {
+    type: "string",
+    description: "Alternate spelling of endId",
+  },
+  summary: {
+    type: "string",
+    description: "Self-contained summary replacing the range",
+  },
+};
+
+/** Object-form range entry, startId/endId spelling. Explicitly typed with its
+ *  own required list — provider portability (#447): Copilot Gemini rejects
+ *  `anyOf` alternatives that carry only `required` and no `type`, so each
+ *  bound spelling is a complete object alternative, never a required-only
+ *  fragment under one shared object node. */
+const COMPRESS_RANGE_OBJECT_ID = {
+  type: "object",
+  properties: COMPRESS_RANGE_PROPERTIES,
+  required: ["startId", "endId", "summary"],
+};
+
+const COMPRESS_RANGE_OBJECT_REF = {
+  type: "object",
+  properties: COMPRESS_RANGE_PROPERTIES,
+  required: ["startRef", "endRef", "summary"],
 };
 
 /** Shared parameter schema for every compress wire shape (anthropic
@@ -88,8 +98,19 @@ const COMPRESS_RANGE_OBJECT = {
  *  content-vs-flat alternation lives in the descriptions and is enforced by
  *  parseCompressInput, never by a top-level combinator or `required` (a
  *  top-level `required: ["content"]` would let strict hosts kill the flat
- *  form). Nested combinators (properties.content.items.anyOf) are legal on
- *  every wire — see tests/wire-schema-top-level.test.ts.
+ *  form). Nested combinators are legal on every wire — see
+ *  tests/wire-schema-top-level.test.ts.
+ *
+ *  Provider portability (#447): Copilot Gemini 400s (`invalid_request_body`)
+ *  on two constructs this schema used to carry — a union `type` array
+ *  (`content.type: ["array","string"]`) and `anyOf` alternatives without a
+ *  `type` (the old required-only bound-spelling fragments). Both are now
+ *  explicit typed alternatives: `content.anyOf = [typed array alt, typed
+ *  string alt]`, each object alternative carrying `type` + all properties +
+ *  its own required list. Synthetic differential requests confirm the typed
+ *  form succeeds on Copilot Gemini without an endpoint change. The accepted
+ *  language is unchanged (superset contract above intact); only the
+ *  declaration structure changed. See tests/wire-schema-gemini.test.ts.
  */
 export const COMPRESS_PARAMETERS = {
   type: "object",
@@ -99,19 +120,29 @@ export const COMPRESS_PARAMETERS = {
       description: "Optional short title for the compressed range",
     },
     content: {
-      type: ["array", "string"],
       description:
         "One or more ranges to compress into separate summary blocks. Array form (preferred): one entry per range — line form (one STRING per range: first line 'm00150–m00220 optional topic', remaining lines the markdown summary verbatim) or object form {startId,endId,summary,topic?}. String form also accepted: bare line-form text, or a JSON-encoded array of ranges (some gateways stringify arrays). REQUIRED unless the flat single-range form is used.",
-      items: {
-        anyOf: [
-          {
-            type: "string",
-            description:
-              "Line form: first line 'm00150–m00220 optional topic', remaining lines the summary markdown, verbatim (no JSON escaping)",
+      anyOf: [
+        {
+          type: "array",
+          items: {
+            anyOf: [
+              {
+                type: "string",
+                description:
+                  "Line form: first line 'm00150–m00220 optional topic', remaining lines the summary markdown, verbatim (no JSON escaping)",
+              },
+              COMPRESS_RANGE_OBJECT_ID,
+              COMPRESS_RANGE_OBJECT_REF,
+            ],
           },
-          COMPRESS_RANGE_OBJECT,
-        ],
-      },
+        },
+        {
+          type: "string",
+          description:
+            "Bare line-form text, or a JSON-encoded array of ranges (some gateways stringify arrays)",
+        },
+      ],
     },
     startId: {
       type: "string",

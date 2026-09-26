@@ -82,11 +82,15 @@ test("google functionDeclarations parameters: no top-level combinators on any to
 });
 
 test("nested combinators remain allowed (items.anyOf stays legal on every wire)", () => {
-  // The line-form/object-form alternation inside content.items is nested —
-  // legal everywhere. This pins the boundary: combinator-freedom is a TOP
-  // LEVEL requirement only.
+  // The line-form/object-form alternation inside content's array alternative
+  // is nested — legal everywhere (#447 moved it from content.items to
+  // content.anyOf[array].items). This pins the boundary: combinator-freedom
+  // is a TOP LEVEL requirement only.
   const params = ACP_TOOLS_OPENAI[0].function.parameters as {
-    properties: { content: { items?: { anyOf?: unknown[] } } };
+    properties: { content: { anyOf?: Array<{ items?: { anyOf?: unknown[] } }> } };
   };
-  assert.ok(Array.isArray(params.properties.content.items?.anyOf));
+  assert.ok(
+    Array.isArray(params.properties.content.anyOf?.[0]?.items?.anyOf),
+    "content array alternative must keep its nested items.anyOf",
+  );
 });

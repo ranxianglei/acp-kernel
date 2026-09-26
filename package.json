@@ -56,7 +56,7 @@
     "build": "npm run clean && tsup && tsc --emitDeclarationOnly",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "format": "prettier --write .",
+    "format": "node scripts/format-until-stable.mjs",
     "format:check": "prettier --check ."
   },
   "devDependencies": {

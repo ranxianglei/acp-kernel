@@ -101,7 +101,7 @@ acp-kernel/
 npm run build          # tsup bundle + tsc --emitDeclarationOnly
 npm run typecheck      # TypeScript type checking
 npm test               # node --import tsx --test tests/*.test.ts
-npm run format         # Prettier format
+npm run format         # Prettier format (rewrites until format:check is green)
 npm run format:check   # Check formatting
 ```
 
@@ -214,6 +214,7 @@ All source changes require review by **at least 2 separate agents** before merge
 ### 7.2 Review discipline
 
 - **Rebase to CURRENT master** before claiming mergeable; after rebase re-run typecheck + test + build + format:check.
+- **Prettier can be non-idempotent** — a single `prettier --write .` may land on an intermediate layout its own `--check` rejects (observed on `src/hide-consumed.ts`, #416). Use `npm run format` (rewrites until green) and never commit while `format:check` is red.
 - **Pipeline nodes are shared hotspots** — if another open PR rewrites the same node/module, resolve by union of intent, then prove with tests.
 - **Done = evidence**; tests stay pure (no I/O / network / mocks of kernel internals).
 - **Deterministic tests** — no env/port luck.

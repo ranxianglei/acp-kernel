@@ -67,9 +67,12 @@ function cfg(overrides: Partial<Config> = {}): Config {
   });
 }
 
-test("RULE_TOOL_NAME and ALWAYS_PROTECTED_TOOLS expose acp_rule", () => {
+test("ALWAYS_PROTECTED_TOOLS keeps only compress; acp_rule is conditionally protected", () => {
   assert.equal(RULE_TOOL_NAME, "acp_rule");
-  assert.ok((ALWAYS_PROTECTED_TOOLS as readonly string[]).includes("acp_rule"));
+  assert.ok((ALWAYS_PROTECTED_TOOLS as readonly string[]).includes("compress"));
+  assert.ok(
+    !(ALWAYS_PROTECTED_TOOLS as readonly string[]).includes("acp_rule"),
+  );
 });
 
 test("addRule mutates state in place and issues rule1 first", () => {

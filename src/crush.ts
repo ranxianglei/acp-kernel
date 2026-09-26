@@ -60,7 +60,7 @@ import {
   isAbsorbCandidate,
   resolveAbsorbConfig,
 } from "./absorb.js";
-import { matchToolPattern } from "./protected.js";
+import { collectRulePairProtection, matchToolPattern } from "./protected.js";
 import { defaultCountTokens, type TokenCountFn } from "./tokenize.js";
 import type {
   AbsorbConfig,
@@ -1798,8 +1798,9 @@ export function applyCrushToMessages(
   let distilledCount = 0;
   let changed = false;
   const out: CoreMessage[] = [];
+  const ruleProt = collectRulePairProtection(messages);
   for (const msg of messages) {
-    if (!isAbsorbCandidate(msg, config)) {
+    if (!isAbsorbCandidate(msg, config, undefined, ruleProt)) {
       out.push(msg);
       continue;
     }

@@ -3,9 +3,12 @@ import type { CompressionState, Config, RuleRecord } from "./types.js";
 /**
  * Persistent rules ("acp_rule") — durable reminders recorded for future turns
  * (kernel #282, from billion-context-pi#433). The adapter injects
- * formatRulesForPrompt(state) into the system prompt every turn, and acp_rule
- * tool calls/results are hard-protected from compression
- * (ALWAYS_PROTECTED_TOOLS), so a recorded rule survives context compaction.
+ * formatRulesForPrompt(state) into the system prompt every turn. A recorded
+ * rule's call/result pair stays protected from compression while the rule is
+ * live — protection is derived from the message stream itself
+ * (collectRulePairProtection in protected.ts), and once the host removes or
+ * clears the rule the pair becomes ordinary foldable content
+ * (billion-context#1177).
  *
  * State-mutating helpers: hosts hold live CompressionState objects (a session's
  * single state instance) and discard returned states — these helpers update

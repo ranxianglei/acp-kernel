@@ -27,9 +27,11 @@ import { createRenderRefsNode } from "./render-refs.js";
 import type { RenderStrategy } from "./render-refs.js";
 import {
   collectLatestProtected,
+  collectRulePairProtection,
   hasMediaPayload,
   isMessageLatestProtected,
   isMessageProtected,
+  isMessageRuleProtected,
 } from "./protected.js";
 import { isToolMessage } from "./message-kind.js";
 import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
@@ -828,11 +830,15 @@ const assignRefsNode: PipelineNode = {
     const latest = hasProtection
       ? collectLatestProtected(io.messages, ctx.config)
       : undefined;
+    // Built-in conditional protection (no config gate): live acp_rule record
+    // pairs get a BLOCKED ref exactly like always-protected tools.
+    const ruleProt = collectRulePairProtection(io.messages);
     // Media payloads (image/file sidecars) ride outside msg.text; folding one
     // destroys it permanently (#1188), so media messages always get a BLOCKED
     // ref — never advertised, never folded — regardless of tool-protection config.
     const protectedFn = (m: CoreMessage) =>
       hasMediaPayload(m) ||
+      isMessageRuleProtected(m, ruleProt) ||
       (hasProtection
         ? isMessageProtected(m, ctx.config) ||
           (latest ? isMessageLatestProtected(m, latest) : false)
@@ -1527,6 +1533,7 @@ function filterProtectedToolMessages(
   const removedIds = new Set<string>();
   const latest = collectLatestProtected(messages, config);
   for (const id of latest.callIds) protectedCallIds.add(id);
+  const ruleProt = collectRulePairProtection(messages);
   for (const msg of messages) {
     if (isMessageProtected(msg, config) && msg.toolCallId) {
       protectedCallIds.add(msg.toolCallId);
@@ -1539,7 +1546,8 @@ function filterProtectedToolMessages(
     if (
       hasMediaPayload(msg) ||
       isMessageProtected(msg, config) ||
-      isMessageLatestProtected(msg, latest)
+      isMessageLatestProtected(msg, latest) ||
+      isMessageRuleProtected(msg, ruleProt)
     ) {
       removedIds.add(id);
       if (msg.toolCallId) protectedCallIds.add(msg.toolCallId);

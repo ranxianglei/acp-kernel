@@ -6,7 +6,12 @@ import type {
 } from "./types.js";
 import { refForRaw, BLOCKED_REF } from "./refs.js";
 import { ACP_TOOL_NAMES } from "./compress-tools.js";
-import { isMessageProtected, matchToolPattern } from "./protected.js";
+import {
+  collectRulePairProtection,
+  isMessageProtected,
+  isMessageRuleProtected,
+  matchToolPattern,
+} from "./protected.js";
 import { hasStoredRef, retrieveByRef, storeOriginal } from "./content-store.js";
 import type {
   MessageContentStore,
@@ -271,6 +276,7 @@ export function storeLargeResults(
     }
   }
 
+  const ruleProt = collectRulePairProtection(input.messages);
   const updated = input.messages.map((message) => {
     if (message.contentType !== "tool-result") return message;
     const text = message.text ?? "";
@@ -290,7 +296,11 @@ export function storeLargeResults(
     ) {
       return message;
     }
-    if (isMessageProtected(message, input.config)) return message;
+    if (
+      isMessageProtected(message, input.config) ||
+      isMessageRuleProtected(message, ruleProt)
+    )
+      return message;
     const tokens = input.countTokens(text);
     if (tokens < cfg.minToolTokens) return message;
     const ref = refForRaw(input.state.messageRefs, message.id);

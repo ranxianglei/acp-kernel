@@ -157,8 +157,9 @@ export interface TerminalEscapeSignal {
 }
 
 /** A persistent reminder recorded via the acp_rule tool (see rules.ts).
- *  Injected into the system prompt every turn by the adapter and hard-protected
- *  from compression. Ids are never re-issued (see nextRuleId). */
+ *  Injected into the system prompt every turn by the adapter; its record pair
+ *  stays protected from compression while the rule is live (collectRulePairProtection).
+ *  Ids are never re-issued (see nextRuleId). */
 export interface RuleRecord {
   id: string;
   text: string;
@@ -166,7 +167,8 @@ export interface RuleRecord {
 
 /** Persistent-rule ("acp_rule") feature settings (see rules.ts). Absent or
  *  enabled !== true = feature off — the adapter never injects the tool; kernel
- *  protection is unconditional but side-effect-free without acp_rule messages.
+ *  pair-protection is stream-derived and side-effect-free without acp_rule
+ *  messages (live record pairs protected, other exchanges foldable).
  *  Deviates from kernel#282's original "no Config field" stance: hosts gate the
  *  feature and carry their limit overrides through the resolved Config
  *  (billion-context#750 reads config.rules.enabled + resolveRuleLimits). */

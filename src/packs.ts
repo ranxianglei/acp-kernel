@@ -70,7 +70,7 @@ export interface PackResolver {
 
 const PROMPT_RULE_KEYS = ["compressPhilosophy", "howToCompressRules", "tier2DistillRules", "tier3CondenseRules"] as const;
 const COMPRESS_SECTION_KEYS = ["acpTags", "tools", "summariesInContext", "textProtocol", "textTools", "functionTools"] as const;
-const NUDGE_SECTION_KEYS = ["efficiencyNote", "emergencyHeader", "t2Guidance", "t3Guidance"] as const;
+const NUDGE_SECTION_KEYS = ["efficiencyNote", "pressureHeader", "emergencyHeader", "t2Guidance", "t3Guidance"] as const;
 
 export function isValidPackName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && !name.includes("..");

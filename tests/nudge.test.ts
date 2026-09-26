@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCore } from "../src/compress.js";
 import { createInitialState } from "../src/state.js";
+import { renderNudgeText } from "../src/nudge-text.js";
 import type { Config, CoreMessage } from "../src/types.js";
 
 function buildConfig(overrides: Partial<Config> = {}): Config {
@@ -567,6 +568,42 @@ test("over-limit fires force-nudge when compressible content exists", () => {
   assert.equal(turn.nudge.shouldInject, true, "force-nudge should fire with compressible content");
   assert.equal(turn.nudge.breakdown!.overLimit, 1, "overLimit flag set");
   assert.ok(turn.nudge.reason.includes("OVER-LIMIT"), `reason: ${turn.nudge.reason}`);
+});
+
+test("over-limit band renders pressure wording, not 'limit reached' (#312)", () => {
+  const core = createCore();
+  const config = buildConfig({
+    nudge: { ...buildConfig().nudge, maxContextLimitPct: 0.75 },
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 0,
+  });
+  const messages = makeMessages(10);
+  const turn = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 80000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(turn.nudge.breakdown!.emergencyOverride, 0, "80% is below the 98% emergency threshold");
+  const rendered = renderNudgeText(turn.nudge);
+  assert.equal(rendered.voice, "emergency", "pressure band uses emergency voice");
+  assert.ok(rendered.text.includes("Context pressure high"), "pressure header rendered");
+  assert.ok(!rendered.text.includes("Context limit reached"), "must not claim the limit is reached");
+  assert.ok(!rendered.text.includes("not an overflow warning"), "no gentle reassurance in the pressure band");
+  assert.ok(!rendered.text.includes("80%"), "no overall usage percentage in the injected text");
+});
+
+test("emergency band renders 'limit reached' wording end-to-end (#312)", () => {
+  const core = createCore();
+  const config = buildConfig({
+    nudge: { ...buildConfig().nudge, maxContextLimitPct: 0.75, emergencyThresholdPct: 0.95 },
+    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    preserveRecentMessages: 0,
+  });
+  const messages = makeMessages(10);
+  const turn = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 96000 });
+  assert.equal(turn.nudge.shouldInject, true);
+  assert.equal(turn.nudge.breakdown!.emergencyOverride, 1, "96% is at/above the 95% emergency threshold");
+  const rendered = renderNudgeText(turn.nudge);
+  assert.equal(rendered.voice, "emergency");
+  assert.ok(rendered.text.includes("Context limit reached"));
+  assert.ok(!rendered.text.includes("Context pressure high"));
 });
 
 test("over-limit does NOT inject when nothing is compressible (MAJOR-1 fix)", () => {

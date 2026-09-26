@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderNudgeText } from "../src/nudge-text.js";
+import { builtinSource, createPackResolver } from "../src/packs.js";
 import type { NudgeDecision, CompressibleRange, BlockSpan } from "../src/types.js";
 
 function makeRanges(count: number): CompressibleRange[] {
@@ -191,6 +192,50 @@ test("over-limit renders with emergency voice (MAJOR-2 fix)", () => {
   assert.ok(!result.text.includes("not an overflow warning"), "should NOT contain gentle reassurance");
 });
 
+test("over-limit uses pressure wording, not 'limit reached' (#312)", () => {
+  const result = renderNudgeText(
+    makeDecision({
+      contextUsage: 0.85,
+      breakdown: { overLimit: 1 },
+    }),
+  );
+  assert.ok(result.text.includes("Context pressure high"), "pressure band must use the pressure header");
+  assert.ok(!result.text.includes("Context limit reached"), "must not claim the limit is reached");
+  assert.ok(!result.text.includes("85%"), "no usage percentage in the pressure band");
+});
+
+test("emergency keeps 'limit reached' wording and drops the pressure header (#312)", () => {
+  const result = renderNudgeText(
+    makeDecision({
+      contextUsage: 0.99,
+      breakdown: { overLimit: 1, emergencyOverride: 1 },
+    }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(result.text.includes("Context limit reached"));
+  assert.ok(!result.text.includes("Context pressure high"));
+});
+
+test("over-limit + tier 2: emergency voice, OVER-LIMIT trigger line (#312)", () => {
+  const result = renderNudgeText(makeDecision({ tier: 2, breakdown: { overLimit: 1 } }));
+  assert.equal(result.voice, "emergency");
+  assert.ok(
+    result.text.includes("[OVER-LIMIT — TIER 2 DISTILLATION] Context pressure high — distill now to reclaim tokens."),
+  );
+  assert.ok(!result.text.includes("Context limit reached"));
+  assert.ok(!result.text.includes("not an overflow warning"), "tier branch must not lead with the gentle note in the pressure band");
+});
+
+test("emergency + tier 2 keeps the EMERGENCY trigger line (#312)", () => {
+  const result = renderNudgeText(
+    makeDecision({ tier: 2, breakdown: { overLimit: 1, emergencyOverride: 1 } }),
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(
+    result.text.includes("[EMERGENCY — TIER 2 DISTILLATION] Context limit reached — distill NOW into a denser summary to reclaim tokens."),
+  );
+});
+
 function makeSpans(n: number): BlockSpan[] {
   return Array.from({ length: n }, (_, i) => ({
     blockId: `b${i + 1}`,
@@ -254,4 +299,70 @@ test("range lines annotate user message count", () => {
 test("no user-msg annotation when count is zero or absent", () => {
   const result = renderNudgeText(makeDecision());
   assert.ok(!result.text.includes("user msg"), "makeRanges fixtures carry no userMsgs");
+});
+
+// #315 divergence guard: lean ships no nudgeSections, so all three bands must
+// render through the shared (pack-free) renderNudgeText path, identical to default.
+
+function resolveLeanPack() {
+  const pack = createPackResolver([builtinSource]).resolve("lean");
+  assert.ok(pack, "lean must resolve from the builtin registry");
+  return pack!;
+}
+
+test("lean pack ships no nudgeSections — single shared render path (#315)", () => {
+  const pack = resolveLeanPack();
+  assert.equal(
+    pack.surface.nudgeSections,
+    undefined,
+    "lean must leave nudgeSections untouched; tier guidance flows via the shared nudge text",
+  );
+});
+
+test("lean pack renders all three bands byte-identical to default (#315)", () => {
+  const pack = resolveLeanPack();
+  const bands: { label: string; decision: NudgeDecision }[] = [
+    { label: "gentle", decision: makeDecision({ contextUsage: 0.5 }) },
+    { label: "over-limit", decision: makeDecision({ contextUsage: 0.85, breakdown: { overLimit: 1 } }) },
+    { label: "emergency", decision: makeDecision({ contextUsage: 0.99, breakdown: { overLimit: 1, emergencyOverride: 1 } }) },
+  ];
+  for (const { label, decision } of bands) {
+    const viaLean = renderNudgeText(decision, undefined, pack.surface.nudgeSections);
+    const viaDefault = renderNudgeText(decision);
+    assert.equal(viaLean.voice, viaDefault.voice, `${label}: voice must match default`);
+    assert.equal(viaLean.text, viaDefault.text, `${label}: rendered text must be byte-identical to default`);
+  }
+});
+
+test("lean pack: over-limit band renders pressureHeader wording, voice binary unchanged (#315)", () => {
+  const pack = resolveLeanPack();
+  const result = renderNudgeText(
+    makeDecision({ contextUsage: 0.85, breakdown: { overLimit: 1 } }),
+    undefined,
+    pack.surface.nudgeSections,
+  );
+  assert.equal(result.voice, "emergency", "voice stays binary: pressure band maps to the emergency voice");
+  assert.ok(result.text.includes("⚠️ Context pressure high"), "over-limit must use the pressure header");
+  assert.ok(!result.text.includes("Context limit reached"), "must not claim the limit is reached");
+});
+
+test("lean pack: emergency band keeps limit-reached wording, voice binary unchanged (#315)", () => {
+  const pack = resolveLeanPack();
+  const result = renderNudgeText(
+    makeDecision({ contextUsage: 0.99, breakdown: { overLimit: 1, emergencyOverride: 1 } }),
+    undefined,
+    pack.surface.nudgeSections,
+  );
+  assert.equal(result.voice, "emergency");
+  assert.ok(result.text.includes("⚠️ Context limit reached"), "emergency must keep the limit-reached header");
+  assert.ok(!result.text.includes("Context pressure high"), "emergency must not downshift to the pressure wording");
+});
+
+test("lean pack: gentle band keeps the efficiency note, voice stays gentle (#315)", () => {
+  const pack = resolveLeanPack();
+  const result = renderNudgeText(makeDecision({ contextUsage: 0.5 }), undefined, pack.surface.nudgeSections);
+  assert.equal(result.voice, "gentle");
+  assert.ok(result.text.includes("efficiency nudge"), "gentle band must keep the efficiency note");
+  assert.ok(!result.text.includes("Context limit reached"));
+  assert.ok(!result.text.includes("Context pressure high"));
 });

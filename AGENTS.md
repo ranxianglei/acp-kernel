@@ -152,11 +152,15 @@ The Agent does steps 1–5, the human does 6, CI does the rest.
    ```bash
    git checkout -b $(date +%Y-%m-%d)_release-v{VERSION}
    ```
-3. **Bump version** — edit ONLY the `"version"` field in `package.json`:
+3. **Bump version** — edit ONLY the `"version"` field in `package.json`, then run
+   `npm install --package-lock-only` so the lockfile's root version tracks it:
    ```diff
    -    "version": "0.0.14",
    +    "version": "0.0.15",
    ```
+   Run this on Node 22 (same as CI). With a matching npm it changes exactly two lines in
+   `package-lock.json` — the root `"version"` and `packages[""].version`. If the diff is
+   larger, your npm regenerated the lockfile; discard it and rerun on Node 22 before committing.
 4. **Local pre-flight** — run the same three checks CI runs (release.yml):
    ```bash
    npm run typecheck   # tsc --noEmit
@@ -165,7 +169,7 @@ The Agent does steps 1–5, the human does 6, CI does the rest.
    ```
 5. **Commit, push, open PR** — release-commit convention:
    - Message: `release v{VERSION}`
-   - The commit changes ONLY `package.json` (1 line). Never bundle other changes into a release commit.
+   - The commit changes ONLY `package.json` (1 version line) plus `package-lock.json` (the matching root-version lines from step 3). Never bundle other changes into a release commit.
    - PR title: `release v{VERSION}`; body lists changes since last tag.
 6. **Human merges the PR** (Agent MUST NOT merge — see "PR Merge" above).
 7. **CI auto-publishes** — on detecting the release-branch merge, CI runs typecheck+test+build, creates git tag `v{VERSION}`, and runs `npm publish` to npmjs.org.

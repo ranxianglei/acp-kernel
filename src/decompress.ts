@@ -1,5 +1,5 @@
 import { resolveBlockSpan } from "./block-map.js";
-import { SUMMARY_HEADER } from "./prune.js";
+import { SUMMARY_HEADER, baseIdOf } from "./prune.js";
 import { clampPrefix } from "./truncate.js";
 import type {
   CompressionBlock,
@@ -21,10 +21,14 @@ export function findBlocksOverlappingMessages(
   messageIds: Set<string>,
 ): CompressionBlock[] {
   if (messageIds.size === 0) return [];
+  const messageBases = new Set<string>();
+  for (const id of messageIds) messageBases.add(baseIdOf(id));
   const matched: CompressionBlock[] = [];
   for (const block of state.blocks) {
     if (!block.active) continue;
-    if (block.effectiveMessageIds.some((id) => messageIds.has(id))) {
+    if (
+      block.effectiveMessageIds.some((id) => messageBases.has(baseIdOf(id)))
+    ) {
       matched.push(block);
     }
   }
@@ -109,13 +113,15 @@ export function buildRestoredContentPreview(
   beforeActiveMessageIds: Set<string>,
   state: CompressionState,
 ): RestoredPreviewResult {
+  const coveredBases = new Set<string>();
+  for (const b of state.blocks) {
+    if (!b.active) continue;
+    for (const id of b.effectiveMessageIds) coveredBases.add(baseIdOf(id));
+  }
   const restored: CoreMessage[] = [];
   for (const message of messages) {
     if (!beforeActiveMessageIds.has(message.id)) continue;
-    const stillCovered = state.blocks.some(
-      (b) => b.active && b.effectiveMessageIds.includes(message.id),
-    );
-    if (!stillCovered) restored.push(message);
+    if (!coveredBases.has(baseIdOf(message.id))) restored.push(message);
   }
 
   if (restored.length === 0) return { preview: "", restoredCount: 0 };
@@ -180,23 +186,32 @@ export function collectBlockContent(
   options: CollectContentOptions = {},
 ): CollectedContentResult {
   const full = options.full ?? false;
-  const targetIds = new Set(block.effectiveMessageIds);
+  // Base-id sets: the block recorded one projection form, the current view
+  // may emit another (`base` vs `base#r0`); coverage is per original message.
+  const targetBases = new Set<string>();
+  for (const id of block.effectiveMessageIds) targetBases.add(baseIdOf(id));
 
   if (full) {
-    const msgs = messages.filter((m) => targetIds.has(m.id));
+    const msgs = messages.filter(
+      (m) => m.id !== undefined && targetBases.has(baseIdOf(m.id)),
+    );
     if (msgs.length === 0) return { text: "", count: 0 };
-    return { text: msgs.map(formatMessage).join("\n\n"), count: msgs.length };
+    return {
+      text: msgs.map(formatMessage).join("\n\n"),
+      count: msgs.length,
+    };
   }
 
   // One tier up: messages covered by nested ACTIVE children stay folded
   // (their summaries shown); the block's own direct messages shown in full.
   const nestedChildren: CompressionBlock[] = [];
-  const nestedCovered = new Set<string>();
+  const nestedCoveredBases = new Set<string>();
   for (const childId of block.directBlockIds) {
     const child = state.blocks.find((b) => b.blockId === childId);
     if (!child?.active) continue;
     nestedChildren.push(child);
-    for (const id of child.effectiveMessageIds) nestedCovered.add(id);
+    for (const id of child.effectiveMessageIds)
+      nestedCoveredBases.add(baseIdOf(id));
   }
 
   const parts: string[] = [];
@@ -209,7 +224,11 @@ export function collectBlockContent(
 
   let directCount = 0;
   for (const m of messages) {
-    if (targetIds.has(m.id) && !nestedCovered.has(m.id)) {
+    if (
+      m.id !== undefined &&
+      targetBases.has(baseIdOf(m.id)) &&
+      !nestedCoveredBases.has(baseIdOf(m.id))
+    ) {
       parts.push(formatMessage(m));
       directCount++;
     }

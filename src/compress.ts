@@ -1,5 +1,5 @@
 import { assignRefs, highestUsedIndex, indexToRef } from "./refs.js";
-import { prune, isSummaryMessageId } from "./prune.js";
+import { baseIdOf, prune, isSummaryMessageId } from "./prune.js";
 import { syncBlocks } from "./sync.js";
 import { advanceSurvival, activeBlocks, blockById } from "./state.js";
 import { allocateBlockId, allocateRunId, createInitialState } from "./state.js";
@@ -164,6 +164,13 @@ function danglingMessageRefs(
   spec: { startRef: string; endRef: string },
 ): string[] {
   const visible = new Set(messages.map((m) => m.id));
+  const visibleBases = new Set<string>();
+  for (const id of visible) visibleBases.add(baseIdOf(id));
+  const coveredBases = new Set<string>();
+  for (const block of state.blocks) {
+    if (!block.active) continue;
+    for (const id of block.effectiveMessageIds) coveredBases.add(baseIdOf(id));
+  }
   const dangling: string[] = [];
   for (const ref of [spec.startRef, spec.endRef]) {
     const parsed = parseBoundary(ref);
@@ -171,11 +178,12 @@ function danglingMessageRefs(
     const rawId =
       state.messageRefs.byRef[parsed.raw] ??
       state.messageRefs.byRef[indexToRef(parsed.numericId)];
-    if (!rawId || visible.has(rawId)) continue;
-    const covered = state.blocks.some(
-      (block) => block.active && block.effectiveMessageIds.includes(rawId),
-    );
-    if (!covered) dangling.push(parsed.raw);
+    if (!rawId) continue;
+    const base = baseIdOf(rawId);
+    // The ref map may hold an older projection form than the current view
+    // (issue #234): test visibility and coverage per original message.
+    if (visible.has(rawId) || visibleBases.has(base)) continue;
+    if (!coveredBases.has(base)) dangling.push(parsed.raw);
   }
   return dangling;
 }
@@ -1168,7 +1176,13 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   // have pulled in messages that are anchors of existing blocks).
   if (rangeMessageIds.length > resolved.messageIds.length) {
     const indexByMessageId = new Map<string, number>();
-    input.messages.forEach((m, i) => indexByMessageId.set(m.id, i));
+    const baseIndexById = new Map<string, number>();
+    input.messages.forEach((m, i) => {
+      indexByMessageId.set(m.id, i);
+      const base = baseIdOf(m.id);
+      const existing = baseIndexById.get(base);
+      if (existing === undefined || i < existing) baseIndexById.set(base, i);
+    });
     const adjustedStart =
       rangeMessageIds.length > 0
         ? (indexByMessageId.get(rangeMessageIds[0]!) ?? resolved.startIndex)
@@ -1182,7 +1196,13 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     for (const block of activeBlocks(input.state)) {
       if (nestedSeen.has(block.blockId)) continue;
       if (
-        blockVisibleInRange(block, indexByMessageId, adjustedStart, adjustedEnd)
+        blockVisibleInRange(
+          block,
+          indexByMessageId,
+          adjustedStart,
+          adjustedEnd,
+          baseIndexById,
+        )
       ) {
         nestedSeen.add(block.blockId);
         resolved.nestedBlockIds.push(block.blockId);
@@ -1215,7 +1235,7 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   }
 
   const directMessageIds = [...effectiveMessageIds].filter(
-    (id) => !input.preExistingCoverage.has(id),
+    (id) => !input.preExistingCoverage.has(baseIdOf(id)),
   );
 
   let filteredIds = filterProtectedToolMessages(
@@ -1577,10 +1597,13 @@ function resolveTargetTier(
   return minTier;
 }
 
+/** Base ids of every message already covered by an active block: the
+ *  pre-existing-coverage set is compared against range message ids that may
+ *  carry a different projection form (issue #234). */
 function collectCoverage(state: CompressionState): Set<string> {
   const coverage = new Set<string>();
   for (const block of activeBlocks(state)) {
-    for (const id of block.effectiveMessageIds) coverage.add(id);
+    for (const id of block.effectiveMessageIds) coverage.add(baseIdOf(id));
   }
   return coverage;
 }

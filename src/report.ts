@@ -2,6 +2,7 @@ import { clampPrefix } from "./truncate.js";
 import { isToolMessage } from "./message-kind.js";
 import { BLOCKED_REF, refForRaw } from "./refs.js";
 import { countMessageTokens } from "./tokenize.js";
+import { baseIdOf } from "./prune.js";
 import { segmentGroups } from "./segment.js";
 import type {
   CompressionBlock,
@@ -94,7 +95,7 @@ function collectVisible(
   const coveredIds = new Set<string>();
   for (const block of state.blocks) {
     if (!block.active) continue;
-    for (const id of block.effectiveMessageIds) coveredIds.add(id);
+    for (const id of block.effectiveMessageIds) coveredIds.add(baseIdOf(id));
   }
   let summaryTokens = 0;
   for (const block of state.blocks) {
@@ -124,7 +125,7 @@ function collectVisible(
     const ref = refForRaw(state.messageRefs, message.id);
     if (!ref) return;
     const tokens = countMessageTokens(message, countTokens);
-    if (!coveredIds.has(message.id) && tokens > 0) {
+    if (!coveredIds.has(baseIdOf(message.id)) && tokens > 0) {
       const isTool = isToolMessage(message);
       const tool = isTool
         ? (message.toolName ??

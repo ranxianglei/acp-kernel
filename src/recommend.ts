@@ -31,6 +31,7 @@ import {
 } from "./protected.js";
 import { countMessageTokens } from "./tokenize.js";
 import { computeIntegrityWithdrawals } from "./turn-integrity.js";
+import { baseIdOf } from "./prune.js";
 import { segmentGroups } from "./segment.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -41,17 +42,29 @@ function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/** Base ids of every message covered by an active block, built once per
+ *  pass: coverage is decided per original message, so a message re-projected
+ *  under a sub-id form (`base#r0`) stays covered by a block that recorded the
+ *  plain base (and vice versa) — issue #234. */
+function activeBlockCoveredBases(state: CompressionState): Set<string> {
+  const covered = new Set<string>();
+  for (const block of state.blocks) {
+    if (!block.active) continue;
+    for (const id of block.effectiveMessageIds) covered.add(baseIdOf(id));
+  }
+  return covered;
+}
+
 function isSyntheticOrPruned(
   message: CoreMessage,
-  state: CompressionState,
+  coveredBases: Set<string>,
 ): boolean {
   if (message.text?.startsWith("[Compressed conversation section]"))
     return true;
-  for (const block of state.blocks) {
-    if (block.active && block.effectiveMessageIds.includes(message.id))
-      return true;
-  }
-  return false;
+  // Id-less host-shaped messages (#421) can never be block-covered; sub-id
+  // normalization only applies to messages that actually carry a string id.
+  if (message.id === undefined) return false;
+  return coveredBases.has(baseIdOf(message.id));
 }
 
 // ─── 1. Protected Refs (soft protection zone) ─────────────────────────────────
@@ -77,9 +90,10 @@ export function computeProtectedRefs(
 
   const result = new Set<string>();
   const visible: { ref: string; tokens: number }[] = [];
+  const coveredBases = activeBlockCoveredBases(state);
 
   for (const msg of messages) {
-    if (isSyntheticOrPruned(msg, state)) continue;
+    if (isSyntheticOrPruned(msg, coveredBases)) continue;
     // Exclude configured large-result tools from the recent-zone window.
     // These are big inline payloads (restorations, file bodies, command
     // output) that the model should be free to compress again immediately;
@@ -131,7 +145,8 @@ export function computeProtectedRefs(
   if (preserveN > 0) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]!;
-      if (msg.role !== "user" || isSyntheticOrPruned(msg, state)) continue;
+      if (msg.role !== "user" || isSyntheticOrPruned(msg, coveredBases))
+        continue;
       const ref = state.messageRefs.byRaw[msg.id];
       if (ref && ref !== "BLOCKED") result.add(ref);
       break;
@@ -199,12 +214,13 @@ export function buildCompressibleRanges(
   let skipSinceCompressible = false;
   let skipSinceProtected = false;
   let msgIndex = -1;
+  const coveredBases = activeBlockCoveredBases(state);
 
   for (const msg of messages) {
     msgIndex++;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
-    if (isSyntheticOrPruned(msg, state)) {
+    if (isSyntheticOrPruned(msg, coveredBases)) {
       skipSinceCompressible = true;
       skipSinceProtected = true;
       continue;

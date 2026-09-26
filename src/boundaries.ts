@@ -1,5 +1,9 @@
 import { activeBlocks, blockById } from "./state.js";
-import { isRenderedSummaryMessage, summaryMessageId } from "./prune.js";
+import {
+  baseIdOf,
+  isRenderedSummaryMessage,
+  summaryMessageId,
+} from "./prune.js";
 import { isRetrievedMessage } from "./ccr.js";
 import { BLOCKED_REF, refToIndex } from "./refs.js";
 import type {
@@ -92,15 +96,24 @@ export function resolveBoundaries(
   }
 
   const indexByMessageId = new Map<string, number>();
-  input.messages.forEach((message, index) =>
-    indexByMessageId.set(message.id, index),
-  );
+  // Base-id view index (base → earliest index): anchor lookups fall back to
+  // it when the exact id form diverges from what refs/blocks recorded
+  // (issue #234).
+  const baseIndexById = new Map<string, number>();
+  input.messages.forEach((message, index) => {
+    indexByMessageId.set(message.id, index);
+    const base = baseIdOf(message.id);
+    const existing = baseIndexById.get(base);
+    if (existing === undefined || index < existing)
+      baseIndexById.set(base, index);
+  });
 
   let snappedBoundaries: string[] = [];
   const startAnchor = resolveAnchorIndex(
     start,
     input.state,
     indexByMessageId,
+    baseIndexById,
     "start",
   );
   if (startAnchor.snapped) snappedBoundaries.push(startAnchor.snapped);
@@ -108,6 +121,7 @@ export function resolveBoundaries(
     end,
     input.state,
     indexByMessageId,
+    baseIndexById,
     "end",
   );
   if (endAnchor.snapped) snappedBoundaries.push(endAnchor.snapped);
@@ -143,7 +157,15 @@ export function resolveBoundaries(
   const nestedBlockIds: string[] = [];
   const nestedSeen = new Set<string>();
   for (const block of activeBlocks(input.state)) {
-    if (blockVisibleInRange(block, indexByMessageId, startIndex, endIndex)) {
+    if (
+      blockVisibleInRange(
+        block,
+        indexByMessageId,
+        startIndex,
+        endIndex,
+        baseIndexById,
+      )
+    ) {
       if (!nestedSeen.has(block.blockId)) {
         nestedSeen.add(block.blockId);
         nestedBlockIds.push(block.blockId);
@@ -174,6 +196,7 @@ function resolveAnchorIndex(
   boundary: ParsedBoundary,
   state: CompressionState,
   indexByMessageId: Map<string, number>,
+  baseIndexById: Map<string, number>,
   endpoint: "start" | "end",
 ): AnchorResolution {
   const label = endpoint === "start" ? "startId" : "endId";
@@ -188,11 +211,17 @@ function resolveAnchorIndex(
         `${label}="${boundary.raw}" does not exist in this session (typo or wrong session) — run acp_status for current refs.`,
       );
     }
-    const index = indexByMessageId.get(rawId);
+    const index =
+      indexByMessageId.get(rawId) ?? baseIndexById.get(baseIdOf(rawId));
     if (index !== undefined) {
       return { index, snapped: null };
     }
-    const owner = activeOwnerAnchor(state, [rawId], indexByMessageId);
+    const owner = activeOwnerAnchor(
+      state,
+      [rawId],
+      indexByMessageId,
+      baseIndexById,
+    );
     if (owner !== null) {
       return {
         index: owner,
@@ -239,7 +268,7 @@ function resolveAnchorIndex(
     );
   }
   if (block.active) {
-    const anchor = visibleBlockAnchor(block, indexByMessageId);
+    const anchor = visibleBlockAnchor(block, indexByMessageId, baseIndexById);
     if (anchor !== null) {
       return { index: anchor, snapped: null };
     }
@@ -248,6 +277,7 @@ function resolveAnchorIndex(
     state,
     block.effectiveMessageIds,
     indexByMessageId,
+    baseIndexById,
   );
   if (owner !== null) {
     return {
@@ -284,9 +314,14 @@ function activeOwnerAnchor(
   state: CompressionState,
   ownedIds: string[],
   indexByMessageId: Map<string, number>,
+  baseIndexById: Map<string, number>,
 ): number | null {
   if (ownedIds.length === 0) return null;
-  const owned = new Set(ownedIds);
+  // Both sides normalized to base ids: the owned ids (from the ref map or a
+  // consumed block) and the inherited ids (from active children) may have been
+  // recorded under different projection forms (issue #234).
+  const owned = new Set<string>();
+  for (const id of ownedIds) owned.add(baseIdOf(id));
   let best: number | null = null;
   for (const block of state.blocks) {
     if (!block.active) continue;
@@ -299,7 +334,7 @@ function activeOwnerAnchor(
       }
     }
     if (!ownsInherited) continue;
-    const anchor = visibleBlockAnchor(block, indexByMessageId);
+    const anchor = visibleBlockAnchor(block, indexByMessageId, baseIndexById);
     if (anchor === null) continue;
     if (best === null || anchor < best) {
       best = anchor;
@@ -322,7 +357,7 @@ function inheritedContentIds(
   for (const childId of block.directBlockIds) {
     const child = blockById(state, childId);
     if (!child) continue;
-    for (const id of child.effectiveMessageIds) ids.add(id);
+    for (const id of child.effectiveMessageIds) ids.add(baseIdOf(id));
   }
   return ids;
 }
@@ -371,10 +406,15 @@ function formatPaddedRef(index: number): string {
 export function visibleBlockAnchor(
   block: CompressionBlock,
   indexByMessageId: Map<string, number>,
+  baseIndexById?: Map<string, number>,
 ): number | null {
   const summaryIndex = indexByMessageId.get(summaryMessageId(block.blockId));
   if (summaryIndex !== undefined) return summaryIndex;
-  return earliestIndexOfIds(block.effectiveMessageIds, indexByMessageId);
+  return earliestIndexOfIds(
+    block.effectiveMessageIds,
+    indexByMessageId,
+    baseIndexById,
+  );
 }
 
 // A block participates in a range when ANY of its visible representations
@@ -387,6 +427,7 @@ export function blockVisibleInRange(
   indexByMessageId: Map<string, number>,
   startIndex: number,
   endIndex: number,
+  baseIndexById?: Map<string, number>,
 ): boolean {
   const summaryIndex = indexByMessageId.get(summaryMessageId(block.blockId));
   if (
@@ -399,6 +440,7 @@ export function blockVisibleInRange(
   const rawIndex = earliestIndexOfIds(
     block.effectiveMessageIds,
     indexByMessageId,
+    baseIndexById,
   );
   return rawIndex !== null && rawIndex >= startIndex && rawIndex <= endIndex;
 }
@@ -406,15 +448,32 @@ export function blockVisibleInRange(
 export function earliestIndexOfIds(
   ids: string[],
   indexByMessageId: Map<string, number>,
+  baseIndexById?: Map<string, number>,
 ): number | null {
+  // Look up by base id so a block recorded under one projection form still
+  // resolves against a view emitting another (issue #234). The base index is
+  // derived from the exact-id map when the caller doesn't precompute it.
+  const baseIndex = baseIndexById ?? deriveBaseIndex(indexByMessageId);
   let earliest: number | null = null;
   for (const id of ids) {
-    const index = indexByMessageId.get(id);
+    const index = baseIndex.get(baseIdOf(id));
     if (index !== undefined && (earliest === null || index < earliest)) {
       earliest = index;
     }
   }
   return earliest;
+}
+
+function deriveBaseIndex(
+  indexByMessageId: Map<string, number>,
+): Map<string, number> {
+  const baseIndex = new Map<string, number>();
+  for (const [id, index] of indexByMessageId) {
+    const base = baseIdOf(id);
+    const existing = baseIndex.get(base);
+    if (existing === undefined || index < existing) baseIndex.set(base, index);
+  }
+  return baseIndex;
 }
 
 export function toResolvedBoundary(range: ResolvedRange): ResolvedBoundary {

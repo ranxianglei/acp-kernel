@@ -26,37 +26,37 @@ import { clampPrefix } from "./truncate.js";
 import type { CompressRangeSpec } from "./types.js";
 
 export type CompressParseKind =
-    | "ok"
-    | "empty-input"
-    | "not-object"
-    | "missing-content"
-    | "content-not-array"
-    | "malformed-json"
-    | "truncated"
-    | "no-valid-ranges";
+  | "ok"
+  | "empty-input"
+  | "not-object"
+  | "missing-content"
+  | "content-not-array"
+  | "malformed-json"
+  | "truncated"
+  | "no-valid-ranges";
 
 export interface CompressParseDiagnostics {
-    /** true only when at least one range was recovered. */
-    ok: boolean;
-    /** Why the input parsed the way it did. */
-    kind: CompressParseKind;
-    /** True when the winning parse came from single→double quote repair. */
-    quoteSalvage?: boolean;
-    /** First 800 chars of the raw string input (string inputs only). */
-    rawPrefix?: string;
-    /** Raw string input length (string inputs only). */
-    length?: number;
-    /** Top-level keys of the parsed object — catches `content` vs `ranges` drift. */
-    keys?: string[];
-    /** Entries dropped because they were not valid ranges. */
-    invalidItems: number;
-    /** One human-readable reason per dropped entry (index-prefixed). */
-    invalidReasons?: string[];
+  /** true only when at least one range was recovered. */
+  ok: boolean;
+  /** Why the input parsed the way it did. */
+  kind: CompressParseKind;
+  /** True when the winning parse came from single→double quote repair. */
+  quoteSalvage?: boolean;
+  /** First 800 chars of the raw string input (string inputs only). */
+  rawPrefix?: string;
+  /** Raw string input length (string inputs only). */
+  length?: number;
+  /** Top-level keys of the parsed object — catches `content` vs `ranges` drift. */
+  keys?: string[];
+  /** Entries dropped because they were not valid ranges. */
+  invalidItems: number;
+  /** One human-readable reason per dropped entry (index-prefixed). */
+  invalidReasons?: string[];
 }
 
 export interface ParsedCompressInput {
-    ranges: CompressRangeSpec[];
-    diagnostics: CompressParseDiagnostics;
+  ranges: CompressRangeSpec[];
+  diagnostics: CompressParseDiagnostics;
 }
 
 /**
@@ -67,190 +67,236 @@ export interface ParsedCompressInput {
  * mode). Invalid entries are skipped, never fatal; the reason is in
  * `diagnostics.kind`.
  */
-export function parseCompressArgs(input: unknown, opts?: { callId?: string }): ParsedCompressInput {
-    const callId = opts?.callId;
-    const diag: CompressParseDiagnostics = { ok: false, kind: "ok", invalidItems: 0 };
+export function parseCompressArgs(
+  input: unknown,
+  opts?: { callId?: string },
+): ParsedCompressInput {
+  const callId = opts?.callId;
+  const diag: CompressParseDiagnostics = {
+    ok: false,
+    kind: "ok",
+    invalidItems: 0,
+  };
 
-    if (input === null || input === undefined) {
-        diag.kind = "empty-input";
-        return finish([], diag);
-    }
+  if (input === null || input === undefined) {
+    diag.kind = "empty-input";
+    return finish([], diag);
+  }
 
-    if (typeof input === "string") {
-        return parseStringInput(input, callId, diag);
-    }
+  if (typeof input === "string") {
+    return parseStringInput(input, callId, diag);
+  }
 
-    if (typeof input !== "object" || Array.isArray(input)) {
-        diag.kind = "not-object";
-        return finish([], diag);
-    }
+  if (typeof input !== "object" || Array.isArray(input)) {
+    diag.kind = "not-object";
+    return finish([], diag);
+  }
 
-    return parseObjectValue(input as Record<string, unknown>, callId, diag);
+  return parseObjectValue(input as Record<string, unknown>, callId, diag);
 }
 
-function parseStringInput(raw: string, callId: string | undefined, diag: CompressParseDiagnostics): ParsedCompressInput {
-    diag.rawPrefix = clampPrefix(raw, 800);
-    diag.length = raw.length;
-    const cleaned = stripFence(raw.trim());
-    const first = parseStringCore(cleaned, callId, diag);
-    // Weak local models emit single-quoted args ({'content': [...]}). The
-    // salvage regex only recognizes double-quoted "content", so a truncated
-    // single-quoted prefix recovers nothing on the first pass. Retry once
-    // with the quotes normalized; the retry wins only if it recovers strictly
-    // more ranges, so valid input is never rewritten.
-    if (first.ranges.length === 0 || first.diagnostics.invalidItems > 0) {
-        const normalized = normalizeSingleQuotes(cleaned);
-        if (normalized !== undefined) {
-            const retryDiag: CompressParseDiagnostics = { ok: false, kind: "ok", invalidItems: 0 };
-            retryDiag.rawPrefix = diag.rawPrefix;
-            retryDiag.length = diag.length;
-            const retry = parseStringCore(normalized, callId, retryDiag);
-            if (retry.ranges.length > first.ranges.length) {
-                retryDiag.quoteSalvage = true;
-                return retry;
-            }
-        }
-    }
-    return first;
-}
-
-function parseStringCore(cleaned: string, callId: string | undefined, diag: CompressParseDiagnostics): ParsedCompressInput {
-    if (cleaned === "") {
-        diag.kind = "empty-input";
-        return finish([], diag);
-    }
-
-    let value: unknown = tryParseLenient(cleaned);
-    // One level of double-stringification: the host wrapped an already
-    // stringified argument in another JSON string.
-    if (typeof value === "string") {
-        const inner = tryParseLenient(stripFence(value));
-        if (inner !== undefined) value = inner;
-    }
-
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-        return parseObjectValue(value as Record<string, unknown>, callId, diag);
-    }
-    if (value !== undefined) {
-        // Parsed, but not to an object: bare array, number, boolean, null.
-        diag.kind = "not-object";
-        return finish([], diag);
-    }
-
-    // Unparseable prefix: salvage the complete content-array entries.
-    const entries = salvageContentEntries(cleaned);
-    return finishSalvage(entries, callId, diag, looksTruncated(cleaned));
-}
-
-function parseObjectValue(value: Record<string, unknown>, callId: string | undefined, diag: CompressParseDiagnostics): ParsedCompressInput {
-    diag.keys = Object.keys(value);
-    const content = value["content"];
-    if (content === undefined) {
-        // Model drift: a single range at the top level (no content array).
-        // The proxy defends against this shape; the kernel now owns it.
-        const single = validateEntry(value, callId);
-        if ("range" in single) {
-            diag.kind = "ok";
-            return finish([single.range], diag);
-        }
-        diag.kind = "missing-content";
-        return finish([], diag);
-    }
-
-    let entries: unknown[];
-    let salvaged = false;
-
-    if (Array.isArray(content)) {
-        entries = content;
-    } else if (typeof content === "string") {
-        // Stringified content array: vLLM-style gateways stringify nested
-        // arrays, so `content` arrives as a JSON string of the array.
-        const parsed = parseContentArray(content);
-        if (parsed === null || (parsed.entries.length === 0 && content.trim().length > 0)) {
-            // Not a JSON array (or nothing salvageable): bare line-form text.
-            // Strip JSON-wrapper residue (stringified ["…"] with broken
-            // escaping) — the line form needs structure only in the refs
-            // header line, so the summary body never has to parse.
-            const bare = stripJsonWrapperResidue(content);
-            const entries = splitLineEntries(bare);
-            const { ranges, invalid, reasons } = validateEntries(entries, callId);
-            if (ranges.length > 0) {
-                diag.invalidItems = invalid;
-                if (reasons.length > 0) diag.invalidReasons = reasons;
-                diag.kind = "ok";
-                return finish(ranges, diag);
-            }
-            diag.kind = "content-not-array";
-            return finish([], diag);
-        }
-        entries = parsed.entries;
-        salvaged = parsed.salvaged;
-        if (parsed.quoteRepaired) diag.quoteSalvage = true;
-    } else {
-        diag.kind = "content-not-array";
-        return finish([], diag);
-    }
-
-    const { ranges, invalid, reasons } = validateEntries(entries, callId);
-    // Top-level fallbacks: topic and summaryMaxChars apply to every range
-    // that does not specify its own (omp/pi schemas define both at the top
-    // level; per-entry values win).
-    const topTopic = stringOr(value["topic"]);
-    const topMaxChars = value["summaryMaxChars"];
-    const hasTopMaxChars = typeof topMaxChars === "number" && Number.isFinite(topMaxChars);
-    if (topTopic !== undefined || hasTopMaxChars) {
-        for (const r of ranges) {
-            if (r.topic === undefined && topTopic !== undefined) r.topic = topTopic;
-            if (r.summaryMaxChars === undefined && hasTopMaxChars) r.summaryMaxChars = topMaxChars;
-        }
-    }
-    diag.invalidItems = invalid;
-    if (reasons.length > 0) diag.invalidReasons = reasons;
-    diag.kind = salvaged ? "truncated" : ranges.length > 0 ? "ok" : "no-valid-ranges";
-    return finish(ranges, diag);
-}
-
-function parseContentArray(s: string): { entries: unknown[]; salvaged: boolean; quoteRepaired?: boolean } | null {
-    const cleaned = stripFence(s.trim());
-    const direct = parseContentArrayCore(cleaned);
-    if (direct !== null && direct.entries.length > 0) return direct;
-    // Single-quoted array (weak local models): normalize once and re-run;
-    // the retry is adopted only if it recovers strictly more entries.
+function parseStringInput(
+  raw: string,
+  callId: string | undefined,
+  diag: CompressParseDiagnostics,
+): ParsedCompressInput {
+  diag.rawPrefix = clampPrefix(raw, 800);
+  diag.length = raw.length;
+  const cleaned = stripFence(raw.trim());
+  const first = parseStringCore(cleaned, callId, diag);
+  // Weak local models emit single-quoted args ({'content': [...]}). The
+  // salvage regex only recognizes double-quoted "content", so a truncated
+  // single-quoted prefix recovers nothing on the first pass. Retry once
+  // with the quotes normalized; the retry wins only if it recovers strictly
+  // more ranges, so valid input is never rewritten.
+  if (first.ranges.length === 0 || first.diagnostics.invalidItems > 0) {
     const normalized = normalizeSingleQuotes(cleaned);
     if (normalized !== undefined) {
-        const retry = parseContentArrayCore(normalized);
-        if (retry !== null && retry.entries.length > 0) return { ...retry, quoteRepaired: true };
+      const retryDiag: CompressParseDiagnostics = {
+        ok: false,
+        kind: "ok",
+        invalidItems: 0,
+      };
+      retryDiag.rawPrefix = diag.rawPrefix;
+      retryDiag.length = diag.length;
+      const retry = parseStringCore(normalized, callId, retryDiag);
+      if (retry.ranges.length > first.ranges.length) {
+        retryDiag.quoteSalvage = true;
+        return retry;
+      }
     }
-    return direct;
+  }
+  return first;
 }
 
-function parseContentArrayCore(s: string): { entries: unknown[]; salvaged: boolean } | null {
-    let value: unknown = s === "" ? undefined : tryParseLenient(s);
-    if (typeof value === "string") {
-        value = tryParseLenient(stripFence(value));
-    }
-    if (Array.isArray(value)) {
-        return { entries: value, salvaged: false };
-    }
-    if (value === undefined) {
-        // Unparseable (usually truncated): recover the complete entries.
-        const entries = salvageContentEntries('{"content": ' + s);
-        return { entries, salvaged: entries.length > 0 };
-    }
-    return null;
+function parseStringCore(
+  cleaned: string,
+  callId: string | undefined,
+  diag: CompressParseDiagnostics,
+): ParsedCompressInput {
+  if (cleaned === "") {
+    diag.kind = "empty-input";
+    return finish([], diag);
+  }
+
+  let value: unknown = tryParseLenient(cleaned);
+  // One level of double-stringification: the host wrapped an already
+  // stringified argument in another JSON string.
+  if (typeof value === "string") {
+    const inner = tryParseLenient(stripFence(value));
+    if (inner !== undefined) value = inner;
+  }
+
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return parseObjectValue(value as Record<string, unknown>, callId, diag);
+  }
+  if (value !== undefined) {
+    // Parsed, but not to an object: bare array, number, boolean, null.
+    diag.kind = "not-object";
+    return finish([], diag);
+  }
+
+  // Unparseable prefix: salvage the complete content-array entries.
+  const entries = salvageContentEntries(cleaned);
+  return finishSalvage(entries, callId, diag, looksTruncated(cleaned));
 }
 
-function finish(ranges: CompressRangeSpec[], diag: CompressParseDiagnostics): ParsedCompressInput {
-    diag.ok = ranges.length > 0;
-    return { ranges, diagnostics: diag };
+function parseObjectValue(
+  value: Record<string, unknown>,
+  callId: string | undefined,
+  diag: CompressParseDiagnostics,
+): ParsedCompressInput {
+  diag.keys = Object.keys(value);
+  const content = value["content"];
+  if (content === undefined) {
+    // Model drift: a single range at the top level (no content array).
+    // The proxy defends against this shape; the kernel now owns it.
+    const single = validateEntry(value, callId);
+    if ("range" in single) {
+      diag.kind = "ok";
+      return finish([single.range], diag);
+    }
+    diag.kind = "missing-content";
+    return finish([], diag);
+  }
+
+  let entries: unknown[];
+  let salvaged = false;
+
+  if (Array.isArray(content)) {
+    entries = content;
+  } else if (typeof content === "string") {
+    // Stringified content array: vLLM-style gateways stringify nested
+    // arrays, so `content` arrives as a JSON string of the array.
+    const parsed = parseContentArray(content);
+    if (
+      parsed === null ||
+      (parsed.entries.length === 0 && content.trim().length > 0)
+    ) {
+      // Not a JSON array (or nothing salvageable): bare line-form text.
+      // Strip JSON-wrapper residue (stringified ["…"] with broken
+      // escaping) — the line form needs structure only in the refs
+      // header line, so the summary body never has to parse.
+      const bare = stripJsonWrapperResidue(content);
+      const entries = splitLineEntries(bare);
+      const { ranges, invalid, reasons } = validateEntries(entries, callId);
+      if (ranges.length > 0) {
+        diag.invalidItems = invalid;
+        if (reasons.length > 0) diag.invalidReasons = reasons;
+        diag.kind = "ok";
+        return finish(ranges, diag);
+      }
+      diag.kind = "content-not-array";
+      return finish([], diag);
+    }
+    entries = parsed.entries;
+    salvaged = parsed.salvaged;
+    if (parsed.quoteRepaired) diag.quoteSalvage = true;
+  } else {
+    diag.kind = "content-not-array";
+    return finish([], diag);
+  }
+
+  const { ranges, invalid, reasons } = validateEntries(entries, callId);
+  // Top-level fallbacks: topic and summaryMaxChars apply to every range
+  // that does not specify its own (omp/pi schemas define both at the top
+  // level; per-entry values win).
+  const topTopic = stringOr(value["topic"]);
+  const topMaxChars = value["summaryMaxChars"];
+  const hasTopMaxChars =
+    typeof topMaxChars === "number" && Number.isFinite(topMaxChars);
+  if (topTopic !== undefined || hasTopMaxChars) {
+    for (const r of ranges) {
+      if (r.topic === undefined && topTopic !== undefined) r.topic = topTopic;
+      if (r.summaryMaxChars === undefined && hasTopMaxChars)
+        r.summaryMaxChars = topMaxChars;
+    }
+  }
+  diag.invalidItems = invalid;
+  if (reasons.length > 0) diag.invalidReasons = reasons;
+  diag.kind = salvaged
+    ? "truncated"
+    : ranges.length > 0
+      ? "ok"
+      : "no-valid-ranges";
+  return finish(ranges, diag);
 }
 
-function finishSalvage(entries: unknown[], callId: string | undefined, diag: CompressParseDiagnostics, truncatedShape: boolean): ParsedCompressInput {
-    const { ranges, invalid, reasons } = validateEntries(entries, callId);
-    diag.invalidItems = invalid;
-    if (reasons.length > 0) diag.invalidReasons = reasons;
-    diag.kind = entries.length > 0 || truncatedShape ? "truncated" : "malformed-json";
-    return finish(ranges, diag);
+function parseContentArray(
+  s: string,
+): { entries: unknown[]; salvaged: boolean; quoteRepaired?: boolean } | null {
+  const cleaned = stripFence(s.trim());
+  const direct = parseContentArrayCore(cleaned);
+  if (direct !== null && direct.entries.length > 0) return direct;
+  // Single-quoted array (weak local models): normalize once and re-run;
+  // the retry is adopted only if it recovers strictly more entries.
+  const normalized = normalizeSingleQuotes(cleaned);
+  if (normalized !== undefined) {
+    const retry = parseContentArrayCore(normalized);
+    if (retry !== null && retry.entries.length > 0)
+      return { ...retry, quoteRepaired: true };
+  }
+  return direct;
+}
+
+function parseContentArrayCore(
+  s: string,
+): { entries: unknown[]; salvaged: boolean } | null {
+  let value: unknown = s === "" ? undefined : tryParseLenient(s);
+  if (typeof value === "string") {
+    value = tryParseLenient(stripFence(value));
+  }
+  if (Array.isArray(value)) {
+    return { entries: value, salvaged: false };
+  }
+  if (value === undefined) {
+    // Unparseable (usually truncated): recover the complete entries.
+    const entries = salvageContentEntries('{"content": ' + s);
+    return { entries, salvaged: entries.length > 0 };
+  }
+  return null;
+}
+
+function finish(
+  ranges: CompressRangeSpec[],
+  diag: CompressParseDiagnostics,
+): ParsedCompressInput {
+  diag.ok = ranges.length > 0;
+  return { ranges, diagnostics: diag };
+}
+
+function finishSalvage(
+  entries: unknown[],
+  callId: string | undefined,
+  diag: CompressParseDiagnostics,
+  truncatedShape: boolean,
+): ParsedCompressInput {
+  const { ranges, invalid, reasons } = validateEntries(entries, callId);
+  diag.invalidItems = invalid;
+  if (reasons.length > 0) diag.invalidReasons = reasons;
+  diag.kind =
+    entries.length > 0 || truncatedShape ? "truncated" : "malformed-json";
+  return finish(ranges, diag);
 }
 
 // #1001 (problem 3): models routinely split the documented line form across
@@ -263,41 +309,45 @@ function finishSalvage(entries: unknown[], callId: string | undefined, diag: Com
 // (header + \n + body in one string) and object entries reset the pairing —
 // a stray refless string after a complete entry stays invalid, as today.
 function coalesceLineEntries(entries: unknown[]): unknown[] {
-    const out: unknown[] = [];
-    let headerOnlyIdx = -1;
-    for (const e of entries) {
-        if (typeof e === "string") {
-            const nl = e.indexOf("\n");
-            const head = (nl === -1 ? e : e.slice(0, nl)).trim();
-            const hasRef = REF_PAIR_IN_LINE.test(head) || SINGLE_REF_IN_LINE.test(head);
-            if (!hasRef && headerOnlyIdx >= 0) {
-                out[headerOnlyIdx] = `${out[headerOnlyIdx] as string}\n${e}`;
-                continue;
-            }
-            out.push(e);
-            headerOnlyIdx = hasRef && nl === -1 ? out.length - 1 : -1;
-        } else {
-            out.push(e);
-            headerOnlyIdx = -1;
-        }
+  const out: unknown[] = [];
+  let headerOnlyIdx = -1;
+  for (const e of entries) {
+    if (typeof e === "string") {
+      const nl = e.indexOf("\n");
+      const head = (nl === -1 ? e : e.slice(0, nl)).trim();
+      const hasRef =
+        REF_PAIR_IN_LINE.test(head) || SINGLE_REF_IN_LINE.test(head);
+      if (!hasRef && headerOnlyIdx >= 0) {
+        out[headerOnlyIdx] = `${out[headerOnlyIdx] as string}\n${e}`;
+        continue;
+      }
+      out.push(e);
+      headerOnlyIdx = hasRef && nl === -1 ? out.length - 1 : -1;
+    } else {
+      out.push(e);
+      headerOnlyIdx = -1;
     }
-    return out;
+  }
+  return out;
 }
 
-function validateEntries(entries: unknown[], callId: string | undefined): { ranges: CompressRangeSpec[]; invalid: number; reasons: string[] } {
-    const ranges: CompressRangeSpec[] = [];
-    const reasons: string[] = [];
-    let invalid = 0;
-    const items = coalesceLineEntries(entries);
-    for (let i = 0; i < items.length; i++) {
-        const outcome = validateEntry(items[i], callId);
-        if ("range" in outcome) ranges.push(outcome.range);
-        else {
-            invalid++;
-            reasons.push(`entry ${i}: ${outcome.reason}`);
-        }
+function validateEntries(
+  entries: unknown[],
+  callId: string | undefined,
+): { ranges: CompressRangeSpec[]; invalid: number; reasons: string[] } {
+  const ranges: CompressRangeSpec[] = [];
+  const reasons: string[] = [];
+  let invalid = 0;
+  const items = coalesceLineEntries(entries);
+  for (let i = 0; i < items.length; i++) {
+    const outcome = validateEntry(items[i], callId);
+    if ("range" in outcome) ranges.push(outcome.range);
+    else {
+      invalid++;
+      reasons.push(`entry ${i}: ${outcome.reason}`);
     }
-    return { ranges, invalid, reasons };
+  }
+  return { ranges, invalid, reasons };
 }
 
 type EntryOutcome = { range: CompressRangeSpec } | { reason: string };
@@ -308,44 +358,53 @@ type EntryOutcome = { range: CompressRangeSpec } | { reason: string };
 // hard requirement is refs at the START of the first line. Both patterns are
 // anchored (^): summaries cite mNNNNN/bN refs routinely, so an unanchored
 // scan would let a citation inside a headerless entry supply fake bounds.
-const REF_PAIR_IN_LINE = /^([mb]\d{1,7})\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*([mb]\d{1,7})\b/i;
+const REF_PAIR_IN_LINE =
+  /^([mb]\d{1,7})\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*([mb]\d{1,7})\b/i;
 const SINGLE_REF_IN_LINE = /^([mb]\d{1,7})\b/i;
 
 function normalizeLineRef(raw: string): string {
-    const lower = raw.toLowerCase();
-    const digits = lower.slice(1);
-    return lower[0]! === "b" ? `b${digits}` : `m${digits.padStart(5, "0")}`;
+  const lower = raw.toLowerCase();
+  const digits = lower.slice(1);
+  return lower[0]! === "b" ? `b${digits}` : `m${digits.padStart(5, "0")}`;
 }
 
-function parseLineEntry(entry: string, callId: string | undefined): EntryOutcome {
-    const nl = entry.indexOf("\n");
-    const head = (nl === -1 ? entry : entry.slice(0, nl)).trim();
-    const summary = (nl === -1 ? "" : entry.slice(nl + 1)).trim();
-    const pair = REF_PAIR_IN_LINE.exec(head);
-    let startRef: string;
-    let endRef: string;
-    let afterRefs: number;
-    if (pair !== null) {
-        startRef = normalizeLineRef(pair[1]!);
-        endRef = normalizeLineRef(pair[2]!);
-        afterRefs = pair.index + pair[0].length;
-    } else {
-        const single = SINGLE_REF_IN_LINE.exec(head);
-        if (single === null) return { reason: "line entry: no mNNNNN/bN refs in header" };
-        startRef = normalizeLineRef(single[1]!);
-        endRef = startRef;
-        afterRefs = single.index + single[0].length;
-    }
-    if (summary.length === 0) return { reason: "line entry: missing summary after the refs header line" };
-    const explicitTopic = head.slice(afterRefs).trim();
-    const range: CompressRangeSpec = {
-        startRef,
-        endRef,
-        summary,
-        topic: explicitTopic.length > 0 ? explicitTopic : deriveTopicFromSummary(summary),
-    };
-    if (callId !== undefined) range.compressCallId = callId;
-    return { range };
+function parseLineEntry(
+  entry: string,
+  callId: string | undefined,
+): EntryOutcome {
+  const nl = entry.indexOf("\n");
+  const head = (nl === -1 ? entry : entry.slice(0, nl)).trim();
+  const summary = (nl === -1 ? "" : entry.slice(nl + 1)).trim();
+  const pair = REF_PAIR_IN_LINE.exec(head);
+  let startRef: string;
+  let endRef: string;
+  let afterRefs: number;
+  if (pair !== null) {
+    startRef = normalizeLineRef(pair[1]!);
+    endRef = normalizeLineRef(pair[2]!);
+    afterRefs = pair.index + pair[0].length;
+  } else {
+    const single = SINGLE_REF_IN_LINE.exec(head);
+    if (single === null)
+      return { reason: "line entry: no mNNNNN/bN refs in header" };
+    startRef = normalizeLineRef(single[1]!);
+    endRef = startRef;
+    afterRefs = single.index + single[0].length;
+  }
+  if (summary.length === 0)
+    return { reason: "line entry: missing summary after the refs header line" };
+  const explicitTopic = head.slice(afterRefs).trim();
+  const range: CompressRangeSpec = {
+    startRef,
+    endRef,
+    summary,
+    topic:
+      explicitTopic.length > 0
+        ? explicitTopic
+        : deriveTopicFromSummary(summary),
+  };
+  if (callId !== undefined) range.compressCallId = callId;
+  return { range };
 }
 
 /** Display/retrieval label for line-form entries without an explicit topic:
@@ -353,11 +412,14 @@ function parseLineEntry(entry: string, callId: string | undefined): EntryOutcome
  *  truncated. The topic is metadata (panels, T2 source headers, search) —
  *  never load-bearing for correctness. */
 export function deriveTopicFromSummary(summary: string): string | undefined {
-    const heading = /^#{1,6}\s+(.+)$/m.exec(summary);
-    const source = heading !== null ? heading[1]! : (summary.split("\n").find((l) => l.trim().length > 0) ?? "");
-    const text = source.trim().replace(/^[\u2022\-*]\s+/, "");
-    if (text.length === 0) return undefined;
-    return text.length > 60 ? clampPrefix(text, 60).trimEnd() : text;
+  const heading = /^#{1,6}\s+(.+)$/m.exec(summary);
+  const source =
+    heading !== null
+      ? heading[1]!
+      : (summary.split("\n").find((l) => l.trim().length > 0) ?? "");
+  const text = source.trim().replace(/^[\u2022\-*]\s+/, "");
+  if (text.length === 0) return undefined;
+  return text.length > 60 ? clampPrefix(text, 60).trimEnd() : text;
 }
 
 /** Split a bare string content (not a JSON array) into line-form entries: a
@@ -368,11 +430,18 @@ export function deriveTopicFromSummary(summary: string): string | undefined {
  *  on their headers. Fallback path only — arrays of strings are the primary
  *  line-form transport. */
 function splitLineEntries(content: string): unknown[] {
-    const parts = content
-        .split(/\n(?=\s*(?:["']\s*,\s*)?["']?\s*[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i)
-        .map((p) => p.trim().replace(/^(?:["']\s*,?\s*)+/, "").replace(/["']\s*$/, ""))
-        .filter((p) => p.length > 0);
-    return parts.length > 0 ? parts : [content.trim()];
+  const parts = content
+    .split(
+      /\n(?=\s*(?:["']\s*,\s*)?["']?\s*[mb]\d{1,7}\s*(?:[-\u2013\u2014\u2026~]|\.\.\.|to)\s*[mb]\d{1,7}\b)/i,
+    )
+    .map((p) =>
+      p
+        .trim()
+        .replace(/^(?:["']\s*,?\s*)+/, "")
+        .replace(/["']\s*$/, ""),
+    )
+    .filter((p) => p.length > 0);
+  return parts.length > 0 ? parts : [content.trim()];
 }
 
 // Remove the leftover shell of a stringified-but-unescaped array/element:
@@ -380,79 +449,90 @@ function splitLineEntries(content: string): unknown[] {
 // runs after JSON.parse has already failed, so these chars are residue, not
 // content. Anything deeper and the line form stops being the right tool.
 function stripJsonWrapperResidue(s: string): string {
-    let t = s.trim();
-    if (t.startsWith("[")) t = t.replace(/^\[+\s*/, "");
-    t = t.replace(/^"/, "");
-    if (t.endsWith("]")) t = t.replace(/\s*\]+$/, "");
-    t = t.replace(/"$/, "");
-    return t.trim();
+  let t = s.trim();
+  if (t.startsWith("[")) t = t.replace(/^\[+\s*/, "");
+  t = t.replace(/^"/, "");
+  if (t.endsWith("]")) t = t.replace(/\s*\]+$/, "");
+  t = t.replace(/"$/, "");
+  return t.trim();
 }
 
-function validateEntry(entry: unknown, callId: string | undefined): EntryOutcome {
-    if (typeof entry === "string") return parseLineEntry(entry, callId);
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return { reason: "not an object" };
-    const e = entry as Record<string, unknown>;
-    // Field-name variants: startRef/endRef are canonical; startId/endId is
-    // model drift (and the legacy rebuild.ts spelling); messageId is the
-    // startId-less messageRef from the historical API.
-    const start = stringOr(e["startRef"]) ?? stringOr(e["startId"]) ?? stringOr(e["messageId"]);
-    const end = stringOr(e["endRef"]) ?? stringOr(e["endId"]) ?? stringOr(e["messageId"]);
-    if (start === undefined || end === undefined) {
-        return { reason: "missing range bounds (need startRef/startId and endRef/endId)" };
-    }
-    const summary = stringOr(e["summary"]);
-    if (summary === undefined) return { reason: "missing summary" };
-    const range: CompressRangeSpec = { startRef: start, endRef: end, summary };
-    const topic = stringOr(e["topic"]);
-    if (topic !== undefined) range.topic = topic;
-    const maxChars = e["summaryMaxChars"];
-    if (typeof maxChars === "number" && Number.isFinite(maxChars)) range.summaryMaxChars = maxChars;
-    if (callId !== undefined) range.compressCallId = callId;
-    return { range };
+function validateEntry(
+  entry: unknown,
+  callId: string | undefined,
+): EntryOutcome {
+  if (typeof entry === "string") return parseLineEntry(entry, callId);
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry))
+    return { reason: "not an object" };
+  const e = entry as Record<string, unknown>;
+  // Field-name variants: startRef/endRef are canonical; startId/endId is
+  // model drift (and the legacy rebuild.ts spelling); messageId is the
+  // startId-less messageRef from the historical API.
+  const start =
+    stringOr(e["startRef"]) ??
+    stringOr(e["startId"]) ??
+    stringOr(e["messageId"]);
+  const end =
+    stringOr(e["endRef"]) ?? stringOr(e["endId"]) ?? stringOr(e["messageId"]);
+  if (start === undefined || end === undefined) {
+    return {
+      reason: "missing range bounds (need startRef/startId and endRef/endId)",
+    };
+  }
+  const summary = stringOr(e["summary"]);
+  if (summary === undefined) return { reason: "missing summary" };
+  const range: CompressRangeSpec = { startRef: start, endRef: end, summary };
+  const topic = stringOr(e["topic"]);
+  if (topic !== undefined) range.topic = topic;
+  const maxChars = e["summaryMaxChars"];
+  if (typeof maxChars === "number" && Number.isFinite(maxChars))
+    range.summaryMaxChars = maxChars;
+  if (callId !== undefined) range.compressCallId = callId;
+  return { range };
 }
 
 function stringOr(value: unknown): string | undefined {
-    return typeof value === "string" && value.length > 0 ? value : undefined;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 // --- tolerant JSON parsing -------------------------------------------------
 
 function tryParseLenient(s: string): unknown {
-    if (s === "") return undefined;
+  if (s === "") return undefined;
+  try {
+    return JSON.parse(s);
+  } catch {
+    // keep trying the repaired variants below
+  }
+  const noTrailingCommas = stripTrailingCommas(s);
+  if (noTrailingCommas !== s) {
     try {
-        return JSON.parse(s);
+      return JSON.parse(noTrailingCommas);
     } catch {
-        // keep trying the repaired variants below
+      // keep trying
     }
-    const noTrailingCommas = stripTrailingCommas(s);
-    if (noTrailingCommas !== s) {
-        try {
-            return JSON.parse(noTrailingCommas);
-        } catch {
-            // keep trying
-        }
+  }
+  const fixed = escapeRawNewlinesInStrings(noTrailingCommas);
+  if (fixed !== noTrailingCommas) {
+    try {
+      return JSON.parse(fixed);
+    } catch {
+      // fall through to salvage
     }
-    const fixed = escapeRawNewlinesInStrings(noTrailingCommas);
-    if (fixed !== noTrailingCommas) {
-        try {
-            return JSON.parse(fixed);
-        } catch {
-            // fall through to salvage
-        }
+  }
+  // Unescaped inner quotes and markdown backslash escapes (\`, \-) defeat
+  // the string state machines above; the parser's own error position
+  // pinpoints the real offending characters. Repair exactly where it says
+  // and iterate.
+  const ctrlFixed = repairAtParserPositions(noTrailingCommas);
+  if (ctrlFixed !== noTrailingCommas) {
+    try {
+      return JSON.parse(ctrlFixed);
+    } catch {
+      // fall through to salvage
     }
-    // Unescaped inner quotes and markdown backslash escapes (\`, \-) defeat
-    // the string state machines above; the parser's own error position
-    // pinpoints the real offending characters. Repair exactly where it says
-    // and iterate.
-    const ctrlFixed = repairAtParserPositions(noTrailingCommas);
-    if (ctrlFixed !== noTrailingCommas) {
-        try {
-            return JSON.parse(ctrlFixed);
-        } catch {
-            // fall through to salvage
-        }
-    }
-    return undefined;
+  }
+  return undefined;
 }
 
 // State machine that converts single-quoted strings to double-quoted ones.
@@ -463,140 +543,160 @@ function tryParseLenient(s: string): unknown {
 // it never invents structure, so anything it cannot make into valid JSON
 // simply stays unrecovered.
 function normalizeSingleQuotes(raw: string): string | undefined {
-    if (!raw.includes("'") || (!raw.includes("{") && !raw.includes("["))) return undefined;
-    let out = "";
-    let changed = false;
-    let inDouble = false;
-    let inSingle = false;
-    for (let i = 0; i < raw.length; i++) {
-        const ch = raw.charAt(i);
-        if (inDouble) {
-            out += ch;
-            if (ch === "\\" && i + 1 < raw.length) {
-                out += raw.charAt(i + 1);
-                i++;
-            } else if (ch === '"') {
-                inDouble = false;
-            }
-            continue;
-        }
-        if (inSingle) {
-            if (ch === "\\" && i + 1 < raw.length) {
-                const next = raw.charAt(i + 1);
-                out += next === "'" ? "'" : "\\" + next;
-                i++;
-                continue;
-            }
-            if (ch === "'") {
-                out += '"';
-                inSingle = false;
-                changed = true;
-                continue;
-            }
-            if (ch === '"') {
-                out += '\\"';
-                continue;
-            }
-            if (ch === "\n") {
-                out += "\\n";
-                continue;
-            }
-            if (ch === "\r") {
-                out += "\\r";
-                continue;
-            }
-            if (ch === "\t") {
-                out += "\\t";
-                continue;
-            }
-            out += ch;
-            continue;
-        }
-        if (ch === '"') {
-            inDouble = true;
-            out += ch;
-            continue;
-        }
-        if (ch === "'") {
-            inSingle = true;
-            out += '"';
-            changed = true;
-            continue;
-        }
-        out += ch;
+  if (!raw.includes("'") || (!raw.includes("{") && !raw.includes("[")))
+    return undefined;
+  let out = "";
+  let changed = false;
+  let inDouble = false;
+  let inSingle = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw.charAt(i);
+    if (inDouble) {
+      out += ch;
+      if (ch === "\\" && i + 1 < raw.length) {
+        out += raw.charAt(i + 1);
+        i++;
+      } else if (ch === '"') {
+        inDouble = false;
+      }
+      continue;
     }
-    return changed ? out : undefined;
+    if (inSingle) {
+      if (ch === "\\" && i + 1 < raw.length) {
+        const next = raw.charAt(i + 1);
+        out += next === "'" ? "'" : "\\" + next;
+        i++;
+        continue;
+      }
+      if (ch === "'") {
+        out += '"';
+        inSingle = false;
+        changed = true;
+        continue;
+      }
+      if (ch === '"') {
+        out += '\\"';
+        continue;
+      }
+      if (ch === "\n") {
+        out += "\\n";
+        continue;
+      }
+      if (ch === "\r") {
+        out += "\\r";
+        continue;
+      }
+      if (ch === "\t") {
+        out += "\\t";
+        continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+      out += '"';
+      changed = true;
+      continue;
+    }
+    out += ch;
+  }
+  return changed ? out : undefined;
 }
 
 function stripFence(s: string): string {
-    if (!s.startsWith("```")) return s;
-    const firstNewline = s.indexOf("\n");
-    if (firstNewline === -1) return s;
-    const bodyStart = firstNewline + 1;
-    const end = s.lastIndexOf("```");
-    return end > bodyStart ? s.slice(bodyStart, end).trim() : s.slice(bodyStart).trim();
+  if (!s.startsWith("```")) return s;
+  const firstNewline = s.indexOf("\n");
+  if (firstNewline === -1) return s;
+  const bodyStart = firstNewline + 1;
+  const end = s.lastIndexOf("```");
+  return end > bodyStart
+    ? s.slice(bodyStart, end).trim()
+    : s.slice(bodyStart).trim();
 }
 
 // Drop commas that sit immediately before a closing brace/bracket
 // (outside string literals).
 function stripTrailingCommas(s: string): string {
-    let out = "";
-    let inString = false;
-    let escaped = false;
-    for (let i = 0; i < s.length; i++) {
-        const ch = s.charAt(i);
-        if (inString) {
-            out += ch;
-            if (escaped) escaped = false;
-            else if (ch === "\\") escaped = true;
-            else if (ch === '"') inString = false;
-            continue;
-        }
-        if (ch === '"') {
-            inString = true;
-            out += ch;
-            continue;
-        }
-        if (ch === ",") {
-            let j = i + 1;
-            while (j < s.length && (s.charAt(j) === " " || s.charAt(j) === "\t" || s.charAt(j) === "\n" || s.charAt(j) === "\r")) j++;
-            if (j < s.length && (s.charAt(j) === "}" || s.charAt(j) === "]")) continue;
-        }
-        out += ch;
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charAt(i);
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
     }
-    return out;
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ",") {
+      let j = i + 1;
+      while (
+        j < s.length &&
+        (s.charAt(j) === " " ||
+          s.charAt(j) === "\t" ||
+          s.charAt(j) === "\n" ||
+          s.charAt(j) === "\r")
+      )
+        j++;
+      if (j < s.length && (s.charAt(j) === "}" || s.charAt(j) === "]"))
+        continue;
+    }
+    out += ch;
+  }
+  return out;
 }
 
 // Raw \n, \r, \t inside string literals are invalid JSON; escape them.
 // Outside strings they are legal whitespace and left alone.
 function escapeRawNewlinesInStrings(s: string): string {
-    let out = "";
-    let inString = false;
-    let escaped = false;
-    for (let i = 0; i < s.length; i++) {
-        const ch = s.charAt(i);
-        if (!inString) {
-            if (ch === '"') inString = true;
-            out += ch;
-            continue;
-        }
-        if (escaped) {
-            out += ch;
-            escaped = false;
-            continue;
-        }
-        if (ch === "\\") {
-            out += ch;
-            escaped = true;
-            continue;
-        }
-        if (ch === "\n") { out += "\\n"; continue; }
-        if (ch === "\r") { out += "\\r"; continue; }
-        if (ch === "\t") { out += "\\t"; continue; }
-        if (ch === '"') inString = false;
-        out += ch;
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charAt(i);
+    if (!inString) {
+      if (ch === '"') inString = true;
+      out += ch;
+      continue;
     }
-    return out;
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === "\n") {
+      out += "\\n";
+      continue;
+    }
+    if (ch === "\r") {
+      out += "\\r";
+      continue;
+    }
+    if (ch === "\t") {
+      out += "\\t";
+      continue;
+    }
+    if (ch === '"') inString = false;
+    out += ch;
+  }
+  return out;
 }
 
 // Repair control characters and invalid escapes exactly where JSON.parse
@@ -610,59 +710,68 @@ function escapeRawNewlinesInStrings(s: string): string {
 // it. Compound damage (raw newlines AND \` escapes in one string) needs
 // several rounds; the cap bounds pathological loops.
 function repairAtParserPositions(s: string): string {
-    let cur = s;
-    for (let i = 0; i < 500; i++) {
-        let err: unknown;
-        try {
-            JSON.parse(cur);
-            return cur;
-        } catch (e) {
-            err = e;
-        }
-        const msg = err instanceof Error ? err.message : String(err);
-        const posMatch = /position (\d+)/.exec(msg);
-        if (posMatch === null) return cur;
-        const pos = Number(posMatch[1]);
-        if (!Number.isInteger(pos) || pos < 0 || pos >= cur.length) return cur;
-        if (/control character/i.test(msg)) {
-            const ch = cur.charAt(pos);
-            let esc: string | undefined;
-            if (ch === "\n") esc = "\\n";
-            else if (ch === "\r") esc = "\\r";
-            else if (ch === "\t") esc = "\\t";
-            else if (ch.charCodeAt(0) < 32) esc = "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
-            if (esc === undefined) return cur;
-            cur = cur.slice(0, pos) + esc + cur.slice(pos + 1);
-        } else if (/Bad escaped character/i.test(msg)) {
-            const b = cur.charAt(pos - 1) === "\\" ? pos - 1 : cur.charAt(pos) === "\\" ? pos : -1;
-            if (b < 0) return cur;
-            cur = cur.slice(0, b) + "\\\\" + cur.slice(b + 1);
-        } else {
-            return cur;
-        }
+  let cur = s;
+  for (let i = 0; i < 500; i++) {
+    let err: unknown;
+    try {
+      JSON.parse(cur);
+      return cur;
+    } catch (e) {
+      err = e;
     }
-    return cur;
+    const msg = err instanceof Error ? err.message : String(err);
+    const posMatch = /position (\d+)/.exec(msg);
+    if (posMatch === null) return cur;
+    const pos = Number(posMatch[1]);
+    if (!Number.isInteger(pos) || pos < 0 || pos >= cur.length) return cur;
+    if (/control character/i.test(msg)) {
+      const ch = cur.charAt(pos);
+      let esc: string | undefined;
+      if (ch === "\n") esc = "\\n";
+      else if (ch === "\r") esc = "\\r";
+      else if (ch === "\t") esc = "\\t";
+      else if (ch.charCodeAt(0) < 32)
+        esc = "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
+      if (esc === undefined) return cur;
+      cur = cur.slice(0, pos) + esc + cur.slice(pos + 1);
+    } else if (/Bad escaped character/i.test(msg)) {
+      const b =
+        cur.charAt(pos - 1) === "\\"
+          ? pos - 1
+          : cur.charAt(pos) === "\\"
+            ? pos
+            : -1;
+      if (b < 0) return cur;
+      cur = cur.slice(0, b) + "\\\\" + cur.slice(b + 1);
+    } else {
+      return cur;
+    }
+  }
+  return cur;
 }
 
 // Unbalanced brackets or an unterminated string at end of input is the
 // signature of a mid-stream cutoff (as opposed to balanced garbage).
 function looksTruncated(s: string): boolean {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = 0; i < s.length; i++) {
-        const ch = s.charAt(i);
-        if (inString) {
-            if (escaped) escaped = false;
-            else if (ch === "\\") escaped = true;
-            else if (ch === '"') inString = false;
-            continue;
-        }
-        if (ch === '"') { inString = true; continue; }
-        if (ch === "{" || ch === "[") depth++;
-        else if (ch === "}" || ch === "]") depth--;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charAt(i);
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
     }
-    return depth > 0 || inString;
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+  }
+  return depth > 0 || inString;
 }
 
 /**
@@ -673,38 +782,41 @@ function looksTruncated(s: string): boolean {
  * dropped — the parser never invents model content.
  */
 function salvageContentEntries(raw: string): unknown[] {
-    const match = /"content"\s*:\s*\[/.exec(raw);
-    if (match === null) return [];
-    const arrayStart = match.index + match[0].length - 1;
-    const entries: unknown[] = [];
-    let depth = 0; // brackets nested inside the content array
-    let inString = false;
-    let escaped = false;
-    let entryStart = -1;
-    for (let i = arrayStart + 1; i < raw.length; i++) {
-        const ch = raw.charAt(i);
-        if (inString) {
-            if (escaped) escaped = false;
-            else if (ch === "\\") escaped = true;
-            else if (ch === '"') inString = false;
-            continue;
-        }
-        if (ch === '"') { inString = true; continue; }
-        if (ch === "{" || ch === "[") {
-            if (depth === 0 && ch === "{" && entryStart === -1) entryStart = i;
-            depth++;
-            continue;
-        }
-        if (ch === "}" || ch === "]") {
-            depth--;
-            if (depth < 0) break; // the content array itself closed
-            if (depth === 0 && entryStart !== -1) {
-                const entrySlice = raw.slice(entryStart, i + 1);
-                entryStart = -1;
-                const parsed = tryParseLenient(entrySlice);
-                if (parsed !== undefined) entries.push(parsed);
-            }
-        }
+  const match = /"content"\s*:\s*\[/.exec(raw);
+  if (match === null) return [];
+  const arrayStart = match.index + match[0].length - 1;
+  const entries: unknown[] = [];
+  let depth = 0; // brackets nested inside the content array
+  let inString = false;
+  let escaped = false;
+  let entryStart = -1;
+  for (let i = arrayStart + 1; i < raw.length; i++) {
+    const ch = raw.charAt(i);
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
     }
-    return entries;
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      if (depth === 0 && ch === "{" && entryStart === -1) entryStart = i;
+      depth++;
+      continue;
+    }
+    if (ch === "}" || ch === "]") {
+      depth--;
+      if (depth < 0) break; // the content array itself closed
+      if (depth === 0 && entryStart !== -1) {
+        const entrySlice = raw.slice(entryStart, i + 1);
+        entryStart = -1;
+        const parsed = tryParseLenient(entrySlice);
+        if (parsed !== undefined) entries.push(parsed);
+      }
+    }
+  }
+  return entries;
 }

@@ -173,11 +173,7 @@ test("count-weighted toolPct: A(count2,tool100) + B(count3,tool0) → 40 / 60", 
   ];
   const out = mergeRangesToThreshold(ranges, 5000);
   assert.equal(out.length, 1);
-  assert.equal(
-    out[0]!.toolPct,
-    40,
-    "round((100×2 + 0×3)/5) = 40",
-  );
+  assert.equal(out[0]!.toolPct, 40, "round((100×2 + 0×3)/5) = 40");
   assert.equal(out[0]!.textPct, 60, "textPct = 100 - toolPct");
 });
 

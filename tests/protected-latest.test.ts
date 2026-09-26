@@ -196,8 +196,14 @@ test("applyCompression: latest pair excluded from block, older pair folded", () 
   assert.ok(block.effectiveMessageIds.includes("r1"));
   assert.ok(!block.directMessageIds.includes("c2"), "latest call excluded");
   assert.ok(!block.directMessageIds.includes("r2"), "latest result excluded");
-  assert.ok(!block.effectiveMessageIds.includes("c2"), "latest call not covered");
-  assert.ok(!block.effectiveMessageIds.includes("r2"), "latest result not covered");
+  assert.ok(
+    !block.effectiveMessageIds.includes("c2"),
+    "latest call not covered",
+  );
+  assert.ok(
+    !block.effectiveMessageIds.includes("r2"),
+    "latest result not covered",
+  );
 });
 
 test("applyCompression: superseded pair is folded once a newer pair exists", () => {
@@ -253,14 +259,29 @@ test("applyCompression: protectedTools (hard) excludes ALL pairs, unlike protect
     ranges: [{ startRef: "m00001", endRef: "m00006", summary: validSummary }],
     messages,
     state,
-    config: latestCfg({ protectedLatestTools: [], protectedTools: ["todo_list"] }),
+    config: latestCfg({
+      protectedLatestTools: [],
+      protectedTools: ["todo_list"],
+    }),
   });
   assert.equal(result.result.blocksCreated, 1);
   const block = result.state.blocks[0]!;
-  assert.ok(!block.directMessageIds.includes("c1"), "hard: first call excluded");
-  assert.ok(!block.directMessageIds.includes("r1"), "hard: first result excluded");
-  assert.ok(!block.directMessageIds.includes("c2"), "hard: latest call excluded");
-  assert.ok(!block.directMessageIds.includes("r2"), "hard: latest result excluded");
+  assert.ok(
+    !block.directMessageIds.includes("c1"),
+    "hard: first call excluded",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("r1"),
+    "hard: first result excluded",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("c2"),
+    "hard: latest call excluded",
+  );
+  assert.ok(
+    !block.directMessageIds.includes("r2"),
+    "hard: latest result excluded",
+  );
 });
 
 test("buildCompressibleRanges: latest pair protected, older pair compressible", () => {
@@ -288,7 +309,11 @@ test("buildCompressibleRanges: latest pair protected, older pair compressible", 
   assert.equal(ranges.compressible[1]!.startRef, "m00004");
   assert.equal(ranges.compressible[1]!.endRef, "m00004");
   assert.equal(ranges.compressible[1]!.count, 1);
-  assert.equal(ranges.protected.length, 1, "latest pair is one protected range");
+  assert.equal(
+    ranges.protected.length,
+    1,
+    "latest pair is one protected range",
+  );
   const pr = ranges.protected[0]!;
   assert.equal(pr.startRef, "m00005");
   assert.equal(pr.endRef, "m00006");

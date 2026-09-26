@@ -33,12 +33,22 @@ function config(overrides: Partial<Config> = {}): Config {
   };
 }
 
-function msg(id: string, text: string, role: CoreMessage["role"] = "user"): CoreMessage {
+function msg(
+  id: string,
+  text: string,
+  role: CoreMessage["role"] = "user",
+): CoreMessage {
   return { id, role, contentType: "text", text };
 }
 
 function toolMsg(id: string, toolName: string): CoreMessage {
-  return { id, role: "assistant", contentType: "tool-call", toolName, text: `call ${toolName}` };
+  return {
+    id,
+    role: "assistant",
+    contentType: "tool-call",
+    toolName,
+    text: `call ${toolName}`,
+  };
 }
 
 function assignAll(
@@ -59,21 +69,35 @@ function assignAll(
 test("computeProtectedRefs: last user message is protected when preserveRecentMessages > 0", () => {
   const messages = [msg("a", "x"), msg("b", "y", "assistant")];
   const state = assignAll(messages);
-  const refs = computeProtectedRefs(messages, state, config({ preserveRecentMessages: 5 }));
-  assert.ok(refs.has("m00001"), "last user message (a) protected by Rule 3 when recent protection is on");
+  const refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentMessages: 5 }),
+  );
+  assert.ok(
+    refs.has("m00001"),
+    "last user message (a) protected by Rule 3 when recent protection is on",
+  );
 });
 
 test("computeProtectedRefs: last user message is NOT protected when preserveRecentMessages = 0 (full opt-out)", () => {
   const messages = [msg("a", "x"), msg("b", "y", "assistant")];
   const state = assignAll(messages);
   const refs = computeProtectedRefs(messages, state, config());
-  assert.ok(!refs.has("m00001"), "Rule 3 follows preserveRecentMessages — 0 opts out of all recent protection");
+  assert.ok(
+    !refs.has("m00001"),
+    "Rule 3 follows preserveRecentMessages — 0 opts out of all recent protection",
+  );
 });
 
 test("computeProtectedRefs: preserves last N messages by count", () => {
   const messages = [msg("a", "x"), msg("b", "y"), msg("c", "z")];
   const state = assignAll(messages);
-  const refs = computeProtectedRefs(messages, state, config({ preserveRecentMessages: 2 }));
+  const refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentMessages: 2 }),
+  );
   assert.ok(refs.has("m00002"));
   assert.ok(refs.has("m00003"));
   assert.ok(!refs.has("m00001"));
@@ -86,7 +110,11 @@ test("computeProtectedRefs: preserves last N tokens expanding backward", () => {
     msg("c", "z".repeat(1200)),
   ];
   const state = assignAll(messages);
-  const refs = computeProtectedRefs(messages, state, config({ preserveRecentTokens: 500 }));
+  const refs = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentTokens: 500 }),
+  );
   assert.ok(refs.has("m00003"));
   assert.ok(refs.has("m00002"));
   assert.ok(!refs.has("m00001"), "a is outside the 500-token window");
@@ -119,9 +147,19 @@ test("buildCompressibleRanges: range tokens follow injected countTokens (feeds p
   const messages = [msg("a", "x".repeat(100)), msg("b", "y".repeat(100))];
   const state = assignAll(messages);
   const mock = (t: string): number => t.length * 7;
-  const ranges = buildCompressibleRanges(messages, state, config(), undefined, mock);
+  const ranges = buildCompressibleRanges(
+    messages,
+    state,
+    config(),
+    undefined,
+    mock,
+  );
   assert.equal(ranges.compressible.length, 1);
-  assert.equal(ranges.compressible[0]!.tokens, 1400, "range.tokens must follow injected countTokens, not chars/4");
+  assert.equal(
+    ranges.compressible[0]!.tokens,
+    1400,
+    "range.tokens must follow injected countTokens, not chars/4",
+  );
 });
 
 test("computeProtectedRefs: combines count + token rules (union)", () => {
@@ -172,7 +210,11 @@ test("buildCompressibleRanges: protected tools get BLOCKED, excluded from compre
     state,
     config({ protectedTools: ["skill"] }),
   );
-  assert.equal(ranges.compressible.length, 1, "a and c form one contiguous range");
+  assert.equal(
+    ranges.compressible.length,
+    1,
+    "a and c form one contiguous range",
+  );
   assert.equal(ranges.compressible[0]!.startRef, "m00001");
   assert.equal(ranges.compressible[0]!.endRef, "m00002");
 });
@@ -207,7 +249,10 @@ test("buildCompressibleRanges: tool/text percentage computed", () => {
   const ranges = buildCompressibleRanges(messages, state, config());
   assert.ok(ranges.compressible[0]!.toolPct > 0);
   assert.ok(ranges.compressible[0]!.textPct > 0);
-  assert.equal(ranges.compressible[0]!.toolPct + ranges.compressible[0]!.textPct, 100);
+  assert.equal(
+    ranges.compressible[0]!.toolPct + ranges.compressible[0]!.textPct,
+    100,
+  );
 });
 
 test("buildCompressibleRanges: splits at user-turn boundaries once a group has >= 3 messages", () => {
@@ -218,11 +263,21 @@ test("buildCompressibleRanges: splits at user-turn boundaries once a group has >
   for (let i = 0; i < 4; i++) {
     messages.push(msg("u" + i, "user turn " + i + " content".repeat(50)));
     messages.push(toolMsg("a" + i, "bash"));
-    messages.push({ id: "t" + i, role: "tool", contentType: "tool-result", toolCallId: "c" + i, text: "result".repeat(50) });
+    messages.push({
+      id: "t" + i,
+      role: "tool",
+      contentType: "tool-result",
+      toolCallId: "c" + i,
+      text: "result".repeat(50),
+    });
   }
   const state = assignAll(messages);
   const ranges = buildCompressibleRanges(messages, state, config());
-  assert.equal(ranges.compressible.length, 4, "one compressible block per user turn");
+  assert.equal(
+    ranges.compressible.length,
+    4,
+    "one compressible block per user turn",
+  );
   // Each block covers exactly one turn (3 msgs): u0/a0/t0, u1/a1/t1, ...
   assert.equal(ranges.compressible[0]!.startRef, "m00001");
   assert.equal(ranges.compressible[0]!.endRef, "m00003");
@@ -236,12 +291,22 @@ test("buildCompressibleRanges: does NOT split before a group reaches 3 messages"
   // so the user message should join the existing group rather than start a new one.
   const messages = [
     toolMsg("a", "bash"),
-    { id: "t", role: "tool", contentType: "tool-result", toolCallId: "c", text: "result".repeat(50) },
+    {
+      id: "t",
+      role: "tool",
+      contentType: "tool-result",
+      toolCallId: "c",
+      text: "result".repeat(50),
+    },
     msg("u", "user message"),
   ];
   const state = assignAll(messages);
   const ranges = buildCompressibleRanges(messages, state, config());
-  assert.equal(ranges.compressible.length, 1, "short group not split at user boundary");
+  assert.equal(
+    ranges.compressible.length,
+    1,
+    "short group not split at user boundary",
+  );
   assert.equal(ranges.compressible[0]!.count, 3);
 });
 
@@ -257,7 +322,11 @@ test("buildCompressibleRanges: ref-map holes do NOT fragment ranges (surface-rep
   const e = msg("e", "v".repeat(2000));
   const state = assignAll([a, msg("b", "y"), msg("c", "z"), msg("d", "w"), e]);
   const ranges = buildCompressibleRanges([a, e], state, config());
-  assert.equal(ranges.compressible.length, 1, "holes in the ref map must not split the range");
+  assert.equal(
+    ranges.compressible.length,
+    1,
+    "holes in the ref map must not split the range",
+  );
   assert.equal(ranges.compressible[0]!.startRef, "m00001");
   assert.equal(ranges.compressible[0]!.endRef, "m00005");
   assert.equal(ranges.compressible[0]!.count, 2);
@@ -272,12 +341,24 @@ test("buildCompressibleRanges: mid-array summary node extends the range, never a
   const a = msg("a", "x".repeat(2000), "assistant");
   const d = msg("d", "w".repeat(2000), "assistant");
   const e = msg("e", "v".repeat(2000), "assistant");
-  const summary = msg("s", "Summary of the compressed span: did the work.", "assistant");
+  const summary = msg(
+    "s",
+    "Summary of the compressed span: did the work.",
+    "assistant",
+  );
   const s1 = assignAll([a, msg("b", "y"), msg("c", "z"), d, e]);
   const state = assignAll([a, summary, d, e], s1);
-  assert.equal(state.messageRefs.byRaw["s"], "m00006", "summary node gets a fresh high ref");
+  assert.equal(
+    state.messageRefs.byRaw["s"],
+    "m00006",
+    "summary node gets a fresh high ref",
+  );
   const ranges = buildCompressibleRanges([a, summary, d, e], state, config());
-  assert.equal(ranges.compressible.length, 1, "mid-array summary node must not flush the range");
+  assert.equal(
+    ranges.compressible.length,
+    1,
+    "mid-array summary node must not flush the range",
+  );
   assert.equal(ranges.compressible[0]!.startRef, "m00001");
   assert.equal(ranges.compressible[0]!.endRef, "m00005");
   assert.equal(ranges.compressible[0]!.count, 4);
@@ -290,11 +371,19 @@ test("buildCompressibleRanges: synthetic (covered) summary node still splits ran
   // where nothing is physically present between them.
   const a = msg("a", "x".repeat(2000));
   const e = msg("e", "v".repeat(2000));
-  const synthetic = msg("s", "[Compressed conversation section] earlier work summarized.", "assistant");
+  const synthetic = msg(
+    "s",
+    "[Compressed conversation section] earlier work summarized.",
+    "assistant",
+  );
   const s1 = assignAll([a, msg("b", "y"), msg("c", "z"), msg("d", "w"), e]);
   const state = assignAll([a, synthetic, e], s1);
   const ranges = buildCompressibleRanges([a, synthetic, e], state, config());
-  assert.equal(ranges.compressible.length, 2, "covered span must not be folded into the new range");
+  assert.equal(
+    ranges.compressible.length,
+    2,
+    "covered span must not be folded into the new range",
+  );
   assert.equal(ranges.compressible[0]!.startRef, "m00001");
   assert.equal(ranges.compressible[0]!.endRef, "m00001");
   assert.equal(ranges.compressible[1]!.startRef, "m00005");
@@ -316,15 +405,27 @@ test("buildCompressibleRanges: protected groups segment by array adjacency too",
     dense,
     config({ protectedTools: ["skill"] }),
   );
-  assert.equal(denseRanges.protected.length, 2, "interleaved non-protected message splits protected groups");
+  assert.equal(
+    denseRanges.protected.length,
+    2,
+    "interleaved non-protected message splits protected groups",
+  );
 
   const holed = createInitialState();
   holed.messageRefs = {
     byRaw: { p1: "m00001", p2: "m00005" },
     byRef: { m00001: "p1", m00005: "p2" },
   };
-  const holedRanges = buildCompressibleRanges([p1, p2], holed, config({ protectedTools: ["skill"] }));
-  assert.equal(holedRanges.protected.length, 1, "hole in the ref map must not split the protected group");
+  const holedRanges = buildCompressibleRanges(
+    [p1, p2],
+    holed,
+    config({ protectedTools: ["skill"] }),
+  );
+  assert.equal(
+    holedRanges.protected.length,
+    1,
+    "hole in the ref map must not split the protected group",
+  );
   assert.equal(holedRanges.protected[0]!.count, 2);
   assert.equal(holedRanges.protected[0]!.startRef, "m00001");
   assert.equal(holedRanges.protected[0]!.endRef, "m00005");
@@ -335,10 +436,7 @@ test("buildCompressibleRanges: protected groups segment by array adjacency too",
 test("integration: tiny ranges are suppressed — fixes the 19-token compression bug", () => {
   const core = createCore();
   const state = createInitialState();
-  const messages = [
-    msg("a", "hello"),
-    msg("b", "world"),
-  ];
+  const messages = [msg("a", "hello"), msg("b", "world")];
   const result = core.processTurn({
     messages,
     state,
@@ -346,24 +444,43 @@ test("integration: tiny ranges are suppressed — fixes the 19-token compression
     tokenCount: 5000,
   });
   assert.equal(result.nudge!.shouldInject, false, "turn 1: growth=0, no nudge");
-  assert.ok(result.nudge!.reason.includes("growth"), `reason: ${result.nudge!.reason}`);
+  assert.ok(
+    result.nudge!.reason.includes("growth"),
+    `reason: ${result.nudge!.reason}`,
+  );
 });
 
 // ─── countTokens injection (Phase 1: T1 pending uses injected countTokens) ────
 
 test("buildCompressibleRanges: CJK-aware countTokens inflates Chinese pending vs chars/4", () => {
   const zh = "这是一个中文测试消息用于验证token校准的效果。".repeat(20); // ~340 chars
-  const messages = [msg("a", zh), toolMsg("b", "bash"), msg("c", "tail", "tool")];
+  const messages = [
+    msg("a", zh),
+    toolMsg("b", "bash"),
+    msg("c", "tail", "tool"),
+  ];
   const state = assignAll(messages);
 
   const chars4 = buildCompressibleRanges(messages, state, config());
-  const cjk = buildCompressibleRanges(messages, state, config(), undefined, (t) => t.length);
+  const cjk = buildCompressibleRanges(
+    messages,
+    state,
+    config(),
+    undefined,
+    (t) => t.length,
+  );
 
   const pendingDefault = chars4.compressible.reduce((s, r) => s + r.tokens, 0);
   const pendingCjk = cjk.compressible.reduce((s, r) => s + r.tokens, 0);
-  assert.ok(pendingCjk > pendingDefault, `cjk ${pendingCjk} should exceed chars/4 ${pendingDefault}`);
+  assert.ok(
+    pendingCjk > pendingDefault,
+    `cjk ${pendingCjk} should exceed chars/4 ${pendingDefault}`,
+  );
   // ~340 chars: chars/4 ≈ 85, CJK-aware ≈ 340+ → multiple of ~3+
-  assert.ok(pendingCjk >= pendingDefault * 3, `expected >=3x inflation, got ${pendingCjk} vs ${pendingDefault}`);
+  assert.ok(
+    pendingCjk >= pendingDefault * 3,
+    `expected >=3x inflation, got ${pendingCjk} vs ${pendingDefault}`,
+  );
 });
 
 test("buildCompressibleRanges: default countTokens preserves chars/4 legacy behavior", () => {
@@ -378,13 +495,38 @@ test("computeProtectedRefs: injected countTokens sizes the recent-token zone", (
   // three fit in 100 tokens (zone {a,b,c}); CJK-aware (1 tok/char) → b alone
   // blows past 100 (zone {b,c}). If countTokens were ignored, both calls would
   // protect a and the cjk assertion below would fail.
-  const messages = [msg("a", "x".repeat(200)), msg("b", "x".repeat(200)), msg("c", "y")];
+  const messages = [
+    msg("a", "x".repeat(200)),
+    msg("b", "x".repeat(200)),
+    msg("c", "y"),
+  ];
   const state = assignAll(messages);
-  const chars4 = computeProtectedRefs(messages, state, config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }));
-  assert.equal(chars4.has("m00001"), true, "chars/4: a (50 tok) fits within 100-token zone");
-  assert.equal(chars4.has("m00003"), true, "chars/4: c is most recent, in zone");
-  const cjk = computeProtectedRefs(messages, state, config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }), (t) => t.length);
-  assert.equal(cjk.has("m00001"), false, "cjk: a excluded (b alone exceeds 100-token budget)");
+  const chars4 = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }),
+  );
+  assert.equal(
+    chars4.has("m00001"),
+    true,
+    "chars/4: a (50 tok) fits within 100-token zone",
+  );
+  assert.equal(
+    chars4.has("m00003"),
+    true,
+    "chars/4: c is most recent, in zone",
+  );
+  const cjk = computeProtectedRefs(
+    messages,
+    state,
+    config({ preserveRecentTokens: 100, preserveRecentMessages: 0 }),
+    (t) => t.length,
+  );
+  assert.equal(
+    cjk.has("m00001"),
+    false,
+    "cjk: a excluded (b alone exceeds 100-token budget)",
+  );
   assert.equal(cjk.has("m00002"), true, "cjk: b in zone");
   assert.equal(cjk.has("m00003"), true, "cjk: c most recent, in zone");
 });

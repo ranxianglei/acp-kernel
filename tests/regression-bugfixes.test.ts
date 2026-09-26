@@ -136,7 +136,11 @@ test("compressibleRanges use real assigned refs, not array-index arithmetic", ()
     messages,
     state,
     // minPressureBenefitTokens: 0 = legacy any-pending pressure injection; this test exercises ref assignment, not the #198 benefit gate.
-    config: config({ protectedTools: ["skill"], preserveRecentMessages: 2, nudge: { ...config().nudge, growthRatio: 0, minPressureBenefitTokens: 0 } }),
+    config: config({
+      protectedTools: ["skill"],
+      preserveRecentMessages: 2,
+      nudge: { ...config().nudge, growthRatio: 0, minPressureBenefitTokens: 0 },
+    }),
     tokenCount: 99000,
   });
 
@@ -153,7 +157,11 @@ test("compressibleRanges use real assigned refs, not array-index arithmetic", ()
     "m00001",
     "startRef must be a's real assigned ref",
   );
-  assert.equal(range.endRef, "m00004", "endRef must be e's real assigned ref (f protected)");
+  assert.equal(
+    range.endRef,
+    "m00004",
+    "endRef must be e's real assigned ref (f protected)",
+  );
 });
 
 // Bug C: processTurn mutated the caller's state.nudge because syncBlocks only
@@ -172,7 +180,9 @@ test("processTurn does not mutate the caller's input state.nudge", () => {
   const result = core.processTurn({
     messages,
     state,
-    config: config({ nudge: { ...config().nudge, growthRatio: 0, minPressureBenefitTokens: 0 } }),
+    config: config({
+      nudge: { ...config().nudge, growthRatio: 0, minPressureBenefitTokens: 0 },
+    }),
     tokenCount: 99000,
   });
 
@@ -276,11 +286,11 @@ test("composable pipeline excluding sync-blocks must not leak nudge mutations to
   const state = createInitialState();
   const messages = [msg("a", "hello"), msg("b", "world")];
   // minPressureBenefitTokens: 0 = legacy any-pending pressure injection; this test exercises pipeline composition, not the #198 benefit gate.
-  const cfg = config({ nudge: { ...config().nudge, growthRatio: 0, minPressureBenefitTokens: 0 } });
+  const cfg = config({
+    nudge: { ...config().nudge, growthRatio: 0, minPressureBenefitTokens: 0 },
+  });
 
-  const nodes = core
-    .defaultNodes()
-    .filter((n) => n.name !== "sync-blocks");
+  const nodes = core.defaultNodes().filter((n) => n.name !== "sync-blocks");
   const initial = makeIO(messages, state);
   const ctx = {
     config: cfg,
@@ -323,9 +333,18 @@ test("render-refs preserves user content that starts with a ref-like token", () 
 
   const rendered = renderVisibleRefs(messages, state);
 
-  assert.match(rendered[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\n\[m1\] is my first point$/);
-  assert.match(rendered[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\n\[m00005\] please review$/);
-  assert.match(rendered[2]!.text!, /^<acp tokens="\d+" type="text">m00003<\/acp>\n\[m00003\] \[m00003\] dup tags$/);
+  assert.match(
+    rendered[0]!.text!,
+    /^<acp tokens="\d+" type="text">m00001<\/acp>\n\[m1\] is my first point$/,
+  );
+  assert.match(
+    rendered[1]!.text!,
+    /^<acp tokens="\d+" type="text">m00002<\/acp>\n\[m00005\] please review$/,
+  );
+  assert.match(
+    rendered[2]!.text!,
+    /^<acp tokens="\d+" type="text">m00003<\/acp>\n\[m00003\] \[m00003\] dup tags$/,
+  );
 });
 
 test("render-refs is idempotent across repeated renders", () => {
@@ -342,8 +361,14 @@ test("render-refs is idempotent across repeated renders", () => {
     once.map((m) => m.text),
     twice.map((m) => m.text),
   );
-  assert.match(once[0]!.text!, /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/);
-  assert.match(once[1]!.text!, /^<acp tokens="\d+" type="text">m00002<\/acp>\n\[m00002\] beta$/);
+  assert.match(
+    once[0]!.text!,
+    /^<acp tokens="\d+" type="text">m00001<\/acp>\nalpha$/,
+  );
+  assert.match(
+    once[1]!.text!,
+    /^<acp tokens="\d+" type="text">m00002<\/acp>\n\[m00002\] beta$/,
+  );
 });
 
 test("batch: overlapping ranges warn and skip (earliest wins) instead of failing", () => {
@@ -369,8 +394,16 @@ test("batch: overlapping ranges warn and skip (earliest wins) instead of failing
     config: config(),
   });
 
-  assert.equal(result.result.errors.length, 0, "overlap is non-fatal — no errors");
-  assert.equal(result.result.blocksCreated, 1, "the earlier range is still compressed");
+  assert.equal(
+    result.result.errors.length,
+    0,
+    "overlap is non-fatal — no errors",
+  );
+  assert.equal(
+    result.result.blocksCreated,
+    1,
+    "the earlier range is still compressed",
+  );
   assert.ok(
     result.result.warnings.some((w) => /overlaps an earlier range/i.test(w)),
     "a warning is recorded for the skipped range",
@@ -423,8 +456,16 @@ test("batch: disjoint range still compresses when two others overlap", () => {
   const result = core.applyCompression({
     ranges: [
       { startRef: "m00001", endRef: "m00002", summary: "ab summary" },
-      { startRef: "m00002", endRef: "m00003", summary: "bc summary (overlaps ab)" },
-      { startRef: "m00004", endRef: "m00005", summary: "de summary (disjoint)" },
+      {
+        startRef: "m00002",
+        endRef: "m00003",
+        summary: "bc summary (overlaps ab)",
+      },
+      {
+        startRef: "m00004",
+        endRef: "m00005",
+        summary: "de summary (disjoint)",
+      },
     ],
     messages,
     state,
@@ -453,26 +494,56 @@ test("batch: overlap resolved deterministically regardless of input order", () =
     nextIndex: 1,
   }).map;
 
-  const run = (ranges: Parameters<typeof core.applyCompression>[0]["ranges"]) => {
+  const run = (
+    ranges: Parameters<typeof core.applyCompression>[0]["ranges"],
+  ) => {
     const fresh = createInitialState();
     fresh.messageRefs = state.messageRefs;
-    return core.applyCompression({ ranges, messages, state: fresh, config: config() });
+    return core.applyCompression({
+      ranges,
+      messages,
+      state: fresh,
+      config: config(),
+    });
   };
 
   const sorted = run([
     { startRef: "m00001", endRef: "m00002", summary: "ab summary" },
-    { startRef: "m00002", endRef: "m00003", summary: "bc summary (overlaps ab)" },
-    { startRef: "m00003", endRef: "m00004", summary: "cd summary (disjoint from ab)" },
+    {
+      startRef: "m00002",
+      endRef: "m00003",
+      summary: "bc summary (overlaps ab)",
+    },
+    {
+      startRef: "m00003",
+      endRef: "m00004",
+      summary: "cd summary (disjoint from ab)",
+    },
   ]);
   const shuffled = run([
-    { startRef: "m00003", endRef: "m00004", summary: "cd summary (disjoint from ab)" },
-    { startRef: "m00002", endRef: "m00003", summary: "bc summary (overlaps ab)" },
+    {
+      startRef: "m00003",
+      endRef: "m00004",
+      summary: "cd summary (disjoint from ab)",
+    },
+    {
+      startRef: "m00002",
+      endRef: "m00003",
+      summary: "bc summary (overlaps ab)",
+    },
     { startRef: "m00001", endRef: "m00002", summary: "ab summary" },
   ]);
 
-  for (const [label, result] of [["sorted", sorted], ["shuffled", shuffled]] as const) {
+  for (const [label, result] of [
+    ["sorted", sorted],
+    ["shuffled", shuffled],
+  ] as const) {
     assert.equal(result.result.errors.length, 0, `${label}: no errors`);
-    assert.equal(result.result.blocksCreated, 2, `${label}: earliest range + disjoint range compressed`);
+    assert.equal(
+      result.result.blocksCreated,
+      2,
+      `${label}: earliest range + disjoint range compressed`,
+    );
     assert.ok(
       result.result.warnings.some((w) => /overlaps an earlier range/i.test(w)),
       `${label}: overlap warning present`,
@@ -495,16 +566,27 @@ test("block-boundary distillation counts consumed block tokens", () => {
   }).map;
 
   const t1 = core.applyCompression({
-    ranges: [{ startRef: "m00001", endRef: "m00002", summary: "first block summary with enough detail" }],
+    ranges: [
+      {
+        startRef: "m00001",
+        endRef: "m00002",
+        summary: "first block summary with enough detail",
+      },
+    ],
     messages,
     state,
     config: config(),
   });
 
-  assert.ok(t1.result.tokensCompressed > 0, "T1 should count compressed tokens");
+  assert.ok(
+    t1.result.tokensCompressed > 0,
+    "T1 should count compressed tokens",
+  );
 
   const t2 = core.applyCompression({
-    ranges: [{ startRef: "b1", endRef: "b1", summary: "distilled tier 2 summary" }],
+    ranges: [
+      { startRef: "b1", endRef: "b1", summary: "distilled tier 2 summary" },
+    ],
     messages,
     state: t1.state,
     config: config(),

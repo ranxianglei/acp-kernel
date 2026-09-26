@@ -1,4 +1,11 @@
-import type { NudgeDecision, CompressibleRange, ProtectedRange, ContextBreakdown, CompressionBlock, BlockSpan } from "./types.js";
+import type {
+  NudgeDecision,
+  CompressibleRange,
+  ProtectedRange,
+  ContextBreakdown,
+  CompressionBlock,
+  BlockSpan,
+} from "./types.js";
 import { defaultPrompts } from "./prompts.js";
 import type { Prompts } from "./prompts.js";
 
@@ -16,12 +23,18 @@ export interface RenderedNudge {
   text: string;
 }
 
-function efficiencyNote(prompts: Prompts, sections: NudgePromptSections): string | null {
+function efficiencyNote(
+  prompts: Prompts,
+  sections: NudgePromptSections,
+): string | null {
   if (sections.efficiencyNote !== undefined) return sections.efficiencyNote;
   return `This is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${prompts.compressPhilosophy}`;
 }
 
-function emergencyHeader(prompts: Prompts, sections: NudgePromptSections): string | null {
+function emergencyHeader(
+  prompts: Prompts,
+  sections: NudgePromptSections,
+): string | null {
   if (sections.emergencyHeader !== undefined) return sections.emergencyHeader;
   return `⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n${prompts.compressPhilosophy}`;
 }
@@ -39,11 +52,10 @@ function formatBreakdown(bd?: ContextBreakdown): string {
   if (bd.summaries > 0) parts.push(`${formatK(bd.summaries)} summaries`);
   if (bd.code > 0) parts.push(`${formatK(bd.code)} code`);
   if (bd.text > 0) parts.push(`${formatK(bd.text)} text`);
-  const growth = bd.growth > 0 ? `\n+${formatK(bd.growth)} since last nudge` : "";
+  const growth =
+    bd.growth > 0 ? `\n+${formatK(bd.growth)} since last nudge` : "";
   return `Context breakdown: ${parts.join(" | ")}${growth}`;
 }
-
-
 
 function formatTierTargetBlocks(blocks: CompressionBlock[]): string {
   if (blocks.length === 0) {
@@ -64,13 +76,17 @@ function formatBlockMap(spans: BlockSpan[]): string {
   const hidden = Math.max(0, spans.length - BLOCK_MAP_MAX_SHOWN);
   const shown = hidden > 0 ? spans.slice(-BLOCK_MAP_MAX_SHOWN) : spans;
   const items = shown.map(
-    (s) => `${s.blockId}=${s.startRef}–${s.endRef}${s.tier > 1 ? ` t${s.tier}` : ""}`,
+    (s) =>
+      `${s.blockId}=${s.startRef}–${s.endRef}${s.tier > 1 ? ` t${s.tier}` : ""}`,
   );
   const prefix = hidden > 0 ? `…+${hidden} older · ` : "";
   return `Active blocks (${spans.length}): ${prefix}${items.join(" · ")}`;
 }
 
-export function formatRanges(compressible: CompressibleRange[], protectedRanges: ProtectedRange[]): string {
+export function formatRanges(
+  compressible: CompressibleRange[],
+  protectedRanges: ProtectedRange[],
+): string {
   if (compressible.length === 0 && protectedRanges.length === 0) {
     return "[No specific ranges detected — compress any consumed content.]";
   }
@@ -80,12 +96,23 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   // lost the time order and hid overlaps; a range can be partly compressible
   // and partly protected, which only the merged view shows correctly.
   interface Merged {
-    startRef: string; endRef: string; startNum: number; endNum: number;
-    startPos: number; endPos: number;
-    count: number; tokens: number; userMsgs: number;
-    compressibleTokens: number; compressibleCount: number;
-    protectedTokens: number; protectedCount: number; protectedTools: string[];
-    toolPct: number; textPct: number; dangerous: boolean;
+    startRef: string;
+    endRef: string;
+    startNum: number;
+    endNum: number;
+    startPos: number;
+    endPos: number;
+    count: number;
+    tokens: number;
+    userMsgs: number;
+    compressibleTokens: number;
+    compressibleCount: number;
+    protectedTokens: number;
+    protectedCount: number;
+    protectedTools: string[];
+    toolPct: number;
+    textPct: number;
+    dangerous: boolean;
   }
   const refNum = (ref: string): number => {
     const m = ref.match(/\d+/);
@@ -94,20 +121,44 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   const entries: Merged[] = [];
   for (const r of compressible) {
     entries.push({
-      startRef: r.startRef, endRef: r.endRef, startNum: refNum(r.startRef), endNum: refNum(r.endRef),
-      startPos: r.startIndex ?? refNum(r.startRef), endPos: r.endIndex ?? refNum(r.endRef),
-      count: r.count, tokens: r.tokens, userMsgs: r.userMsgs ?? 0, toolPct: r.toolPct, textPct: r.textPct,
-      compressibleTokens: r.tokens, compressibleCount: r.count,
-      protectedTokens: 0, protectedCount: 0, protectedTools: [], dangerous: r.dangerous ?? false,
+      startRef: r.startRef,
+      endRef: r.endRef,
+      startNum: refNum(r.startRef),
+      endNum: refNum(r.endRef),
+      startPos: r.startIndex ?? refNum(r.startRef),
+      endPos: r.endIndex ?? refNum(r.endRef),
+      count: r.count,
+      tokens: r.tokens,
+      userMsgs: r.userMsgs ?? 0,
+      toolPct: r.toolPct,
+      textPct: r.textPct,
+      compressibleTokens: r.tokens,
+      compressibleCount: r.count,
+      protectedTokens: 0,
+      protectedCount: 0,
+      protectedTools: [],
+      dangerous: r.dangerous ?? false,
     });
   }
   for (const r of protectedRanges) {
     entries.push({
-      startRef: r.startRef, endRef: r.endRef, startNum: refNum(r.startRef), endNum: refNum(r.endRef),
-      startPos: r.startIndex ?? refNum(r.startRef), endPos: r.endIndex ?? refNum(r.endRef),
-      count: r.count, tokens: r.tokens, userMsgs: 0, toolPct: 0, textPct: 0,
-      compressibleTokens: 0, compressibleCount: 0,
-      protectedTokens: r.tokens, protectedCount: r.count, protectedTools: [...r.tools], dangerous: false,
+      startRef: r.startRef,
+      endRef: r.endRef,
+      startNum: refNum(r.startRef),
+      endNum: refNum(r.endRef),
+      startPos: r.startIndex ?? refNum(r.startRef),
+      endPos: r.endIndex ?? refNum(r.endRef),
+      count: r.count,
+      tokens: r.tokens,
+      userMsgs: 0,
+      toolPct: 0,
+      textPct: 0,
+      compressibleTokens: 0,
+      compressibleCount: 0,
+      protectedTokens: r.tokens,
+      protectedCount: r.count,
+      protectedTools: [...r.tools],
+      dangerous: false,
     });
   }
   // Order/merge by POSITION, never ref number: refs can be non-monotonic vs array
@@ -140,7 +191,10 @@ export function formatRanges(compressible: CompressibleRange[], protectedRanges:
   const userNote = (n: number): string =>
     n > 0 ? ` · ${n} user msg${n > 1 ? "s" : ""}` : "";
   const lines = merged.map((e) => {
-    const suffix = e.dangerous && e.compressibleTokens > 0 ? "  ⚠️ NOT recommended unless you are certain." : "";
+    const suffix =
+      e.dangerous && e.compressibleTokens > 0
+        ? "  ⚠️ NOT recommended unless you are certain."
+        : "";
     if (e.protectedTokens > 0 && e.compressibleTokens === 0) {
       return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${formatK(e.tokens)} [PROTECTED: ${e.protectedTools.join(", ")} — not compressible]${suffix}`;
     }
@@ -156,7 +210,10 @@ const DEFAULT_T2_GUIDANCE = `Your tier-1 compression summaries have accumulated.
 
 const DEFAULT_T3_GUIDANCE = `Your tier-2 compression summaries have accumulated. Condense them further into a tier-3 ultra-condensed summary. Use block IDs as boundaries (startId and endId as bN). Any raw (uncompressed) messages sitting between the boundary blocks are absorbed into the tier-3 block as well — apply HOW TO COMPRESS to those raw messages and the TIER 3 condensation rules to the existing summaries, so the whole span is covered and nothing is lost.`;
 
-function tierGuidance(tier: 2 | 3, sections: NudgePromptSections): string | null {
+function tierGuidance(
+  tier: 2 | 3,
+  sections: NudgePromptSections,
+): string | null {
   const value = tier === 2 ? sections.t2Guidance : sections.t3Guidance;
   if (value !== undefined) return value;
   return tier === 2 ? DEFAULT_T2_GUIDANCE : DEFAULT_T3_GUIDANCE;
@@ -167,11 +224,19 @@ function compact(parts: string[]): string[] {
   return parts;
 }
 
-export function renderNudgeText(decision: NudgeDecision, prompts: Prompts = defaultPrompts, sections: NudgePromptSections = {}): RenderedNudge {
+export function renderNudgeText(
+  decision: NudgeDecision,
+  prompts: Prompts = defaultPrompts,
+  sections: NudgePromptSections = {},
+): RenderedNudge {
   const breakdownStr = formatBreakdown(decision.contextBreakdown);
-  const rangesStr = formatRanges(decision.compressibleRanges, decision.protectedRanges ?? []);
+  const rangesStr = formatRanges(
+    decision.compressibleRanges,
+    decision.protectedRanges ?? [],
+  );
   const blockMapStr = formatBlockMap(decision.activeBlockSpans ?? []);
-  const isEmergency = !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
+  const isEmergency =
+    !!decision.breakdown?.emergencyOverride || !!decision.breakdown?.overLimit;
 
   if (decision.tier !== null && decision.tier >= 2) {
     const isT2 = decision.tier === 2;

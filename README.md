@@ -6,7 +6,7 @@ Framework-agnostic, model-driven context-compression engine. Pure TypeScript cor
 
 `acp-kernel` is a **host-agnostic, model-driven context-compression engine**: 3-tier LSM-tree context compression, growth-based nudge policy, protected-content filtering. Its compression algorithms and pipeline architecture (`PipelineNode` / `processTurn` / `CompressionCore`) are **original work by the ACP authors** — an independent reimplementation, not a port of any existing codebase.
 
-The key design principle: **the model writes the summaries; this library orchestrates everything around them.** The core decides *when* to compress, *what range* to compress, tracks *state* (blocks, message-id mapping, tiers), applies a compress *decision*, prunes compressed ranges, and supports decompress/search. It never calls a model.
+The key design principle: **the model writes the summaries; this library orchestrates everything around them.** The core decides _when_ to compress, _what range_ to compress, tracks _state_ (blocks, message-id mapping, tiers), applies a compress _decision_, prunes compressed ranges, and supports decompress/search. It never calls a model.
 
 ## Why a separate library
 
@@ -32,7 +32,7 @@ See [DESIGN.md](./DESIGN.md) for the full contract and [PROVENANCE.md](./PROVENA
 ```ts
 import { createCore, createInitialState, defaultConfig } from "acp-kernel";
 
-const core = createCore();          // optional: { countTokens }
+const core = createCore(); // optional: { countTokens }
 const state = createInitialState();
 const config = defaultConfig(200000); // modelContextLimit (positional); optional overrides as 2nd arg
 
@@ -40,20 +40,30 @@ const config = defaultConfig(200000); // modelContextLimit (positional); optiona
 // assign-refs → sync-blocks → prune → ccr-store → absorb-hide → crush →
 // absorb-prompt → filter → hide-compress-calls → recommend → nudge-inject
 // → emergency-truncate → render-refs
-const { messages, state: nextState, nudge, contentStore } = core.processTurn({
-  messages, state, config, tokenCount,
+const {
+  messages,
+  state: nextState,
+  nudge,
+  contentStore,
+} = core.processTurn({
+  messages,
+  state,
+  config,
+  tokenCount,
   contentStore, // previous turn's content store (optional; see CCR below)
 });
 
 // When the model emits a compress decision (summary written by the model):
 const { state: compressed, result } = core.applyCompression({
   ranges: [{ startRef: "m00005", endRef: "m00020", summary: "..." }],
-  messages, state: nextState, config,
+  messages,
+  state: nextState,
+  config,
 });
 
-core.decompress("b3", compressed);            // look up a block
-core.search("auth token", compressed);        // relevance-ranked block search
-core.status(compressed, tokenCount, config);  // context-usage report
+core.decompress("b3", compressed); // look up a block
+core.search("auth token", compressed); // relevance-ranked block search
+core.status(compressed, tokenCount, config); // context-usage report
 ```
 
 #### `renderTags` — host-side rendering strategy
@@ -103,7 +113,10 @@ const config = defaultConfig(200000, { ccr: { enabled: true } }); // opt-in
 
 // Turn N: pass the previous turn's store back in.
 const { messages, state, contentStore } = core.processTurn({
-  messages, state, config, tokenCount,
+  messages,
+  state,
+  config,
+  tokenCount,
   contentStore, // persisted from turn N-1 (host owns persistence)
 });
 
@@ -159,25 +172,25 @@ right after `applyCompression` so pruned originals stay retrievable by ref.
 `<acp tokens="N">` attribute is frozen at the tag's first render (the
 per-message `tokenSnapshot` in state) and is not recomputed when the message
 text is later filtered, truncated, or edited by the host — the number always
-describes what the model originally saw. Nudge/pressure *decisions* are
+describes what the model originally saw. Nudge/pressure _decisions_ are
 unaffected: they recount live text every turn. If you need the legacy
 live-recomputed tags, use `renderVisibleRefs` directly.
 
 ### Standalone modules
 
-| Module | Purpose |
-|--------|---------|
-| `truncateLargeToolOutputs` | Emergency context-threshold-gated truncation of large visible tool outputs (last-resort safety valve; summaries are never touched) |
-| `hideConsumedCompressCalls` | Hide historical compress tool-calls whose block is inactive |
-| `buildStatusReport` / `buildRecap` | Context-usage report + block recap |
-| `mergeMarkedBlocks` / `collectOldGenBlocks` | Batch merge old-gen blocks into one summary |
-| `rebuildCompressionState` | Fork-recovery: replay historical compress calls |
-| `MessageContentStore` / `storeLargeResults` / `retrieveByRef` / `storeCoveredOriginals` | CCR content store: per-session, content-addressed dedup of tool-result originals + on-demand retrieval (see "CCR" above) |
-| `applyMessageFilters` | Pluggable message-filter framework |
-| `resolveTransformChannel` | Channel-selection policy: an explicit preference wins; the default is the wire channel only when the caller reports it viable |
-| `decideOutputSteering` / `classifyTurn` / `clampEffortToFloor` / `applySteeringToPrompt` | Output-side steering *decisions* (#355): structural turn classification (`new_user_ask` / `mechanical_continuation` / `error_continuation` / `unknown`), byte-stable verbosity directives L0–L4 (default L2), and clamp-only effort routing. The kernel decides; adapters land decisions onto wire fields. Default OFF |
-| `applySectionOverrides` / `cloneWithDescriptions` / `applyAcpToolOverrides` | Prompt/tool *surface* customization (see below) |
-| `sanitizePackSurface` / `createPackResolver` / `defaultPackSources` | Prompt packs: named, swappable surface presets resolved over pluggable sources (see below) |
+| Module                                                                                   | Purpose                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `truncateLargeToolOutputs`                                                               | Emergency context-threshold-gated truncation of large visible tool outputs (last-resort safety valve; summaries are never touched)                                                                                                                                                                                     |
+| `hideConsumedCompressCalls`                                                              | Hide historical compress tool-calls whose block is inactive                                                                                                                                                                                                                                                            |
+| `buildStatusReport` / `buildRecap`                                                       | Context-usage report + block recap                                                                                                                                                                                                                                                                                     |
+| `mergeMarkedBlocks` / `collectOldGenBlocks`                                              | Batch merge old-gen blocks into one summary                                                                                                                                                                                                                                                                            |
+| `rebuildCompressionState`                                                                | Fork-recovery: replay historical compress calls                                                                                                                                                                                                                                                                        |
+| `MessageContentStore` / `storeLargeResults` / `retrieveByRef` / `storeCoveredOriginals`  | CCR content store: per-session, content-addressed dedup of tool-result originals + on-demand retrieval (see "CCR" above)                                                                                                                                                                                               |
+| `applyMessageFilters`                                                                    | Pluggable message-filter framework                                                                                                                                                                                                                                                                                     |
+| `resolveTransformChannel`                                                                | Channel-selection policy: an explicit preference wins; the default is the wire channel only when the caller reports it viable                                                                                                                                                                                          |
+| `decideOutputSteering` / `classifyTurn` / `clampEffortToFloor` / `applySteeringToPrompt` | Output-side steering _decisions_ (#355): structural turn classification (`new_user_ask` / `mechanical_continuation` / `error_continuation` / `unknown`), byte-stable verbosity directives L0–L4 (default L2), and clamp-only effort routing. The kernel decides; adapters land decisions onto wire fields. Default OFF |
+| `applySectionOverrides` / `cloneWithDescriptions` / `applyAcpToolOverrides`              | Prompt/tool _surface_ customization (see below)                                                                                                                                                                                                                                                                        |
+| `sanitizePackSurface` / `createPackResolver` / `defaultPackSources`                      | Prompt packs: named, swappable surface presets resolved over pluggable sources (see below)                                                                                                                                                                                                                             |
 
 ### Prompt/tool surface configuration
 
@@ -221,12 +234,12 @@ Named, swappable surface configurations layered on top of the primitives above:
 - `createDirPackSource(id, dir)` serves `<dir>/<name>.json` files;
   `defaultPackSources({ projectDir, userDirs })` assembles project > user >
   builtin. Directory paths are host policy.
-- Pack *selection* (which name is active per config cascade) stays adapter-side;
+- Pack _selection_ (which name is active per config cascade) stays adapter-side;
   the kernel only resolves names.
 
 ### Nudge system
 
-The nudge system tells the model *when* to compress. It implements:
+The nudge system tells the model _when_ to compress. It implements:
 
 - **First-sight mass bypass** (#194): a session that arrives with ready compressible mass ≥ threshold gets its first nudge without waiting for new growth, provided usage ≥ `nudge.minContextLimitPct`. Steady-state nudges are gated on growth/token-mass, not percentage (#379).
 - **Growth-gating**: a repeat nudge requires positive growth since the baseline (prevents re-firing every turn). `"strong"` force relaxes this.
@@ -244,11 +257,11 @@ Deterministic first tier of the two-tier absorb gate. When a tool result qualifi
 
 Built-in strategies form an ordered plugin registry (hosts can add/replace/disable via `registerCrushPlugin` / config):
 
-| Strategy | Kind | Lossy | What it does |
-|----------|------|-------|--------------|
-| `json-fold` | json | no | constant-field hoisting + identical row/run collapse into annotated envelopes |
-| `code-trim` | code | yes | comment/docstring elision behind a string-literal-aware scanner; template literals and assigned triple-quoted strings survive verbatim; unterminated constructs fail open |
-| `log-select` | log | yes | level-classified line selection; **every distinct ERROR/FAIL line survives verbatim** (kernel-enforced invariant — output dropping one is rejected); warnings deduped, stack frames collapsed, honest `[N lines omitted]` footer |
+| Strategy     | Kind | Lossy | What it does                                                                                                                                                                                                                     |
+| ------------ | ---- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `json-fold`  | json | no    | constant-field hoisting + identical row/run collapse into annotated envelopes                                                                                                                                                    |
+| `code-trim`  | code | yes   | comment/docstring elision behind a string-literal-aware scanner; template literals and assigned triple-quoted strings survive verbatim; unterminated constructs fail open                                                        |
+| `log-select` | log  | yes   | level-classified line selection; **every distinct ERROR/FAIL line survives verbatim** (kernel-enforced invariant — output dropping one is rejected); warnings deduped, stack frames collapsed, honest `[N lines omitted]` footer |
 
 Kernel-enforced guarantees: dispatch guards keep each payload kind on its own strategies; plugins must be pure and deterministic (same payload + config ⇒ same bytes, prefix-cache friendly); any throw, sub-`minReduction` result, or invariant violation fails open to the next candidate or pass-through. **Default off** (`crush.enabled: false`) and requires `absorb.enabled: true`; when disabled the pipeline is byte-identical to pre-crush behavior.
 

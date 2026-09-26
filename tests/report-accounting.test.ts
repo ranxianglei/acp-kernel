@@ -48,9 +48,22 @@ function breakdownLine(report: string): string {
 test("breakdown counts tool-results in the tool bucket (issue #390)", () => {
   const messages: CoreMessage[] = [
     { id: "m1", role: "user", contentType: "text", text: "run the build" },
-    { id: "m2", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c1", text: "npm test" },
+    {
+      id: "m2",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "c1",
+      text: "npm test",
+    },
     // wire converters never set toolName on the result side
-    { id: "m3", role: "tool", contentType: "tool-result", toolCallId: "c1", text: "x".repeat(51_361) },
+    {
+      id: "m3",
+      role: "tool",
+      contentType: "tool-result",
+      toolCallId: "c1",
+      text: "x".repeat(51_361),
+    },
   ];
   const state = withRefs(messages);
   const report = buildStatusReport(state, messages, defaultCountTokens);
@@ -62,30 +75,64 @@ test("breakdown counts tool-results in the tool bucket (issue #390)", () => {
 
 test("breakdown tool split corroborates compressible-range toolPct (issue #390)", () => {
   const messages: CoreMessage[] = [
-    { id: "m1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c1", text: "ls" },
-    { id: "m2", role: "tool", contentType: "tool-result", toolCallId: "c1", text: "y".repeat(40_000) },
+    {
+      id: "m1",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "c1",
+      text: "ls",
+    },
+    {
+      id: "m2",
+      role: "tool",
+      contentType: "tool-result",
+      toolCallId: "c1",
+      text: "y".repeat(40_000),
+    },
   ];
   const state = withRefs(messages);
-  const ranges = buildCompressibleRanges(messages, state, config(), new Set(), defaultCountTokens);
+  const ranges = buildCompressibleRanges(
+    messages,
+    state,
+    config(),
+    new Set(),
+    defaultCountTokens,
+  );
   assert.equal(ranges.compressible.length, 1);
   const range = ranges.compressible[0]!;
   // same message set, both surfaces must agree: all-tool
   assert.equal(range.toolPct, 100);
   assert.equal(range.textPct, 0);
-  assert.match(breakdownLine(buildStatusReport(state, messages, defaultCountTokens)), /100%\)/);
+  assert.match(
+    breakdownLine(buildStatusReport(state, messages, defaultCountTokens)),
+    /100%\)/,
+  );
 });
 
 test("pct has no 1% floor — tiny buckets print 0% and sums stay <= 100 (issue #390)", () => {
   const messages: CoreMessage[] = [
     { id: "m1", role: "user", contentType: "text", text: "z".repeat(4000) }, // 1000 tokens
-    { id: "m2", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c1", text: "ls" }, // 1 token
+    {
+      id: "m2",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "c1",
+      text: "ls",
+    }, // 1 token
   ];
   const state = withRefs(messages);
-  const line = breakdownLine(buildStatusReport(state, messages, defaultCountTokens));
+  const line = breakdownLine(
+    buildStatusReport(state, messages, defaultCountTokens),
+  );
   assert.match(line, /1 tool \(0%\)/);
   assert.match(line, /1\.0K text \(100%\)/);
   const pcts = [...line.matchAll(/(\d+)%/g)].map((m) => Number(m[1]!));
-  assert.ok(pcts.reduce((s, n) => s + n, 0) <= 100, `bucket percents must not exceed 100: ${line}`);
+  assert.ok(
+    pcts.reduce((s, n) => s + n, 0) <= 100,
+    `bucket percents must not exceed 100: ${line}`,
+  );
 });
 
 test("breakdown uses the injected estimator — CJK is not 4x-underestimated (issue #390)", () => {
@@ -93,13 +140,25 @@ test("breakdown uses the injected estimator — CJK is not 4x-underestimated (is
     { id: "m1", role: "user", contentType: "text", text: "中".repeat(4000) },
   ];
   const state = withRefs(messages);
-  assert.match(breakdownLine(buildStatusReport(state, messages, defaultCountTokens)), /4\.0K text \(100%\)/);
-  assert.match(breakdownLine(buildStatusReport(state, messages, estimateTokensFast)), /1\.0K text \(100%\)/);
+  assert.match(
+    breakdownLine(buildStatusReport(state, messages, defaultCountTokens)),
+    /4\.0K text \(100%\)/,
+  );
+  assert.match(
+    breakdownLine(buildStatusReport(state, messages, estimateTokensFast)),
+    /1\.0K text \(100%\)/,
+  );
 });
 
 test("tool-result without a resolvable call stays in the tool bucket", () => {
   const messages: CoreMessage[] = [
-    { id: "m1", role: "tool", contentType: "tool-result", toolCallId: "orphan", text: "w".repeat(4000) },
+    {
+      id: "m1",
+      role: "tool",
+      contentType: "tool-result",
+      toolCallId: "orphan",
+      text: "w".repeat(4000),
+    },
   ];
   const state = withRefs(messages);
   const report = buildStatusReport(state, messages, defaultCountTokens);
@@ -109,8 +168,21 @@ test("tool-result without a resolvable call stays in the tool bucket", () => {
 
 test("message drilldown filters results by resolved tool name", () => {
   const messages: CoreMessage[] = [
-    { id: "m1", role: "assistant", contentType: "tool-call", toolName: "bash", toolCallId: "c1", text: "ls" },
-    { id: "m2", role: "tool", contentType: "tool-result", toolCallId: "c1", text: "y".repeat(4000) },
+    {
+      id: "m1",
+      role: "assistant",
+      contentType: "tool-call",
+      toolName: "bash",
+      toolCallId: "c1",
+      text: "ls",
+    },
+    {
+      id: "m2",
+      role: "tool",
+      contentType: "tool-result",
+      toolCallId: "c1",
+      text: "y".repeat(4000),
+    },
   ];
   const state = withRefs(messages);
   const report = buildStatusReport(state, messages, defaultCountTokens, {

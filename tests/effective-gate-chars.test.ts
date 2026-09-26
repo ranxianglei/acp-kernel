@@ -35,7 +35,11 @@ function buildConfig(overrides: Partial<Config> = {}): Config {
     promotionThreshold: 5,
     truncate: { threshold: 1 },
     merge: { maxSummaryLength: 3000, minOldGenBlocks: 3 },
-    compress: { minCompressRange: 5000, maxSummaryLength: 3000, minSummaryLength: 100 },
+    compress: {
+      minCompressRange: 5000,
+      maxSummaryLength: 3000,
+      minSummaryLength: 100,
+    },
     protectedTools: [],
     preserveRecentMessages: 0,
     preserveRecentTokens: 0,
@@ -61,20 +65,38 @@ test("mergeRangesToThreshold: batches by real chars, not tokens*4 (CJK tokenizer
   // Two hand-built ranges WITHOUT chars exercise the legacy fallback;
   // ranges WITH chars exercise the real accounting.
   const legacyA: CompressibleRange = {
-    startRef: "m00001", endRef: "m00002", count: 2, tokens: 1250, toolPct: 0, textPct: 100,
+    startRef: "m00001",
+    endRef: "m00002",
+    count: 2,
+    tokens: 1250,
+    toolPct: 0,
+    textPct: 100,
   };
   const out = mergeRangesToThreshold([legacyA], 5000);
-  assert.equal(out.length, 1, "fallback tokens*4=5000 still clears the 5000 threshold");
+  assert.equal(
+    out.length,
+    1,
+    "fallback tokens*4=5000 still clears the 5000 threshold",
+  );
 
   // 3000 chars of CJK = 3000 tokens under a CJK tokenizer. tokens*4 = 12000
   // used to "clear" 5000; real chars (3000) do not — tail stays sub-threshold
   // and pendingByTier must not count it as effective.
   const cjk: CompressibleRange = {
-    startRef: "m00001", endRef: "m00006", count: 6, tokens: 3000, chars: 3000,
-    toolPct: 0, textPct: 100,
+    startRef: "m00001",
+    endRef: "m00006",
+    count: 6,
+    tokens: 3000,
+    chars: 3000,
+    toolPct: 0,
+    textPct: 100,
   };
   assert.equal(cjk.chars < 5000, true);
-  assert.equal(cjk.tokens * 4 >= 5000, true, "pre-fix this range looked effective");
+  assert.equal(
+    cjk.tokens * 4 >= 5000,
+    true,
+    "pre-fix this range looked effective",
+  );
 });
 
 test("nudge: CJK session below minCompressRange chars is NOT offered (apply would reject)", () => {
@@ -83,11 +105,20 @@ test("nudge: CJK session below minCompressRange chars is NOT offered (apply woul
   const messages = cjkMessages(500, 6); // 3000 chars total < 5000 min
   let state = createInitialState();
 
-  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  state = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 10000,
+  }).state;
   // usage 95% >= maxContextLimitPct 0.9 → pressure path
   const turn = core.processTurn({ messages, state, config, tokenCount: 95000 });
 
-  assert.equal(turn.nudge.shouldInject, false, "3000 chars < minCompressRange 5000 — nudge must not offer it");
+  assert.equal(
+    turn.nudge.shouldInject,
+    false,
+    "3000 chars < minCompressRange 5000 — nudge must not offer it",
+  );
   assert.match(
     turn.nudge.reason,
     /no tier has effective compressible content/,
@@ -96,7 +127,9 @@ test("nudge: CJK session below minCompressRange chars is NOT offered (apply woul
 
   // The apply side agrees: the same range is atomically rejected.
   const applied = core.applyCompression({
-    ranges: [{ startRef: "m00001", endRef: "m00006", summary: "s", topic: "t" }],
+    ranges: [
+      { startRef: "m00001", endRef: "m00006", summary: "s", topic: "t" },
+    ],
     messages,
     state: turn.state,
     config,
@@ -114,19 +147,39 @@ test("nudge: CJK session above minCompressRange chars IS offered (control)", () 
   const messages = cjkMessages(1000, 6); // 6000 chars total >= 5000 min
   let state = createInitialState();
 
-  state = core.processTurn({ messages, state, config, tokenCount: 10000 }).state;
+  state = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 10000,
+  }).state;
   const turn = core.processTurn({ messages, state, config, tokenCount: 95000 });
 
-  assert.equal(turn.nudge.shouldInject, true, "6000 chars >= 5000 — effective T1 pending exists");
+  assert.equal(
+    turn.nudge.shouldInject,
+    true,
+    "6000 chars >= 5000 — effective T1 pending exists",
+  );
   assert.match(turn.nudge.reason, /T1/);
 
   // And the apply side accepts the same range — both gates agree on chars.
   const applied = core.applyCompression({
-    ranges: [{ startRef: "m00001", endRef: "m00006", summary: "总结".repeat(60), topic: "t" }],
+    ranges: [
+      {
+        startRef: "m00001",
+        endRef: "m00006",
+        summary: "总结".repeat(60),
+        topic: "t",
+      },
+    ],
     messages,
     state: turn.state,
     config,
   });
-  assert.equal(applied.result.blocksCreated, 1, "apply accepts: 6000 real chars >= 5000");
+  assert.equal(
+    applied.result.blocksCreated,
+    1,
+    "apply accepts: 6000 real chars >= 5000",
+  );
   assert.deepEqual(applied.result.errors, []);
 });

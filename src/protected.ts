@@ -59,11 +59,15 @@ export function isNeverPreserveRecent(
   }
   if (!msg.toolName) return false;
   const base =
-    patterns === undefined ? (NEVER_PRESERVE_RECENT_TOOLS as readonly string[]) : patterns;
+    patterns === undefined
+      ? (NEVER_PRESERVE_RECENT_TOOLS as readonly string[])
+      : patterns;
   const list =
     preservePatterns === undefined || preservePatterns.length === 0
       ? base
-      : base.filter((tool) => !preservePatterns.some((p) => matchToolPattern(tool, p)));
+      : base.filter(
+          (tool) => !preservePatterns.some((p) => matchToolPattern(tool, p)),
+        );
   for (const pattern of list) {
     if (matchToolPattern(msg.toolName, pattern)) return true;
   }
@@ -114,7 +118,11 @@ export function collectProtectedToolCallIds(
 ): Set<string> {
   const ids = new Set<string>();
   for (const m of messages) {
-    if (m.contentType === "tool-call" && m.toolCallId && isMessageProtected(m, config)) {
+    if (
+      m.contentType === "tool-call" &&
+      m.toolCallId &&
+      isMessageProtected(m, config)
+    ) {
       ids.add(m.toolCallId);
     }
   }
@@ -214,9 +222,13 @@ interface MediaSidecar {
 
 export function hasMediaPayload(msg: CoreMessage): boolean {
   const m = msg as CoreMessage & MediaSidecar;
-  if (typeof m.imageBase64 === "string" && m.imageBase64.length > 0) return true;
+  if (typeof m.imageBase64 === "string" && m.imageBase64.length > 0)
+    return true;
   if (m.rawOpenaiContent != null) return true;
-  if (Array.isArray(m.rawOpenaiContentParts) && m.rawOpenaiContentParts.length > 0)
+  if (
+    Array.isArray(m.rawOpenaiContentParts) &&
+    m.rawOpenaiContentParts.length > 0
+  )
     return true;
   const ab = m.rawAnthropicBlock;
   if (isObjWith(ab, "type", "image")) return true;
@@ -225,7 +237,8 @@ export function hasMediaPayload(msg: CoreMessage): boolean {
   // bytes outside msg.text.
   if (isObjWith(ab, "type", "tool_result")) {
     const content = (ab as { content?: unknown }).content;
-    if (Array.isArray(content)) return content.some((p) => !isObjWith(p, "type", "text"));
+    if (Array.isArray(content))
+      return content.some((p) => !isObjWith(p, "type", "text"));
   }
   const item = m.rawResponsesItem;
   if (isObjWith(item, "type", "input_image")) return true;
@@ -239,5 +252,9 @@ export function hasMediaPayload(msg: CoreMessage): boolean {
 }
 
 function isObjWith(v: unknown, key: string, value: unknown): boolean {
-  return typeof v === "object" && v !== null && (v as Record<string, unknown>)[key] === value;
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    (v as Record<string, unknown>)[key] === value
+  );
 }

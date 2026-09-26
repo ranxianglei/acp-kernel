@@ -9,7 +9,9 @@ import { createInitialState } from "../state.js";
  *
  * Lifted verbatim in behavior from billion-context's proxy mergeState.
  */
-export function mergeCompressionState(parsed: CompressionState): CompressionState {
+export function mergeCompressionState(
+  parsed: CompressionState,
+): CompressionState {
   const fresh = createInitialState();
   return {
     blocks: parsed.blocks ?? fresh.blocks,

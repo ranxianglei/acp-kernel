@@ -12,15 +12,17 @@ import { hybridAlgorithm } from "./algorithms/hybrid.js";
 const registry = new Map<string, AnySearchAlgorithm>();
 
 export function registerSearchAlgorithm(algo: AnySearchAlgorithm): void {
-    registry.set(algo.name, algo);
+  registry.set(algo.name, algo);
 }
 
-export function getSearchAlgorithm(name: string): AnySearchAlgorithm | undefined {
-    return registry.get(name);
+export function getSearchAlgorithm(
+  name: string,
+): AnySearchAlgorithm | undefined {
+  return registry.get(name);
 }
 
 export function listSearchAlgorithms(): AnySearchAlgorithm[] {
-    return [...registry.values()];
+  return [...registry.values()];
 }
 
 // Pre-register builtins. Hybrid is the default (see types.ts DEFAULT_ALGORITHM).

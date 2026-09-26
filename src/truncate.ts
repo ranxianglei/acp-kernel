@@ -5,25 +5,26 @@
 // (ranxianglei/billion-context#816) — a deterministic poison that never heals.
 
 function isHighSurrogate(c: number): boolean {
-    return c >= 0xd800 && c <= 0xdbff;
+  return c >= 0xd800 && c <= 0xdbff;
 }
 
 function isLowSurrogate(c: number): boolean {
-    return c >= 0xdc00 && c <= 0xdfff;
+  return c >= 0xdc00 && c <= 0xdfff;
 }
 
 /** At most maxUnits code units; never ends on a stranded high surrogate. */
 export function clampPrefix(text: string, maxUnits: number): string {
-    const cut = Math.min(maxUnits, text.length);
-    if (cut > 0 && isHighSurrogate(text.charCodeAt(cut - 1))) return text.slice(0, cut - 1);
-    return text.slice(0, cut);
+  const cut = Math.min(maxUnits, text.length);
+  if (cut > 0 && isHighSurrogate(text.charCodeAt(cut - 1)))
+    return text.slice(0, cut - 1);
+  return text.slice(0, cut);
 }
 
 /** A [start, end) window with both edges snapped off surrogate pairs. */
 export function clampWindow(text: string, start: number, end: number): string {
-    let s = Math.max(0, Math.min(start, text.length));
-    let e = Math.min(text.length, Math.max(s, end));
-    if (s > 0 && isLowSurrogate(text.charCodeAt(s))) s += 1;
-    if (e > s && isHighSurrogate(text.charCodeAt(e - 1))) e -= 1;
-    return text.slice(s, Math.max(s, e));
+  let s = Math.max(0, Math.min(start, text.length));
+  let e = Math.min(text.length, Math.max(s, end));
+  if (s > 0 && isLowSurrogate(text.charCodeAt(s))) s += 1;
+  if (e > s && isHighSurrogate(text.charCodeAt(e - 1))) e -= 1;
+  return text.slice(s, Math.max(s, e));
 }

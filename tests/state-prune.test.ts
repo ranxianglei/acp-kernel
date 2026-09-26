@@ -189,7 +189,10 @@ test("prune covers sub-id projections when block recorded plain base id (#231)",
   ];
   const result = prune(messages, state, { injectSummaries: false });
 
-  assert.deepEqual(result.map((m) => m.id), ["h_pre", "h_post"]);
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["h_pre", "h_post"],
+  );
 });
 
 test("prune covers sibling sub-id projections of the same base (#231)", () => {
@@ -200,7 +203,10 @@ test("prune covers sibling sub-id projections of the same base (#231)", () => {
   const messages = [msg("h_abc#call1", "assistant"), msg("h_post")];
   const result = prune(messages, state, { injectSummaries: false });
 
-  assert.deepEqual(result.map((m) => m.id), ["h_post"]);
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["h_post"],
+  );
 });
 
 test("prune does not cover a distinct id that extends a covered base (#231)", () => {
@@ -211,7 +217,10 @@ test("prune does not cover a distinct id that extends a covered base (#231)", ()
   const messages = [msg("h_abcde"), msg("h_post")];
   const result = prune(messages, state, { injectSummaries: false });
 
-  assert.deepEqual(result.map((m) => m.id), ["h_abcde", "h_post"]);
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["h_abcde", "h_post"],
+  );
 });
 
 test("prune anchors summary at base id when block recorded sub-ids (#231)", () => {

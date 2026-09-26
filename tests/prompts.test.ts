@@ -138,13 +138,19 @@ test("resolvePrompts drops undefined/null/non-string overrides (never clobbers d
 });
 
 test("resolvePrompts does not throw when only non-string overrides are present", () => {
-  const p = resolvePrompts({ compressPhilosophy: undefined, howToCompressRules: null as unknown as string });
+  const p = resolvePrompts({
+    compressPhilosophy: undefined,
+    howToCompressRules: null as unknown as string,
+  });
   assert.equal(p.compressPhilosophy, COMPRESS_PHILOSOPHY);
   assert.equal(p.howToCompressRules, HOW_TO_COMPRESS_RULES);
 });
 
 test("resolvePrompts never aliases or mutates defaultPrompts", () => {
-  const p = resolvePrompts({ compressPhilosophy: "CUSTOM" }, { acknowledgeRisk: true });
+  const p = resolvePrompts(
+    { compressPhilosophy: "CUSTOM" },
+    { acknowledgeRisk: true },
+  );
   p.compressPhilosophy = "MUTATED-BY-CALLER";
   assert.equal(defaultPrompts.compressPhilosophy, COMPRESS_PHILOSOPHY);
 });

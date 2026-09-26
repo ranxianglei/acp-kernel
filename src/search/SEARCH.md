@@ -18,8 +18,8 @@ import { searchBlocks, blockDocs, messageDocs } from "acp-kernel";
 
 // Search both blocks and historical messages
 const docs = [
-  ...blockDocs(state),                              // all blocks (active + inactive)
-  ...messageDocs([...historyMsgs]),                 // original message text
+  ...blockDocs(state), // all blocks (active + inactive)
+  ...messageDocs([...historyMsgs]), // original message text
 ];
 const results = searchBlocks(docs, "auth token", { limit: 5 });
 // → [{ kind: "message", ref: "m00350", blockId: "b3", score: 0.92,
@@ -34,9 +34,9 @@ locate detail, then pay decompress cost only for what you need.
 
 ## Two data sources
 
-| source | text searched | ref | when |
-|--------|---------------|-----|------|
-| **blocks** | summary (+ topic) | `b3` | active AND inactive blocks (inactive fix) |
+| source       | text searched                     | ref      | when                                          |
+| ------------ | --------------------------------- | -------- | --------------------------------------------- |
+| **blocks**   | summary (+ topic)                 | `b3`     | active AND inactive blocks (inactive fix)     |
 | **messages** | original content from session log | `m00350` | detail that compression folded into a summary |
 
 Messages are host-supplied (pai-acp reads them from pi's append-only session
@@ -48,12 +48,12 @@ decompress for surrounding context.
 
 Messages carry a role; per-role weights prioritize human intent over noise:
 
-| role | default weight | why |
-|------|---------------|-----|
-| user | 1.5 | questions, decisions, requirements — high signal |
-| assistant | 1.0 | reasoning and findings |
-| tool | 0.6 | logs, listings — large volume, lower density |
-| block | 1.0 | model-authored summaries |
+| role      | default weight | why                                              |
+| --------- | -------------- | ------------------------------------------------ |
+| user      | 1.5            | questions, decisions, requirements — high signal |
+| assistant | 1.0            | reasoning and findings                           |
+| tool      | 0.6            | logs, listings — large volume, lower density     |
+| block     | 1.0            | model-authored summaries                         |
 
 Override via `SearchOptions.roleWeights`.
 
@@ -61,12 +61,13 @@ Override via `SearchOptions.roleWeights`.
 
 The default algorithm is `hybrid` (BM25+stem ⊕ fuzzy n-gram). On a 32-block
 mixed EN/CJK benchmark with 48 queries, against the original substring counter:
-| algorithm   | MRR   | R@1   | R@3   |
-|-------------|-------|-------|-------|
-| substring   | 0.797 | 0.792 | 0.792 |
-| bm25        | 0.833 | 0.833 | 0.833 |
-| fuzzy       | 0.795 | 0.708 | 0.875 |
-| **hybrid**  | **0.898** | **0.875** | **0.917** |
+
+| algorithm  | MRR       | R@1       | R@3       |
+| ---------- | --------- | --------- | --------- |
+| substring  | 0.797     | 0.792     | 0.792     |
+| bm25       | 0.833     | 0.833     | 0.833     |
+| fuzzy      | 0.795     | 0.708     | 0.875     |
+| **hybrid** | **0.898** | **0.875** | **0.917** |
 
 All rows measured on the rework benchmark (32 blocks / 48 queries) with the
 final code (segmenter tokenizer + CJK fuzzy gate).
@@ -88,27 +89,27 @@ The wins come from three fixes to plain substring matching:
    starve the recall channel for a whole script.
 
 Previews are **match-context snippets**, not arbitrary prefixes — the result
-shows the sentence around the hit so the user sees *why* a block matched.
+shows the sentence around the hit so the user sees _why_ a block matched.
 
 ## Options
 
 ```ts
 interface SearchOptions {
-  algorithm?: string;     // "hybrid" (default) | "bm25" | "fuzzy" | "substring" | <custom>
-  limit?: number;         // default 10
+  algorithm?: string; // "hybrid" (default) | "bm25" | "fuzzy" | "substring" | <custom>
+  limit?: number; // default 10
   previewLength?: number; // default 200
-  minScore?: number;      // default 0.01
+  minScore?: number; // default 0.01
 }
 ```
 
 ## Built-in algorithms
 
-| name        | strengths                                         | when to use                      |
-|-------------|---------------------------------------------------|----------------------------------|
-| `hybrid`    | best all-rounder (default)                        | always                           |
-| `bm25`      | IR-standard, IDF + length norm + stemming         | precision on long corpora        |
-| `fuzzy`     | typo-tolerant, cross-script                       | recall on messy input            |
-| `substring` | exact, deterministic, occurrence count            | backward compat / debugging      |
+| name        | strengths                                 | when to use                 |
+| ----------- | ----------------------------------------- | --------------------------- |
+| `hybrid`    | best all-rounder (default)                | always                      |
+| `bm25`      | IR-standard, IDF + length norm + stemming | precision on long corpora   |
+| `fuzzy`     | typo-tolerant, cross-script               | recall on messy input       |
+| `substring` | exact, deterministic, occurrence count    | backward compat / debugging |
 
 ## Adding a custom algorithm
 
@@ -145,12 +146,14 @@ import { createSemanticAlgorithm } from "acp-kernel/search/algorithms/semantic";
 
 const semantic = createSemanticAlgorithm({
   // any backend: @huggingface/transformers (local), OpenAI, Voyage, a local server…
-  embed: async (texts) => myEmbeddingApi.embed(texts),  // → number[][]
+  embed: async (texts) => myEmbeddingApi.embed(texts), // → number[][]
 });
 registerSearchAlgorithm(semantic);
 
 // semantic score() is async → use searchBlocksAsync (searchBlocks throws a clear error)
-const results = await searchBlocksAsync(state, "credentials", { algorithm: "semantic" });
+const results = await searchBlocksAsync(state, "credentials", {
+  algorithm: "semantic",
+});
 ```
 
 `embeddings` are memoized by content hash — docs only re-embed when their

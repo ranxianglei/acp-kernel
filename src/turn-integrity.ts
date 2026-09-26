@@ -72,7 +72,10 @@ export function computeTurnGroups(messages: CoreMessage[]): string[][] {
         s++;
       return s;
     })();
-    if (burstStart >= messages.length || !isAssistantAct(messages[burstStart]!)) {
+    if (
+      burstStart >= messages.length ||
+      !isAssistantAct(messages[burstStart]!)
+    ) {
       // Orphan reasoning run (no companion burst): no pairing constraint.
       continue;
     }

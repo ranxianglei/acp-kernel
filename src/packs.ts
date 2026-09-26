@@ -68,15 +68,35 @@ export interface PackResolver {
   listPacks(): Pack[];
 }
 
-const PROMPT_RULE_KEYS = ["compressPhilosophy", "howToCompressRules", "tier2DistillRules", "tier3CondenseRules"] as const;
-const COMPRESS_SECTION_KEYS = ["acpTags", "tools", "summariesInContext", "textProtocol", "textTools", "functionTools"] as const;
-const NUDGE_SECTION_KEYS = ["efficiencyNote", "emergencyHeader", "t2Guidance", "t3Guidance"] as const;
+const PROMPT_RULE_KEYS = [
+  "compressPhilosophy",
+  "howToCompressRules",
+  "tier2DistillRules",
+  "tier3CondenseRules",
+] as const;
+const COMPRESS_SECTION_KEYS = [
+  "acpTags",
+  "tools",
+  "summariesInContext",
+  "textProtocol",
+  "textTools",
+  "functionTools",
+] as const;
+const NUDGE_SECTION_KEYS = [
+  "efficiencyNote",
+  "emergencyHeader",
+  "t2Guidance",
+  "t3Guidance",
+] as const;
 
 export function isValidPackName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && !name.includes("..");
 }
 
-function triStateSection(raw: unknown, keys: readonly string[]): Record<string, string | null> {
+function triStateSection(
+  raw: unknown,
+  keys: readonly string[],
+): Record<string, string | null> {
   const out: Record<string, string | null> = {};
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
   for (const key of keys) {
@@ -90,11 +110,17 @@ function triStateSection(raw: unknown, keys: readonly string[]): Record<string, 
 /** Sanitize a raw pack file body into a kernel {@link PackSurface}. Malformed
  * values are dropped — a bad override never clobbers a good default. The
  * `adapters` record is passed through opaquely for host-side validation. */
-export function sanitizePackSurface(raw: PromptPackFile | null | undefined): PackSurface {
+export function sanitizePackSurface(
+  raw: PromptPackFile | null | undefined,
+): PackSurface {
   if (!raw) return {};
   const prompts: Partial<Prompts> = {};
   const rawPrompts = raw.prompts as Record<string, unknown> | undefined;
-  if (rawPrompts && typeof rawPrompts === "object" && !Array.isArray(rawPrompts)) {
+  if (
+    rawPrompts &&
+    typeof rawPrompts === "object" &&
+    !Array.isArray(rawPrompts)
+  ) {
     for (const k of PROMPT_RULE_KEYS) {
       const v = rawPrompts[k];
       if (typeof v === "string") (prompts as Record<string, string>)[k] = v;
@@ -106,11 +132,20 @@ export function sanitizePackSurface(raw: PromptPackFile | null | undefined): Pac
     for (const [name, value] of Object.entries(rawTools)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const ov = value as Record<string, unknown>;
-      const out: { description?: string; paramDescriptions?: Record<string, string> } = {};
+      const out: {
+        description?: string;
+        paramDescriptions?: Record<string, string>;
+      } = {};
       if (typeof ov.description === "string") out.description = ov.description;
-      if (ov.paramDescriptions && typeof ov.paramDescriptions === "object" && !Array.isArray(ov.paramDescriptions)) {
+      if (
+        ov.paramDescriptions &&
+        typeof ov.paramDescriptions === "object" &&
+        !Array.isArray(ov.paramDescriptions)
+      ) {
         const params: Record<string, string> = {};
-        for (const [p, d] of Object.entries(ov.paramDescriptions as Record<string, unknown>)) {
+        for (const [p, d] of Object.entries(
+          ov.paramDescriptions as Record<string, unknown>,
+        )) {
           if (typeof d === "string") params[p] = d;
         }
         if (Object.keys(params).length > 0) out.paramDescriptions = params;
@@ -142,9 +177,11 @@ export const defaultPack: Pack = {
 
 const LEAN_TOOL_PROMPTS: ToolPrompts = {
   compress: {
-    description: "Replace consumed conversation ranges with self-contained summaries using mNNNNN or bN refs.",
+    description:
+      "Replace consumed conversation ranges with self-contained summaries using mNNNNN or bN refs.",
     paramDescriptions: {
-      content: "One string per range: first line 'm00150–m00220 optional topic', remaining lines the summary markdown. Object form also accepted.",
+      content:
+        "One string per range: first line 'm00150–m00220 optional topic', remaining lines the summary markdown. Object form also accepted.",
       startId: "Inclusive first mNNNNN or bN ref.",
       endId: "Inclusive last mNNNNN or bN ref.",
       summary: "Self-contained replacement preserving exact technical details.",
@@ -157,10 +194,12 @@ const LEAN_TOOL_PROMPTS: ToolPrompts = {
       "Restore compressed content by block id (b5) or message ref; block mode writes to a file by default, inline: true returns small content inline.",
   },
   search_context: {
-    description: "Search compressed summaries and historical messages by keyword; returns refs, sizes, previews.",
+    description:
+      "Search compressed summaries and historical messages by keyword; returns refs, sizes, previews.",
   },
   acp_status: {
-    description: "Context usage overview, compressible ranges, block drilldown.",
+    description:
+      "Context usage overview, compressible ranges, block drilldown.",
   },
 };
 
@@ -273,7 +312,9 @@ export const builtinSource: PackSource = {
 function readPackFile(file: string): PromptPackFile | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as PromptPackFile) : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as PromptPackFile)
+      : null;
   } catch {
     return null;
   }
@@ -294,7 +335,8 @@ export function createDirPackSource(id: string, dir: string): PackSource {
     return {
       name,
       version: typeof raw.version === "string" ? raw.version : undefined,
-      description: typeof raw.description === "string" ? raw.description : undefined,
+      description:
+        typeof raw.description === "string" ? raw.description : undefined,
       surface: sanitizePackSurface(raw),
       source: `file:${file}`,
     };
@@ -320,7 +362,9 @@ export function createDirPackSource(id: string, dir: string): PackSource {
 }
 
 /** Ordered resolution over the given sources; the first non-null wins. */
-export function createPackResolver(sources: readonly PackSource[]): PackResolver {
+export function createPackResolver(
+  sources: readonly PackSource[],
+): PackResolver {
   return {
     sources,
     resolve(name: string): Pack | null {
@@ -350,9 +394,15 @@ export function createPackResolver(sources: readonly PackSource[]): PackResolver
 /** Default source chain: project pack dir, then any user pack dirs, then the
  * builtin registry. Directory paths are host policy — the kernel only
  * assembles the chain. */
-export function defaultPackSources(opts: { projectDir: string; userDirs?: readonly string[] }): PackSource[] {
-  const sources: PackSource[] = [createDirPackSource("project", opts.projectDir)];
-  for (const dir of opts.userDirs ?? []) sources.push(createDirPackSource("user", dir));
+export function defaultPackSources(opts: {
+  projectDir: string;
+  userDirs?: readonly string[];
+}): PackSource[] {
+  const sources: PackSource[] = [
+    createDirPackSource("project", opts.projectDir),
+  ];
+  for (const dir of opts.userDirs ?? [])
+    sources.push(createDirPackSource("user", dir));
   sources.push(builtinSource);
   return sources;
 }

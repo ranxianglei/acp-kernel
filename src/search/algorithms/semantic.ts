@@ -29,78 +29,84 @@
 import type { AsyncSearchAlgorithm, SearchDoc, ScoredBlock } from "../types.js";
 
 export interface EmbedFn {
-    (texts: string[]): Promise<number[][]>;
+  (texts: string[]): Promise<number[][]>;
 }
 
 export interface SemanticOptions {
-    embed: EmbedFn;
-    name?: string;
+  embed: EmbedFn;
+  name?: string;
 }
 
 interface CachedEmbedding {
-    hash: string;
-    vec: number[];
+  hash: string;
+  vec: number[];
 }
 
 function hashText(s: string): string {
-    let h = 0x811c9dc5;
-    for (let i = 0; i < s.length; i++) {
-        h ^= s.charCodeAt(i);
-        h = Math.imul(h, 0x01000193);
-    }
-    return (h >>> 0).toString(36);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
 }
 
 function cosine(a: number[], b: number[]): number {
-    let dot = 0, na = 0, nb = 0;
-    for (let i = 0; i < a.length; i++) {
-        const av = a[i]!;
-        const bv = b[i]!;
-        dot += av * bv;
-        na += av * av;
-        nb += bv * bv;
-    }
-    if (na === 0 || nb === 0) return 0;
-    return dot / (Math.sqrt(na) * Math.sqrt(nb));
+  let dot = 0,
+    na = 0,
+    nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const av = a[i]!;
+    const bv = b[i]!;
+    dot += av * bv;
+    na += av * av;
+    nb += bv * bv;
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-export function createSemanticAlgorithm(opts: SemanticOptions): AsyncSearchAlgorithm {
-    const name = opts.name ?? "semantic";
-    const cache = new Map<string, CachedEmbedding>();
+export function createSemanticAlgorithm(
+  opts: SemanticOptions,
+): AsyncSearchAlgorithm {
+  const name = opts.name ?? "semantic";
+  const cache = new Map<string, CachedEmbedding>();
 
-    return {
-        name,
-        description: "Embedding cosine similarity (host-supplied embed fn). Catches synonyms/cross-lang lexical algorithms miss.",
+  return {
+    name,
+    description:
+      "Embedding cosine similarity (host-supplied embed fn). Catches synonyms/cross-lang lexical algorithms miss.",
 
-        async score(docs: SearchDoc[], query: string): Promise<ScoredBlock[]> {
-            if (docs.length === 0) return [];
+    async score(docs: SearchDoc[], query: string): Promise<ScoredBlock[]> {
+      if (docs.length === 0) return [];
 
-            // 1. find docs needing (re)embedding
-            const stale: Array<{ id: string; text: string; hash: string }> = [];
-            for (const d of docs) {
-                const text = d.text;
-                const hash = hashText(text);
-                const cached = cache.get(d.ref);
-                if (!cached || cached.hash !== hash) stale.push({ id: d.ref, text, hash });
-            }
+      // 1. find docs needing (re)embedding
+      const stale: Array<{ id: string; text: string; hash: string }> = [];
+      for (const d of docs) {
+        const text = d.text;
+        const hash = hashText(text);
+        const cached = cache.get(d.ref);
+        if (!cached || cached.hash !== hash)
+          stale.push({ id: d.ref, text, hash });
+      }
 
-            // 2. batch-embed stale docs + query in one round-trip
-            const toEmbed = stale.map((s) => s.text);
-            toEmbed.push(query);
-            const vecs = await opts.embed(toEmbed);
-            if (vecs.length !== toEmbed.length) {
-                return docs.map((d) => ({ ref: d.ref, score: 0 }));
-            }
-            const qVec = vecs[vecs.length - 1]!;
-            for (let j = 0; j < stale.length; j++) {
-                cache.set(stale[j]!.id, { hash: stale[j]!.hash, vec: vecs[j]! });
-            }
+      // 2. batch-embed stale docs + query in one round-trip
+      const toEmbed = stale.map((s) => s.text);
+      toEmbed.push(query);
+      const vecs = await opts.embed(toEmbed);
+      if (vecs.length !== toEmbed.length) {
+        return docs.map((d) => ({ ref: d.ref, score: 0 }));
+      }
+      const qVec = vecs[vecs.length - 1]!;
+      for (let j = 0; j < stale.length; j++) {
+        cache.set(stale[j]!.id, { hash: stale[j]!.hash, vec: vecs[j]! });
+      }
 
-            // 3. cosine similarity
-            return docs.map((d) => {
-                const cached = cache.get(d.ref);
-                return { ref: d.ref, score: cached ? cosine(qVec, cached.vec) : 0 };
-            });
-        },
-    };
+      // 3. cosine similarity
+      return docs.map((d) => {
+        const cached = cache.get(d.ref);
+        return { ref: d.ref, score: cached ? cosine(qVec, cached.vec) : 0 };
+      });
+    },
+  };
 }

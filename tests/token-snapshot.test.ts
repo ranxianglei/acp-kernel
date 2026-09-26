@@ -30,7 +30,10 @@ function stateWithRefs(messages: CoreMessage[]): CompressionState {
 // point of tokenSnapshot (issue #96, 方案 A). First render writes, later
 // renders reuse the recorded count even when countTokens changes.
 test("renderWithSnapshot: token count is stable across countTokens changes", () => {
-  const messages = [msg("a", "你好世界这是一段中文消息"), msg("b", "hello world")];
+  const messages = [
+    msg("a", "你好世界这是一段中文消息"),
+    msg("b", "hello world"),
+  ];
   const state = stateWithRefs(messages);
 
   const slow = (t: string) => Math.ceil(t.length / 2); // CJK-ish density 2
@@ -41,7 +44,12 @@ test("renderWithSnapshot: token count is stable across countTokens changes", () 
   assert.ok(Object.keys(snapshot).length >= 2, "first render records entries");
 
   // Second render with a different countTokens: same tokens from snapshot.
-  const r2 = renderWithSnapshot(messages, { ...state, tokenSnapshot: snapshot }, fast, "all");
+  const r2 = renderWithSnapshot(
+    messages,
+    { ...state, tokenSnapshot: snapshot },
+    fast,
+    "all",
+  );
   assert.deepEqual(r2.tokenSnapshot, snapshot, "snapshot unchanged on hit");
   const tokens1 = [...r1.messages.map((m) => m.text ?? "")].map((t) =>
     Number(/\stokens="(\d+)"/.exec(t)?.[1]),
@@ -52,7 +60,12 @@ test("renderWithSnapshot: token count is stable across countTokens changes", () 
   assert.deepEqual(tokens2, tokens1, "rendered tag token counts identical");
 
   // Sanity: the recorded count came from the FIRST renderer, not the second.
-  const fresh = renderWithSnapshot(messages, { ...state, tokenSnapshot: {} }, fast, "all");
+  const fresh = renderWithSnapshot(
+    messages,
+    { ...state, tokenSnapshot: {} },
+    fast,
+    "all",
+  );
   assert.notDeepEqual(
     fresh.messages.map((m) => /\stokens="(\d+)"/.exec(m.text ?? "")?.[1]),
     tokens1.map(String),
@@ -79,7 +92,9 @@ test("renderVisibleRefs keeps live recompute (no snapshot)", () => {
 // otherwise render-refs (which runs AFTER sync-blocks) sees an empty snapshot
 // every turn and the whole scheme collapses.
 test("syncBlocks preserves tokenSnapshot", () => {
-  const messages = [msg("a", "hello world this is a longer message for tokens")];
+  const messages = [
+    msg("a", "hello world this is a longer message for tokens"),
+  ];
   const state = stateWithRefs(messages);
   const { messages: rendered, tokenSnapshot } = renderWithSnapshot(
     messages,
@@ -102,7 +117,10 @@ test("syncBlocks preserves tokenSnapshot", () => {
 // G2 regression: cloneState runs inside applyCompression — a compression must
 // not drop the snapshot.
 test("compression preserves tokenSnapshot", () => {
-  const messages = [msg("a", "first message content here"), msg("b", "second message content")];
+  const messages = [
+    msg("a", "first message content here"),
+    msg("b", "second message content"),
+  ];
   const state = stateWithRefs(messages);
   const { messages: rendered, tokenSnapshot } = renderWithSnapshot(
     messages,
@@ -133,13 +151,19 @@ test("compression preserves tokenSnapshot", () => {
 test("processTurn: snapshot persists across turns and stabilizes tags", () => {
   const core = createCore();
   let state = createInitialState();
-  let messages = [msg("a", "第一轮消息内容比较长一些"), msg("b", "第二轮 hello world")];
+  let messages = [
+    msg("a", "第一轮消息内容比较长一些"),
+    msg("b", "第二轮 hello world"),
+  ];
 
   let firstTagTokens: (string | undefined)[];
   for (let turn = 0; turn < 4; turn++) {
     const ctx = {
       config: defaultConfig(),
-      countTokens: turn % 2 === 0 ? (t: string) => Math.ceil(t.length / 2) : (t: string) => Math.ceil(t.length / 4),
+      countTokens:
+        turn % 2 === 0
+          ? (t: string) => Math.ceil(t.length / 2)
+          : (t: string) => Math.ceil(t.length / 4),
     };
     const io = makeIO(messages, state);
     state = io.state;
@@ -147,7 +171,9 @@ test("processTurn: snapshot persists across turns and stabilizes tags", () => {
     state = result.state;
     messages = result.messages;
 
-    const tags = messages.map((m) => /\stokens="(\d+)"/.exec(m.text ?? "")?.[1]);
+    const tags = messages.map(
+      (m) => /\stokens="(\d+)"/.exec(m.text ?? "")?.[1],
+    );
     if (turn === 0) {
       firstTagTokens = tags;
       assert.ok(
@@ -201,11 +227,18 @@ test("renderRefsNode: steady-state hit does not churn the state object", () => {
   const io = makeIO(rendered, filled);
   const ctx = { config: defaultConfig(), countTokens: (t: string) => t.length };
   const out = renderRefsNode.run(io, ctx);
-  assert.equal(out.state, filled, "all-hit render must reuse the same state object");
+  assert.equal(
+    out.state,
+    filled,
+    "all-hit render must reuse the same state object",
+  );
 });
 
 test("syncBlocks prunes tokenSnapshot entries for absent messages", () => {
-  const messages = [msg("a", "first message here"), msg("b", "second message here")];
+  const messages = [
+    msg("a", "first message here"),
+    msg("b", "second message here"),
+  ];
   const state = stateWithRefs(messages);
   const { tokenSnapshot } = renderWithSnapshot(
     messages,
@@ -213,7 +246,18 @@ test("syncBlocks prunes tokenSnapshot entries for absent messages", () => {
     (t) => Math.ceil(t.length / 2),
     "all",
   );
-  const synced = syncBlocks([msg("b", "second message here")], { ...state, tokenSnapshot });
-  assert.equal("m00001" in synced.state.tokenSnapshot, false, "absent 'a' entry must be pruned");
-  assert.equal("m00002" in synced.state.tokenSnapshot, true, "present 'b' entry must be retained");
+  const synced = syncBlocks([msg("b", "second message here")], {
+    ...state,
+    tokenSnapshot,
+  });
+  assert.equal(
+    "m00001" in synced.state.tokenSnapshot,
+    false,
+    "absent 'a' entry must be pruned",
+  );
+  assert.equal(
+    "m00002" in synced.state.tokenSnapshot,
+    true,
+    "present 'b' entry must be retained",
+  );
 });

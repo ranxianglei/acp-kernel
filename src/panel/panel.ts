@@ -4,7 +4,11 @@ import type { CompressionState, NudgeDecision } from "../types.js";
 import { formatCompactTokens } from "./format.js";
 import { topicFallback } from "./topic.js";
 import { viableRanges } from "../viable.js";
-import { cacheHitStats, formatHitRate, type CacheUsageSample } from "./cache.js";
+import {
+  cacheHitStats,
+  formatHitRate,
+  type CacheUsageSample,
+} from "./cache.js";
 
 export interface StatusPanelInput {
   /** Adapter identifier for the header, e.g. "billion-context-omp@0.1.6".
@@ -44,7 +48,10 @@ export interface StatusPanelInput {
 
 function bar(value: number, total: number, width: number = 20): string {
   if (total === 0) return "";
-  const filled = Math.max(0, Math.min(width, Math.round((value / total) * width)));
+  const filled = Math.max(
+    0,
+    Math.min(width, Math.round((value / total) * width)),
+  );
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
@@ -69,14 +76,19 @@ export function buildStatusPanel(input: StatusPanelInput): string {
   const fmt = input.fmtTokens ?? formatCompactTokens;
   const bd = nudge?.contextBreakdown;
   const limit = modelContextLimit;
-  const classified = bd ? bd.system + bd.tool + bd.summaries + bd.code + bd.text : 0;
+  const classified = bd
+    ? bd.system + bd.tool + bd.summaries + bd.code + bd.text
+    : 0;
   const systemPromptTokens = input.systemPromptTokens;
   const sentTotal = classified + systemPromptTokens;
   // Same-scale derivation only: both sides use the core's countTokens
   // estimate (kernel default = CJK-aware defaultCountTokens). The host
   // footer's tokenCount (provider-anchored, session-tree) is displayed as
   // its own line and never fed into an arithmetic difference with these.
-  const sessionOnly = input.unprunedTokens !== undefined ? Math.max(0, input.unprunedTokens - sentTotal) : 0;
+  const sessionOnly =
+    input.unprunedTokens !== undefined
+      ? Math.max(0, input.unprunedTokens - sentTotal)
+      : 0;
   const displayTotal = tokenCount;
   const displayPct = limit > 0 ? Math.round((displayTotal / limit) * 100) : 0;
   const sentPct = limit > 0 ? Math.round((sentTotal / limit) * 100) : 0;
@@ -90,7 +102,9 @@ export function buildStatusPanel(input: StatusPanelInput): string {
   lines.push("╰─────────────────────────────────────────────╯");
   if (input.version) lines.push(input.version);
   lines.push("");
-  lines.push(`Context (session accounting, host footer scale): ${displayPct}% (${fmt(displayTotal)} / ${fmt(limit)}) — includes compressed originals; shrinks slower than the sent view`);
+  lines.push(
+    `Context (session accounting, host footer scale): ${displayPct}% (${fmt(displayTotal)} / ${fmt(limit)}) — includes compressed originals; shrinks slower than the sent view`,
+  );
 
   if (nudge && bd) {
     const growth = bd.growth;
@@ -98,9 +112,13 @@ export function buildStatusPanel(input: StatusPanelInput): string {
       lines.push(`Growth: +${fmt(growth)} since last nudge`);
     }
     lines.push("");
-    lines.push(`Sent to LLM (after compression, est.): ${fmt(sentTotal)}${limit > 0 ? ` (${sentPct}% of limit)` : ""}`);
+    lines.push(
+      `Sent to LLM (after compression, est.): ${fmt(sentTotal)}${limit > 0 ? ` (${sentPct}% of limit)` : ""}`,
+    );
     if (input.unprunedTokens !== undefined && sessionOnly > 0) {
-      lines.push(`Session-only (compressed originals, est.): ${fmt(sessionOnly)} — pruned from every request; the footer/nudge still count them`);
+      lines.push(
+        `Session-only (compressed originals, est.): ${fmt(sessionOnly)} — pruned from every request; the footer/nudge still count them`,
+      );
     }
     lines.push("");
     lines.push("Token Breakdown (sent view):");
@@ -117,13 +135,19 @@ export function buildStatusPanel(input: StatusPanelInput): string {
       if (cat.value <= 0) continue;
       const pct = sentTotal > 0 ? Math.round((cat.value / sentTotal) * 100) : 0;
       const b = bar(cat.value, sentTotal);
-      lines.push(`  ${cat.label.padEnd(10)} ${b} ${String(pct).padStart(3)}%  ${fmt(cat.value)}`);
+      lines.push(
+        `  ${cat.label.padEnd(10)} ${b} ${String(pct).padStart(3)}%  ${fmt(cat.value)}`,
+      );
     }
   }
 
   if (input.cacheUsages) {
     const cache = cacheHitStats(input.cacheUsages);
-    if (cache.requests > 0 && cache.session !== undefined && cache.last !== undefined) {
+    if (
+      cache.requests > 0 &&
+      cache.session !== undefined &&
+      cache.last !== undefined
+    ) {
       lines.push("");
       lines.push(
         `Prompt cache (provider-reported): ${formatHitRate(cache.last)} last · ${formatHitRate(cache.session)} session avg — ${fmt(cache.cacheRead)} of ${fmt(cache.billedPrompt)} billed prompt tokens served from cache (${cache.requests} req)`,
@@ -151,23 +175,33 @@ export function buildStatusPanel(input: StatusPanelInput): string {
 
   if (activeBlocksList.length > 0) {
     lines.push("");
-    lines.push(`Blocks: ${activeBlocksList.length} active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed, cumulative)`);
+    lines.push(
+      `Blocks: ${activeBlocksList.length} active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed, cumulative)`,
+    );
     for (const b of activeBlocksList) {
-      const topic = b.topic ? `: ${b.topic}` : `: ${topicFallback(b.summary || "")}`;
+      const topic = b.topic
+        ? `: ${b.topic}`
+        : `: ${topicFallback(b.summary || "")}`;
       const summaryTok = defaultCountTokens(b.summary || "");
       const origTok = b.compressedTokens > 0 ? b.compressedTokens : summaryTok;
-      lines.push(`  [${b.blockId}] T${b.tier} ${fmt(origTok)}→${fmt(summaryTok)}${topic}`);
+      lines.push(
+        `  [${b.blockId}] T${b.tier} ${fmt(origTok)}→${fmt(summaryTok)}${topic}`,
+      );
     }
   } else if (totalBlocksList.length > 0) {
     lines.push("");
-    lines.push(`Blocks: 0 active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed, cumulative)`);
+    lines.push(
+      `Blocks: 0 active / ${totalBlocksList.length} total (${fmt(state.stats.tokensCompressed)} tokens compressed, cumulative)`,
+    );
   } else {
     lines.push("");
     lines.push("Blocks: none (nothing compressed yet)");
   }
 
   lines.push("");
-  lines.push("Tag visibility: tags injected to LLM only (deep copy), not persisted in session, not shown in terminal.");
+  lines.push(
+    "Tag visibility: tags injected to LLM only (deep copy), not persisted in session, not shown in terminal.",
+  );
 
   return lines.join("\n");
 }

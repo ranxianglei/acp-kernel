@@ -53,20 +53,41 @@ test("syncBlocks leaves blocks intact when at least one message remains", () => 
 test("syncBlocks keeps expanded (user-decompressed) blocks deactivated when present", () => {
   const state = createInitialState();
   state.blocks.push(
-    makeBlock({ blockId: "b1", effectiveMessageIds: ["a", "b"], active: false, expanded: true }),
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: ["a", "b"],
+      active: false,
+      expanded: true,
+    }),
   );
   const result = syncBlocks([msg("a"), msg("b")], state);
-  assert.equal(result.state.blocks[0]!.active, false, "expanded block must stay deactivated");
-  assert.deepEqual(result.deactivated, [], "expanded block is not reported as orphaned");
+  assert.equal(
+    result.state.blocks[0]!.active,
+    false,
+    "expanded block must stay deactivated",
+  );
+  assert.deepEqual(
+    result.deactivated,
+    [],
+    "expanded block is not reported as orphaned",
+  );
 });
 
 test("syncBlocks re-activates a deactivated (non-expanded) block when its messages return", () => {
   const state = createInitialState();
   state.blocks.push(
-    makeBlock({ blockId: "b1", effectiveMessageIds: ["a", "b"], active: false }),
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: ["a", "b"],
+      active: false,
+    }),
   );
   const result = syncBlocks([msg("a"), msg("b")], state);
-  assert.equal(result.state.blocks[0]!.active, true, "legacy resurrection preserved for non-expanded blocks");
+  assert.equal(
+    result.state.blocks[0]!.active,
+    true,
+    "legacy resurrection preserved for non-expanded blocks",
+  );
 });
 
 test("syncBlocks keeps block active when view emits base id for sub-id block (#231)", () => {
@@ -146,9 +167,13 @@ test("validateConfig flags min > max nudge thresholds", () => {
 test("validateConfig flags negative or non-finite minPressureBenefitTokens", () => {
   const base = defaultConfig(200000);
   base.nudge.minPressureBenefitTokens = -1;
-  assert.ok(validateConfig(base).some((e) => e.includes("minPressureBenefitTokens")));
+  assert.ok(
+    validateConfig(base).some((e) => e.includes("minPressureBenefitTokens")),
+  );
   base.nudge.minPressureBenefitTokens = Number.NaN;
-  assert.ok(validateConfig(base).some((e) => e.includes("minPressureBenefitTokens")));
+  assert.ok(
+    validateConfig(base).some((e) => e.includes("minPressureBenefitTokens")),
+  );
 });
 
 test("validateConfig accepts explicit minPressureBenefitTokens override", () => {

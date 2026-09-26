@@ -41,14 +41,14 @@
 import { charBigrams, tfMap } from "./tokenizer.js";
 
 export interface DocFeatures {
-    /** Stemmed term frequencies (BM25 channel). */
-    tf: Map<string, number>;
-    /** Total term count (BM25 length normalization). */
-    len: number;
-    /** Lower-cased text (substring + fuzzy channels). */
-    lower: string;
-    /** Unique char bigrams of `lower` (fuzzy channel). */
-    grams: Set<string>;
+  /** Stemmed term frequencies (BM25 channel). */
+  tf: Map<string, number>;
+  /** Total term count (BM25 length normalization). */
+  len: number;
+  /** Lower-cased text (substring + fuzzy channels). */
+  lower: string;
+  /** Unique char bigrams of `lower` (fuzzy channel). */
+  grams: Set<string>;
 }
 
 const DEFAULT_CAP_CHARS = 8 * 1024 * 1024;
@@ -57,38 +57,38 @@ const cache = new Map<string, DocFeatures>();
 let cachedChars = 0;
 
 function build(text: string): DocFeatures {
-    const tf = tfMap(text, true);
-    let len = 0;
-    for (const v of tf.values()) len += v;
-    const lower = text.toLowerCase();
-    return { tf, len, lower, grams: new Set(charBigrams(lower)) };
+  const tf = tfMap(text, true);
+  let len = 0;
+  for (const v of tf.values()) len += v;
+  const lower = text.toLowerCase();
+  return { tf, len, lower, grams: new Set(charBigrams(lower)) };
 }
 
 export function docFeatures(text: string): DocFeatures {
-    const hit = cache.get(text);
-    if (hit) {
-        // LRU: re-insert at the tail (most-recently-used); eviction takes from the head.
-        cache.delete(text);
-        cache.set(text, hit);
-        return hit;
+  const hit = cache.get(text);
+  if (hit) {
+    // LRU: re-insert at the tail (most-recently-used); eviction takes from the head.
+    cache.delete(text);
+    cache.set(text, hit);
+    return hit;
+  }
+  const f = build(text);
+  if (text.length > 0 && text.length <= capChars) {
+    while (cachedChars + text.length > capChars && cache.size > 0) {
+      const k = cache.keys().next().value as string;
+      cachedChars -= k.length;
+      cache.delete(k);
     }
-    const f = build(text);
-    if (text.length > 0 && text.length <= capChars) {
-        while (cachedChars + text.length > capChars && cache.size > 0) {
-            const k = cache.keys().next().value as string;
-            cachedChars -= k.length;
-            cache.delete(k);
-        }
-        cache.set(text, f);
-        cachedChars += text.length;
-    }
-    return f;
+    cache.set(text, f);
+    cachedChars += text.length;
+  }
+  return f;
 }
 
 /** Drop all cached features (e.g. on session shutdown/switch). */
 export function clearDocFeatures(): void {
-    cache.clear();
-    cachedChars = 0;
+  cache.clear();
+  cachedChars = 0;
 }
 
 /**
@@ -98,15 +98,15 @@ export function clearDocFeatures(): void {
  * Also used by tests to exercise eviction.
  */
 export function setDocCacheCap(chars: number): void {
-    capChars = Math.max(1, chars);
-    while (cachedChars > capChars && cache.size > 0) {
-        const k = cache.keys().next().value as string;
-        cachedChars -= k.length;
-        cache.delete(k);
-    }
+  capChars = Math.max(1, chars);
+  while (cachedChars > capChars && cache.size > 0) {
+    const k = cache.keys().next().value as string;
+    cachedChars -= k.length;
+    cache.delete(k);
+  }
 }
 
 /** Cache occupancy — for diagnostics. */
 export function docCacheInfo(): { entries: number; chars: number } {
-    return { entries: cache.size, chars: cachedChars };
+  return { entries: cache.size, chars: cachedChars };
 }

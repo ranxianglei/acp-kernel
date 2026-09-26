@@ -50,24 +50,45 @@ export function compressToolArgs(call: { name: string; arguments?: unknown }): {
 } | null {
   let args = call.arguments;
   if (typeof args === "string") {
-    try { args = JSON.parse(args); } catch { return null; }
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return null;
+    }
   }
   if (!args || typeof args !== "object" || Array.isArray(args)) return null;
   const a = args as Record<string, unknown>;
   if (call.name === "compress") {
-    return Array.isArray(a.content) ? { content: a.content, topic: a.topic, summaryMaxChars: a.summaryMaxChars } : null;
+    return Array.isArray(a.content)
+      ? {
+          content: a.content,
+          topic: a.topic,
+          summaryMaxChars: a.summaryMaxChars,
+        }
+      : null;
   }
   if (call.name !== "write") return null;
-  const path = typeof a.path === "string" ? a.path.split("?")[0]!.replace(/\/+$/, "") : "";
+  const path =
+    typeof a.path === "string" ? a.path.split("?")[0]!.replace(/\/+$/, "") : "";
   if (path !== "xd://compress") return null;
   let inner: unknown = a.content;
   if (typeof inner === "string") {
-    try { inner = JSON.parse(inner); } catch { return null; }
+    try {
+      inner = JSON.parse(inner);
+    } catch {
+      return null;
+    }
   }
   if (!inner || typeof inner !== "object") return null;
   if (Array.isArray(inner)) return { content: inner };
   const ia = inner as Record<string, unknown>;
-  return Array.isArray(ia.content) ? { content: ia.content, topic: ia.topic, summaryMaxChars: ia.summaryMaxChars } : { content: [ia] };
+  return Array.isArray(ia.content)
+    ? {
+        content: ia.content,
+        topic: ia.topic,
+        summaryMaxChars: ia.summaryMaxChars,
+      }
+    : { content: [ia] };
 }
 
 /** toolCallId → toolName for every tool-call piece (protected-piece
@@ -75,7 +96,8 @@ export function compressToolArgs(call: { name: string; arguments?: unknown }): {
 export function toolCallNames(msgs: BiliMessage[]): Map<string, string> {
   const names = new Map<string, string>();
   for (const m of msgs) {
-    if (m.contentType === "tool-call" && m.toolCallId && m.toolName) names.set(m.toolCallId, m.toolName);
+    if (m.contentType === "tool-call" && m.toolCallId && m.toolName)
+      names.set(m.toolCallId, m.toolName);
   }
   return names;
 }
@@ -103,14 +125,28 @@ export function findCompressCallsCore(msg: BiliMessage): StreamCompressCall[] {
   const ranges: StreamCompressCall["ranges"] = [];
   const callTopic = typeof args.topic === "string" ? args.topic : undefined;
   for (const item of content) {
-    const r = item as { startId?: unknown; endId?: unknown; summary?: unknown; topic?: unknown };
-    if (typeof r.startId !== "string" || typeof r.endId !== "string" || typeof r.summary !== "string" || r.summary.length === 0) continue;
+    const r = item as {
+      startId?: unknown;
+      endId?: unknown;
+      summary?: unknown;
+      topic?: unknown;
+    };
+    if (
+      typeof r.startId !== "string" ||
+      typeof r.endId !== "string" ||
+      typeof r.summary !== "string" ||
+      r.summary.length === 0
+    )
+      continue;
     ranges.push({
       startRef: r.startId,
       endRef: r.endId,
       summary: r.summary,
       topic: typeof r.topic === "string" ? r.topic : callTopic,
-      summaryMaxChars: typeof args.summaryMaxChars === "number" ? args.summaryMaxChars : undefined,
+      summaryMaxChars:
+        typeof args.summaryMaxChars === "number"
+          ? args.summaryMaxChars
+          : undefined,
       compressCallId: msg.toolCallId ?? "",
     });
   }
@@ -130,12 +166,20 @@ export function corePieceKey(cm: CoreMessage): string {
  *  exact first/last covered pieces. Boundary ids are pre-resolved (byRef /
  *  block lookup) — unlike the pN-space spanFingerprint there is no position
  *  parsing, ids are unique per piece. */
-export function spanFingerprintCore(coreMessages: CoreMessage[], startId: string, endId: string): string {
-  const find = (id: string): CoreMessage | undefined => coreMessages.find((cm) => cm.id === id);
+export function spanFingerprintCore(
+  coreMessages: CoreMessage[],
+  startId: string,
+  endId: string,
+): string {
+  const find = (id: string): CoreMessage | undefined =>
+    coreMessages.find((cm) => cm.id === id);
   const first = find(startId);
   const last = find(endId);
   if (!first || !last) return "";
-  return createHash("sha1").update(`${corePieceKey(first)}\u0000${corePieceKey(last)}`).digest("hex").slice(0, 8);
+  return createHash("sha1")
+    .update(`${corePieceKey(first)}\u0000${corePieceKey(last)}`)
+    .digest("hex")
+    .slice(0, 8);
 }
 
 /** Index-based span fingerprint (issue #91 replay fallback): hash the content
@@ -143,11 +187,18 @@ export function spanFingerprintCore(coreMessages: CoreMessage[], startId: string
  *  decides keep/drop — the position is only a recovery hint for a drifted
  *  boundary whose content-hash id no longer matches, so a benign tail drift
  *  (first-4096 intact) is kept while a real rewrite mismatches. */
-export function spanFingerprintCoreIdx(coreMessages: CoreMessage[], startIdx: number, endIdx: number): string {
+export function spanFingerprintCoreIdx(
+  coreMessages: CoreMessage[],
+  startIdx: number,
+  endIdx: number,
+): string {
   const first = coreMessages[startIdx];
   const last = coreMessages[endIdx];
   if (!first || !last) return "";
-  return createHash("sha1").update(`${corePieceKey(first)}\u0000${corePieceKey(last)}`).digest("hex").slice(0, 8);
+  return createHash("sha1")
+    .update(`${corePieceKey(first)}\u0000${corePieceKey(last)}`)
+    .digest("hex")
+    .slice(0, 8);
 }
 
 /** Structural subset the boundary resolvers need from a compression block
@@ -175,7 +226,8 @@ export function boundaryRawCore(
   if (!m) return "";
   const block = blocks.find((b) => b.blockId.toLowerCase() === `b${m[1]}`);
   if (!block) return "";
-  const idx = (id: string): number => coreMessages.findIndex((cm) => cm.id === (byRef[id] ?? id));
+  const idx = (id: string): number =>
+    coreMessages.findIndex((cm) => cm.id === (byRef[id] ?? id));
   let best = -1;
   for (const id of block.effectiveMessageIds) {
     const i = idx(id);
@@ -203,7 +255,9 @@ export function boundaryIndexCore(
     const i = coreMessages.findIndex((cm) => cm.id === id);
     if (i >= 0) return i;
   }
-  return fallbackIdx >= 0 && fallbackIdx < coreMessages.length ? fallbackIdx : -1;
+  return fallbackIdx >= 0 && fallbackIdx < coreMessages.length
+    ? fallbackIdx
+    : -1;
 }
 
 /** Structured replay-guard verdict (issue #91, rework): the position
@@ -228,10 +282,15 @@ export type ReplayRangeVerdict = {
  *  "" when the piece has no ref (protected) — the replay must fail closed
  *  rather than hand the kernel a ref it does not know. Replay-time only
  *  (replayed compress calls), so the O(refs) scan stays off the hot path. */
-export function refOfPieceCore(coreMessages: BiliMessage[], idx: number, byRef: Record<string, string>): string {
+export function refOfPieceCore(
+  coreMessages: BiliMessage[],
+  idx: number,
+  byRef: Record<string, string>,
+): string {
   const id = coreMessages[idx]?.id;
   if (!id) return "";
-  for (const [ref, mapped] of Object.entries(byRef)) if (mapped === id) return ref;
+  for (const [ref, mapped] of Object.entries(byRef))
+    if (mapped === id) return ref;
   return "";
 }
 
@@ -249,7 +308,7 @@ export function staleRangeCore(
   // boundary piece dangles its carried ref — the position recovers it, and
   // the fingerprint below still decides keep/drop.
   const pm = resultText.match(/\[pos=([0-9,-]+)\]/);
-  const pair = pm ? pm[1]!.split(",")[rangeIndex] ?? "-" : "-";
+  const pair = pm ? (pm[1]!.split(",")[rangeIndex] ?? "-") : "-";
   const hinted = pair !== "-";
   const [ps, pe] = pair === "-" ? ["", ""] : pair.split("-");
   const fbStart = ps && ps !== "" ? Number.parseInt(ps, 10) : -1;
@@ -257,26 +316,57 @@ export function staleRangeCore(
 
   // Raw resolution (id → stream index) separately from the fallback, so a
   // dangling m-ref recovered by position can be flagged for remapping.
-  const startRaw = boundaryRawCore(r.startRef, byRef, blocks, coreMessages, "min");
+  const startRaw = boundaryRawCore(
+    r.startRef,
+    byRef,
+    blocks,
+    coreMessages,
+    "min",
+  );
   const endRaw = boundaryRawCore(r.endRef, byRef, blocks, coreMessages, "max");
-  const rawStartIdx = startRaw ? coreMessages.findIndex((cm) => cm.id === startRaw) : -1;
-  const rawEndIdx = endRaw ? coreMessages.findIndex((cm) => cm.id === endRaw) : -1;
-  const startIdx = rawStartIdx >= 0 ? rawStartIdx : fbStart >= 0 && fbStart < coreMessages.length ? fbStart : -1;
-  const endIdx = rawEndIdx >= 0 ? rawEndIdx : fbEnd >= 0 && fbEnd < coreMessages.length ? fbEnd : -1;
+  const rawStartIdx = startRaw
+    ? coreMessages.findIndex((cm) => cm.id === startRaw)
+    : -1;
+  const rawEndIdx = endRaw
+    ? coreMessages.findIndex((cm) => cm.id === endRaw)
+    : -1;
+  const startIdx =
+    rawStartIdx >= 0
+      ? rawStartIdx
+      : fbStart >= 0 && fbStart < coreMessages.length
+        ? fbStart
+        : -1;
+  const endIdx =
+    rawEndIdx >= 0
+      ? rawEndIdx
+      : fbEnd >= 0 && fbEnd < coreMessages.length
+        ? fbEnd
+        : -1;
   if (startIdx < 0 || endIdx < 0) {
     if (!/^b\d+$/i.test(r.startRef.trim()) && !/^b\d+$/i.test(r.endRef.trim()))
-      return { reject: `unresolved ${r.startRef}..${r.endRef} -> ${startIdx}..${endIdx}`, ...(hinted ? { hint: true } : {}) };
+      return {
+        reject: `unresolved ${r.startRef}..${r.endRef} -> ${startIdx}..${endIdx}`,
+        ...(hinted ? { hint: true } : {}),
+      };
     return {}; // block ref(s): the kernel resolves them itself (master)
   }
   // The end piece must precede the call that issued it — a rewrite moved
   // the call and the fingerprint check below is meaningless either way.
-  if (endIdx > callIndex) return { reject: `end idx ${endIdx} > callIndex ${callIndex}`, ...(hinted ? { hint: true } : {}) };
+  if (endIdx > callIndex)
+    return {
+      reject: `end idx ${endIdx} > callIndex ${callIndex}`,
+      ...(hinted ? { hint: true } : {}),
+    };
   const m = resultText.match(/\[fp=([0-9a-f,-]+)\]/);
   if (m) {
     const want = m[1]!.split(",")[rangeIndex];
     if (want !== undefined && want !== "-") {
       const got = spanFingerprintCoreIdx(coreMessages, startIdx, endIdx);
-      if (want !== got) return { reject: `fp ${r.startRef}..${r.endRef} want ${want} got ${got} @${startIdx}..${endIdx}`, ...(hinted ? { hint: true } : {}) };
+      if (want !== got)
+        return {
+          reject: `fp ${r.startRef}..${r.endRef} want ${want} got ${got} @${startIdx}..${endIdx}`,
+          ...(hinted ? { hint: true } : {}),
+        };
     }
   }
   // Remap only the boundaries that actually dangled (m-refs whose recorded id
@@ -285,12 +375,20 @@ export function staleRangeCore(
   const remap: { startRef?: string; endRef?: string } = {};
   if (/^m\d+$/i.test(r.startRef.trim()) && rawStartIdx < 0) {
     const ref = refOfPieceCore(coreMessages, startIdx, byRef);
-    if (!ref) return { reject: `recovered ${r.startRef} @${startIdx} has no ref (protected piece)`, ...(hinted ? { hint: true } : {}) };
+    if (!ref)
+      return {
+        reject: `recovered ${r.startRef} @${startIdx} has no ref (protected piece)`,
+        ...(hinted ? { hint: true } : {}),
+      };
     remap.startRef = ref;
   }
   if (/^m\d+$/i.test(r.endRef.trim()) && rawEndIdx < 0) {
     const ref = refOfPieceCore(coreMessages, endIdx, byRef);
-    if (!ref) return { reject: `recovered ${r.endRef} @${endIdx} has no ref (protected piece)`, ...(hinted ? { hint: true } : {}) };
+    if (!ref)
+      return {
+        reject: `recovered ${r.endRef} @${endIdx} has no ref (protected piece)`,
+        ...(hinted ? { hint: true } : {}),
+      };
     remap.endRef = ref;
   }
   if (!remap.startRef && !remap.endRef) return {};
@@ -306,8 +404,16 @@ export function rangeFingerprintsCore(
   blocks: BlockLike[],
 ): string[] {
   return ranges.map((r) => {
-    const start = boundaryRawCore(r.startRef, byRef, blocks, coreMessages, "min");
-    const end = start ? boundaryRawCore(r.endRef, byRef, blocks, coreMessages, "max") : "";
+    const start = boundaryRawCore(
+      r.startRef,
+      byRef,
+      blocks,
+      coreMessages,
+      "min",
+    );
+    const end = start
+      ? boundaryRawCore(r.endRef, byRef, blocks, coreMessages, "max")
+      : "";
     if (start && end) {
       const fp = spanFingerprintCore(coreMessages, start, end);
       if (fp.length > 0) return fp;
@@ -328,7 +434,10 @@ export function rangePositionsCore(
 ): string[] {
   return ranges.map((r) => {
     const s = boundaryIndexCore(r.startRef, byRef, blocks, coreMessages, "min");
-    const e = s >= 0 ? boundaryIndexCore(r.endRef, byRef, blocks, coreMessages, "max") : -1;
+    const e =
+      s >= 0
+        ? boundaryIndexCore(r.endRef, byRef, blocks, coreMessages, "max")
+        : -1;
     return s >= 0 && e >= 0 ? `${s}-${e}` : "-";
   });
 }

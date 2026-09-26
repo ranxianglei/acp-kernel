@@ -38,12 +38,14 @@ function toolCallMsg(
   };
 }
 
-function toolResultMsg(
-  id: string,
-  callId: string,
-  text: string,
-): CoreMessage {
-  return { id, role: "tool", contentType: "tool-result", toolCallId: callId, text };
+function toolResultMsg(id: string, callId: string, text: string): CoreMessage {
+  return {
+    id,
+    role: "tool",
+    contentType: "tool-result",
+    toolCallId: callId,
+    text,
+  };
 }
 
 function config(overrides: Partial<Config> = {}): Config {
@@ -74,10 +76,12 @@ function config(overrides: Partial<Config> = {}): Config {
   };
 }
 
-function makeState(specs: {
-  blockId: string;
-  effectiveMessageIds: string[];
-}[]): CompressionState {
+function makeState(
+  specs: {
+    blockId: string;
+    effectiveMessageIds: string[];
+  }[],
+): CompressionState {
   const state = createInitialState();
   state.blocks = specs.map((spec) => ({
     blockId: spec.blockId,
@@ -111,7 +115,10 @@ function loopedView(): CoreMessage[] {
   ];
 }
 
-function withRefs(messages: CoreMessage[], state: CompressionState): CompressionState {
+function withRefs(
+  messages: CoreMessage[],
+  state: CompressionState,
+): CompressionState {
   state.messageRefs = assignRefs(messages, {
     existing: state.messageRefs,
     nextIndex: 1,
@@ -125,7 +132,12 @@ test("#199: message-ref range that only re-wraps an active block is rejected, no
   const messages = loopedView();
   const state = withRefs(
     messages,
-    makeState([{ blockId: "b1", effectiveMessageIds: ["raw-2", "raw-3", "raw-4", "raw-5"] }]),
+    makeState([
+      {
+        blockId: "b1",
+        effectiveMessageIds: ["raw-2", "raw-3", "raw-4", "raw-5"],
+      },
+    ]),
   );
   const startRef = state.messageRefs.byRaw["raw-1"]!;
   const endRef = state.messageRefs.byRaw["tool-2"]!;
@@ -152,7 +164,12 @@ test("#199: promote via block-boundary refs (b1..b1) still works after the guard
   const messages = loopedView();
   const state = withRefs(
     messages,
-    makeState([{ blockId: "b1", effectiveMessageIds: ["raw-2", "raw-3", "raw-4", "raw-5"] }]),
+    makeState([
+      {
+        blockId: "b1",
+        effectiveMessageIds: ["raw-2", "raw-3", "raw-4", "raw-5"],
+      },
+    ]),
   );
 
   const applied = core.applyCompression({
@@ -167,7 +184,11 @@ test("#199: promote via block-boundary refs (b1..b1) still works after the guard
   const newBlock = applied.state.blocks[applied.state.blocks.length - 1]!;
   assert.equal(newBlock.tier, 2);
   assert.deepEqual(newBlock.directBlockIds, ["b1"]);
-  assert.equal(applied.state.blocks[0]!.active, false, "b1 consumed by promote");
+  assert.equal(
+    applied.state.blocks[0]!.active,
+    false,
+    "b1 consumed by promote",
+  );
 });
 
 test("#199: message-ref range that pulls in NEW messages plus a nested block is still allowed", () => {
@@ -180,7 +201,12 @@ test("#199: message-ref range that pulls in NEW messages plus a nested block is 
   ];
   const state = withRefs(
     messages,
-    makeState([{ blockId: "b1", effectiveMessageIds: ["raw-2", "raw-3", "raw-4", "raw-5"] }]),
+    makeState([
+      {
+        blockId: "b1",
+        effectiveMessageIds: ["raw-2", "raw-3", "raw-4", "raw-5"],
+      },
+    ]),
   );
   const startRef = state.messageRefs.byRaw["raw-1"]!;
   const endRef = state.messageRefs.byRaw["tool-2"]!;

@@ -64,7 +64,7 @@ test("applySectionOverrides ignores malformed (non-string, non-null) values", ()
   ]);
 });
 
-test("default builders are byte-identical to the published 0.0.46 output", () => {
+test("default builders are byte-stable against checked-in fixtures", () => {
   const fixture = (name: string) =>
     readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
   assert.equal(

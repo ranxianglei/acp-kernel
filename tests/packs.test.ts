@@ -9,6 +9,9 @@ import {
   defaultPack,
   leanPack,
   LEAN_HOW_TO_COMPRESS,
+  HOW_TO_COMPRESS_RULES,
+  TIER2_DISTILL_RULES,
+  TIER3_CONDENSE_RULES,
   builtinSource,
   createDirPackSource,
   createPackResolver,
@@ -94,8 +97,8 @@ test("lean carries a condensed how-to-compress style contract in the pi slot", (
   };
   const howTo = pi.promptSections.howToCompress ?? "";
   assert.ok(
-    howTo.length > 800 && howTo.length < 2600,
-    `condensed, not full (len=${howTo.length})`,
+    howTo.length > 800 && howTo.length < 3100,
+    `condensed, not full (len=${howTo.length}; ceiling raised for the #442 open-objectives rule)`,
   );
   for (const marker of [
     "TASK AS OF THIS BLOCK",
@@ -105,6 +108,7 @@ test("lean carries a condensed how-to-compress style contract in the pi slot", (
     "chose X over Y because Z",
     "PRIORITY",
     "Do not mimic",
+    "Open objectives",
   ]) {
     assert.ok(howTo.includes(marker), `missing: ${marker}`);
   }
@@ -429,4 +433,75 @@ test("file pack round-trips through dir source into resolver", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("every builtin pack's compression guidance carries the open-objectives rule (#442)", () => {
+  const slots = [
+    "howToCompressRules",
+    "tier2DistillRules",
+    "tier3CondenseRules",
+  ] as const;
+  const kernelDefaults = [
+    HOW_TO_COMPRESS_RULES,
+    TIER2_DISTILL_RULES,
+    TIER3_CONDENSE_RULES,
+  ];
+  for (const pack of builtinSource.list()) {
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i]!;
+      const override = pack.surface.prompts?.[slot];
+      const text = typeof override === "string" ? override : kernelDefaults[i]!;
+      assert.ok(
+        text.includes("Open objectives"),
+        `${pack.name}: ${slot} missing open-objectives rule`,
+      );
+      if (slot === "howToCompressRules") {
+        assert.ok(
+          text.toLowerCase().includes("open-objective status is current"),
+          `${pack.name}: ${slot} missing softened status-is-current clause`,
+        );
+      }
+    }
+    const piSections = (
+      pack.surface.adapters?.pi as
+        { promptSections?: Record<string, string | null> } | undefined
+    )?.promptSections;
+    if (typeof piSections?.howToCompress === "string") {
+      assert.ok(
+        piSections.howToCompress.includes("Open objectives"),
+        `${pack.name}: lean how-to-compress missing open-objectives rule`,
+      );
+      assert.ok(
+        piSections.howToCompress
+          .toLowerCase()
+          .includes("open-objective status is current"),
+        `${pack.name}: lean how-to-compress missing softened status-is-current clause`,
+      );
+    }
+  }
+});
+
+test("summaries-in-context guardrails carve out Open objectives as live tasking (#442)", () => {
+  const defaultPrompt = buildCompressSystemPrompt();
+  assert.ok(
+    defaultPrompt.includes('Exception: a summary\'s "Open objectives:" line'),
+    "default summariesInContext guardrail keeps the live-tasking exception",
+  );
+  const piSections =
+    (
+      leanPack.surface.adapters?.pi as
+        { promptSections?: Record<string, string | null> } | undefined
+    )?.promptSections ?? {};
+  assert.ok(
+    (piSections.summariesInContext ?? "").includes(
+      'Exception: a summary\'s "Open objectives:" line',
+    ),
+    "lean summariesInContext guardrail keeps the live-tasking exception",
+  );
+  assert.ok(
+    (piSections.acpTags ?? "").includes(
+      'A summary\'s "Open objectives:" line names still-open user requests',
+    ),
+    "lean acpTags guardrail keeps the live-tasking exception",
+  );
 });

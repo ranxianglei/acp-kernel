@@ -207,8 +207,8 @@ safe to customize freely; these helpers implement that:
   `buildCompressHybridSystemPrompt` accept an optional
   `CompressPromptSections` second argument (keys: `acpTags`, `tools`,
   `summariesInContext`, `textProtocol`, `textTools`, `functionTools`).
-  With no sections argument the output is byte-identical to the
-  pre-override release (regression-tested against fixtures).
+  With no sections argument the output is byte-stable — regression-tested
+  against checked-in fixtures (`tests/fixtures/`).
 - `cloneWithDescriptions(schema, paramDescriptions)` — returns a deep clone
   of a JSON tool schema with parameter `description` fields replaced by
   property name, at any nesting depth. The input is never mutated.

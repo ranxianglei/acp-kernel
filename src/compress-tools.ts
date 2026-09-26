@@ -66,10 +66,6 @@ const COMPRESS_RANGE_OBJECT = {
       description: "Self-contained summary replacing the range",
     },
   },
-  anyOf: [
-    { required: ["startId", "endId", "summary"] },
-    { required: ["startRef", "endRef", "summary"] },
-  ],
 };
 
 /** Shared parameter schema for every compress wire shape (anthropic
@@ -88,8 +84,8 @@ const COMPRESS_RANGE_OBJECT = {
  *  content-vs-flat alternation lives in the descriptions and is enforced by
  *  parseCompressInput, never by a top-level combinator or `required` (a
  *  top-level `required: ["content"]` would let strict hosts kill the flat
- *  form). Nested combinators (properties.content.items.anyOf) are legal on
- *  every wire — see tests/wire-schema-top-level.test.ts.
+ *  form). Copilot Gemini also needs scalar types and self-contained typed
+ *  alternatives; keep each nested object alternative's properties with it.
  */
 export const COMPRESS_PARAMETERS = {
   type: "object",
@@ -99,19 +95,25 @@ export const COMPRESS_PARAMETERS = {
       description: "Optional short title for the compressed range",
     },
     content: {
-      type: ["array", "string"],
       description:
         "One or more ranges to compress into separate summary blocks. Array form (preferred): one entry per range — line form (one STRING per range: first line 'm00150–m00220 optional topic', remaining lines the markdown summary verbatim) or object form {startId,endId,summary,topic?}. String form also accepted: bare line-form text, or a JSON-encoded array of ranges (some gateways stringify arrays). REQUIRED unless the flat single-range form is used.",
-      items: {
-        anyOf: [
-          {
-            type: "string",
-            description:
-              "Line form: first line 'm00150–m00220 optional topic', remaining lines the summary markdown, verbatim (no JSON escaping)",
+      anyOf: [
+        {
+          type: "array",
+          items: {
+            anyOf: [
+              {
+                type: "string",
+                description:
+                  "Line form: first line 'm00150–m00220 optional topic', remaining lines the summary markdown, verbatim (no JSON escaping)",
+              },
+              { ...COMPRESS_RANGE_OBJECT, required: ["startId", "endId", "summary"] },
+              { ...COMPRESS_RANGE_OBJECT, required: ["startRef", "endRef", "summary"] },
+            ],
           },
-          COMPRESS_RANGE_OBJECT,
-        ],
-      },
+        },
+        { type: "string" },
+      ],
     },
     startId: {
       type: "string",
@@ -793,4 +795,3 @@ export const RETRIEVE_TOOL_RESPONSES = {
   description: RETRIEVE_TOOL_DESCRIPTION,
   parameters: RETRIEVE_PARAMETERS,
 };
-

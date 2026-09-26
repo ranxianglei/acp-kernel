@@ -860,3 +860,77 @@ test("RETRIEVE_TOOL schemas exist in all three wire shapes and stay opt-in", () 
   assert.ok(!openaiNames.includes("acp_retrieve"));
   assert.ok(!ACP_TOOL_NAMES.has("acp_retrieve"));
 });
+
+test("storeCoveredOriginals never persists placeholder text as an original (#1340)", () => {
+  const core = createCore({ countTokens });
+  // The exact disease: history still carries the [acp-stored …] placeholder,
+  // but the companion store LOST the ref (fork without store adoption, deleted
+  // or corrupted store file, host migration without the envelope). Storing the
+  // placeholder bytes as the "original" would make every later retrieve-by-ref
+  // a fake hit that echoes the placeholder itself.
+  const placeholder = buildStoredPlaceholder({
+    ref: "m00099",
+    kind: "tool:bash",
+    tokens: 4213,
+    head: "probe_kvnet.py: tests n-gram baseline",
+    retrieveToolName: RETRIEVE_TOOL_NAME,
+  });
+  const messages: CoreMessage[] = [
+    { id: "u1", role: "user", contentType: "text", text: placeholder },
+    {
+      id: "a1",
+      role: "assistant",
+      contentType: "text",
+      text: "assistant reply that folds alongside",
+    },
+    {
+      id: "u2",
+      role: "user",
+      contentType: "text",
+      text: "recent tail user message",
+    },
+    {
+      id: "a2",
+      role: "assistant",
+      contentType: "text",
+      text: "recent tail assistant reply",
+    },
+  ];
+  const seeded = core.processTurn({
+    messages,
+    state: createInitialState(),
+    config: defaultConfig(100000),
+    tokenCount: 1000,
+  });
+  const compressed = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00002", summary: "S".repeat(60) }],
+    messages: seeded.messages,
+    state: seeded.state,
+    config: defaultConfig(100000, {
+      compress: { minCompressRange: 0 },
+      preserveRecentMessages: 1,
+      preserveRecentTokens: 0,
+    }),
+  });
+  const block = compressed.state.blocks.find((b) => b.active)!;
+  let store = createContentStore();
+  store = storeCoveredOriginals(
+    store,
+    seeded.messages,
+    compressed.state,
+    [block.blockId],
+    countTokens,
+  );
+  assert.ok(
+    !hasStoredRef(store, "m00001"),
+    "placeholder must not enter the store",
+  );
+  const missed = retrieveByRef(store, "m00001");
+  assert.ok(
+    !missed.ok,
+    "retrieve must miss honestly, not echo the placeholder",
+  );
+  const kept = retrieveByRef(store, "m00002");
+  assert.ok(kept.ok, "non-placeholder covered originals still store normally");
+  if (kept.ok) assert.equal(kept.text, "assistant reply that folds alongside");
+});

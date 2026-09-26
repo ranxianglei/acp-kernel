@@ -394,7 +394,13 @@ export function storeCoveredOriginals(
     if (text.length === 0) continue;
     const ref = refForRaw(state.messageRefs, message.id);
     if (!ref || ref === BLOCKED_REF) continue;
-    if (isStoredPlaceholderText(text) && hasStoredRef(current, ref)) continue;
+    // Placeholder text is never an original: a placeholder whose ref is
+    // missing from the store means the true original was already lost (fork
+    // without the store envelope, corrupted companion file, host migration
+    // without the store). Storing the placeholder bytes would turn every
+    // later retrieve-by-ref into a fake hit echoing the placeholder itself —
+    // the symmetric skip mirrors the arrival-time path in storeLargeResults.
+    if (isStoredPlaceholderText(text)) continue;
     current = storeOriginal(current, {
       ref,
       rawId: message.id,

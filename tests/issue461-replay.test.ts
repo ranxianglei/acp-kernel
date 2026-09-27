@@ -48,6 +48,14 @@ test("positional replay keeps original ids so prune can replace them (#461)", ()
   assert.equal(out, msgs);
 });
 
+test("single-base replay keeps the original id (one-message fold echo, #461)", () => {
+  const state = createInitialState();
+  state.blocks.push(folded([H]));
+  const msgs = [msg(H, "b")];
+  const out = remintCoveredLiveIds(msgs, state);
+  assert.equal(out, msgs);
+});
+
 test("positional replay tolerates an appended new duplicate of folded text", () => {
   const state = createInitialState();
   state.blocks.push(folded([E, H]));

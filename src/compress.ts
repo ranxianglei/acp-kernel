@@ -706,6 +706,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
       countTokens,
       contentStore,
     };
+    const inboundIds = input.messages.map((m) => m.id);
     const initial: NodeIO = {
       messages: input.messages,
       state: input.state,
@@ -720,7 +721,10 @@ export function createCore(ports: Ports = {}): CompressionCore {
     const ccrEffect = result.effects.ccr as CcrEffect | undefined;
     return {
       messages: result.messages,
-      state: result.state,
+      // This pass's inbound ids become the NEXT pass's echo discriminator
+      // (#462). Written here — not by a node — so reconcile-live-ids reads the
+      // PREVIOUS pass's snapshot during this one.
+      state: { ...result.state, lastPassIds: inboundIds },
       nudge: result.effects.nudge,
       terminalEscape: result.effects.terminalEscape,
       truncationSkipped: result.effects.truncationSkipped,
@@ -1984,6 +1988,7 @@ function cloneState(state: CompressionState): CompressionState {
     hiddenOrphanRefs: state.hiddenOrphanRefs
       ? [...state.hiddenOrphanRefs]
       : undefined,
+    lastPassIds: state.lastPassIds ? [...state.lastPassIds] : undefined,
   };
 }
 

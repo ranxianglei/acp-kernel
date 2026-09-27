@@ -443,6 +443,17 @@ test("mergeCompressionState keeps parsed values over defaults", () => {
   });
 });
 
+test("mergeCompressionState carries lastPassIds through persist/load (#462)", () => {
+  const parsed = {
+    ...createInitialState(),
+    lastPassIds: ["h_aaaaaaaaaaaaaaaa"],
+  };
+  const merged = mergeCompressionState(parsed);
+  assert.deepEqual(merged.lastPassIds, ["h_aaaaaaaaaaaaaaaa"]);
+  const legacy = mergeCompressionState({ blocks: [] } as CompressionState);
+  assert.equal(legacy.lastPassIds, undefined);
+});
+
 test("legacy hook adopts pre-envelope records on loadAll and loadSync", async () => {
   const dir = tmpDir();
   try {

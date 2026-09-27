@@ -47,10 +47,13 @@ function instanceNumber(id: string, root: string): number | null {
  * positional fingerprint distinguishes them deterministically: a block is
  * REPLAYING when its rendered summary is absent AND every one of its covered
  * bases is present — only a full resend of the folded population produces that
- * shape. An occurrence under exclusively-replaying coverage keeps its id; under
- * any other shape (summary present, partial presence, ambiguous single-message
- * fingerprint) it is treated as a new instance and re-minted — erring toward
- * shipping a duplicate rather than deleting a user turn.
+ * shape. An occurrence under exclusively-replaying coverage keeps its id —
+ * note the single-base shape (its one covered base present, summary absent)
+ * IS replaying: the proxy-mode echo of a one-message fold. Only the other
+ * shapes (summary present, or a covered base missing while another
+ * representation keeps the block present) are treated as new instances and
+ * re-minted — erring toward shipping a duplicate rather than deleting a user
+ * turn.
  *
  * Coverage is judged per sync's own activation predicate (isBlockStillPresent,
  * recomputed against THIS input) rather than the stored `active` flag: a block

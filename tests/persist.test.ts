@@ -454,6 +454,14 @@ test("mergeCompressionState carries lastPassIds through persist/load (#462)", ()
   assert.equal(legacy.lastPassIds, undefined);
 });
 
+test("mergeCompressionState carries hiddenOrphanRefs through persist/load (#396)", () => {
+  const parsed = { ...createInitialState(), hiddenOrphanRefs: ["m00005"] };
+  const merged = mergeCompressionState(parsed);
+  assert.deepEqual(merged.hiddenOrphanRefs, ["m00005"]);
+  const legacy = mergeCompressionState({ blocks: [] } as CompressionState);
+  assert.equal(legacy.hiddenOrphanRefs, undefined);
+});
+
 test("legacy hook adopts pre-envelope records on loadAll and loadSync", async () => {
   const dir = tmpDir();
   try {

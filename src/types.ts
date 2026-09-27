@@ -279,16 +279,6 @@ export interface CompressionState {
    *  this set and keeps the clear "cannot be anchored" error. Optional for
    *  pre-feature persisted states. */
   hiddenOrphanRefs?: string[];
-  /** Exact inbound ids of the PREVIOUS processTurn pass (pre-pipeline,
-   * converter-derived). Continuity signal for reconcile-live-ids (#462): an
-   * id that is covered by a fold but was present in the prior pass is the
-   * folded original's RESEND (stateless hosts resend full history every
-   * turn) and must keep its id so prune drops it; the same id absent from
-   * the prior pass is a genuinely new identical instance and gets renumbered
-   * (#1476). Optional: pre-feature persisted states lack it — one pass of
-   * 0.0.95 semantics (renumber nothing), self-heals once written. Written
-   * every processTurn. */
-  lastPassIds?: string[];
   nextBlockId: number;
   nextRunId: number;
 }

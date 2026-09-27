@@ -279,6 +279,16 @@ export interface CompressionState {
    *  this set and keeps the clear "cannot be anchored" error. Optional for
    *  pre-feature persisted states. */
   hiddenOrphanRefs?: string[];
+  /** Exact ids inbound on the PREVIOUS processTurn, snapshotted at entry and
+   *  written into the returned state. Cross-pass continuity anchor for
+   *  reconcile-live-ids (#462): a live content-hash id that is covered AND was
+   *  inbound last pass is an ECHO of a folded original (stateless hosts resend
+   *  raw history every turn) and stays untouched so prune drops it under its
+   *  stable ref; covered but NOT seen last pass is a genuinely new instance and
+   *  gets re-minted (#1476). Absent on pre-feature persisted states →
+   *  re-minting is skipped for that one pass (0.0.95 semantics; self-heals
+   *  when the next processTurn writes the field). */
+  lastPassIds?: string[];
   nextBlockId: number;
   nextRunId: number;
 }

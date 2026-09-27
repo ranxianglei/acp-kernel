@@ -45,6 +45,7 @@ export function syncBlocks(
     terminalStreak: state.terminalStreak,
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
+    lastPassIds: state.lastPassIds ? [...state.lastPassIds] : undefined,
   };
 
   // Refs are additive (assignRefs never removes them from messageRefs), so

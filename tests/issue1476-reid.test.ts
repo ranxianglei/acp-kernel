@@ -8,6 +8,7 @@ import type { CompressionBlock, CoreMessage } from "../src/types.js";
 
 const HASH = "h_0123456789abcdef";
 const EARLY = "h_aaaaaaaaaaaaaaaa";
+const SUMMARY_ID = "acp_summary_b1";
 
 function msg(
   id: string,
@@ -37,9 +38,16 @@ function folded(ids: string[]): CompressionBlock {
 test("re-mints a live message whose id collides with a folded copy (#1476)", () => {
   const state = createInitialState();
   state.blocks.push(folded([HASH]));
-  state.lastPassIds = [];
-  const out = remintCoveredLiveIds([msg(HASH, "都按推荐来")], state);
-  assert.equal(out[0].id, `${HASH}_1`);
+  // Pruned-view shape: the rendered summary is in the pass, so the block is
+  // not positionally replaying and the colliding occurrence is a new instance.
+  const out = remintCoveredLiveIds(
+    [
+      msg(SUMMARY_ID, "[Compressed conversation section] …", "system"),
+      msg(HASH, "都按推荐来"),
+    ],
+    state,
+  );
+  assert.equal(out[1].id, `${HASH}_1`);
 });
 
 test("leaves numbering untouched when the base is not folded (incident 3)", () => {
@@ -53,37 +61,36 @@ test("leaves numbering untouched when the base is not folded (incident 3)", () =
   assert.equal(out, msgs);
 });
 
-test("renumbers only the colliding new instance, keeping stable ids (#462)", () => {
+test("re-mints conflicting instances only when the block is not replaying (#461)", () => {
   const state = createInitialState();
   state.blocks.push(folded([HASH]));
-  state.lastPassIds = [`${HASH}_1`];
-  // The bare instance is genuinely new (absent last pass); HASH_1 is not
-  // exactly covered, so it keeps the converter's numbering. The renumbered
-  // instance dodges the number the live HASH_1 already holds.
+  // Pruned-view shape (summary present): the bare-id occurrence is a new
+  // instance; the non-conflicting `_1` member keeps its own id (no ref churn).
   const out = remintCoveredLiveIds(
-    [msg(HASH, "a"), msg(`${HASH}_1`, "b")],
+    [
+      msg(SUMMARY_ID, "[Compressed conversation section] …", "system"),
+      msg(HASH, "a"),
+      msg(`${HASH}_1`, "b"),
+    ],
     state,
   );
   assert.deepEqual(
     out.map((m) => m.id),
-    [`${HASH}_2`, `${HASH}_1`],
+    [SUMMARY_ID, `${HASH}_2`, `${HASH}_1`],
   );
+});
+
+test("keeps original ids when the host positionally replays the folded population (#461)", () => {
+  const state = createInitialState();
+  state.blocks.push(folded([EARLY, HASH]));
+  const msgs = [msg(EARLY, "a"), msg(HASH, "b")];
+  const out = remintCoveredLiveIds(msgs, state);
+  assert.equal(out, msgs);
 });
 
 test("skips instance numbers already claimed by folded copies", () => {
   const state = createInitialState();
   state.blocks.push(folded([HASH, `${HASH}_1`]));
-  state.lastPassIds = [];
-  const out = remintCoveredLiveIds([msg(HASH, "a")], state);
-  assert.equal(out[0].id, `${HASH}_2`);
-});
-
-test("renumber skips numbers claimed by the previous pass inbound (#462)", () => {
-  const state = createInitialState();
-  state.blocks.push(folded([HASH]));
-  // HASH_1 was live in the previous pass (ref'd there) but is no longer in the
-  // resend set; re-minting it would alias its stale ref onto the new instance.
-  state.lastPassIds = [`${HASH}_1`];
   const out = remintCoveredLiveIds([msg(HASH, "a")], state);
   assert.equal(out[0].id, `${HASH}_2`);
 });
@@ -91,9 +98,15 @@ test("renumber skips numbers claimed by the previous pass inbound (#462)", () =>
 test("preserves the sub-id projection tail", () => {
   const state = createInitialState();
   state.blocks.push(folded([HASH]));
-  state.lastPassIds = [];
-  const out = remintCoveredLiveIds([msg(`${HASH}#sub`, "a")], state);
-  assert.equal(out[0].id, `${HASH}_1#sub`);
+  // Pruned-view shape: summary present ⇒ not positionally replaying (#461).
+  const out = remintCoveredLiveIds(
+    [
+      msg(SUMMARY_ID, "[Compressed conversation section] …", "system"),
+      msg(`${HASH}#sub`, "a"),
+    ],
+    state,
+  );
+  assert.equal(out[1].id, `${HASH}_1#sub`);
 });
 
 test("ignores non-content-hash ids", () => {
@@ -112,44 +125,28 @@ test("ignores non-content-hash ids", () => {
 test("is deterministic for a fixed (state, body)", () => {
   const state = createInitialState();
   state.blocks.push(folded([HASH]));
-  state.lastPassIds = [];
   const a = remintCoveredLiveIds([msg(HASH, "x")], state).map((m) => m.id);
   const b = remintCoveredLiveIds([msg(HASH, "x")], state).map((m) => m.id);
   assert.deepEqual(a, b);
 });
 
-function seededFoldState(): ReturnType<typeof createInitialState> {
+test("fresh later user turn survives prune with a distinct id + ref (#1476 e2e)", () => {
+  const core = createCore();
   const state = createInitialState();
   // Earlier "都按推荐来" was ref'd (m00001) then folded into b1 (off the wire).
   state.messageRefs.byRaw[HASH] = "m00001";
   state.messageRefs.byRef["m00001"] = HASH;
   state.blocks.push(folded([HASH]));
-  return state;
-}
-
-test("fresh later user turn survives prune with a distinct id + ref (#1476 e2e)", () => {
-  const core = createCore();
-  const state = seededFoldState();
-  // Pass A: history WITHOUT any HASH instance — establishes the prior-pass
-  // snapshot the next pass discriminates against.
-  const passA = core.processTurn({
-    messages: [
-      msg(EARLY, "帮我看看这段代码"),
-      msg("acp_summary_b1", "[Compressed conversation section] …", "system"),
-    ],
-    state,
-    config: defaultConfig(100000),
-    tokenCount: 300,
-  });
-  // Pass B: the fresh resend whose bare id collides with the folded original
-  // and was absent from pass A.
+  // Re-sent history: an earlier user turn (firstUserIndex), the rendered summary,
+  // then the fresh resend whose bare id collides with the folded original.
+  const input = [
+    msg(EARLY, "帮我看看这段代码"),
+    msg("acp_summary_b1", "[Compressed conversation section] …", "system"),
+    msg(HASH, "都按推荐来"),
+  ];
   const result = core.processTurn({
-    messages: [
-      msg(EARLY, "帮我看看这段代码"),
-      msg("acp_summary_b1", "[Compressed conversation section] …", "system"),
-      msg(HASH, "都按推荐来"),
-    ],
-    state: passA.state,
+    messages: input,
+    state,
     config: defaultConfig(100000),
     tokenCount: 300,
   });
@@ -164,89 +161,4 @@ test("fresh later user turn survives prune with a distinct id + ref (#1476 e2e)"
     !result.messages.some((m) => m.id === HASH),
     "folded bare id must not be re-issued",
   );
-});
-
-test("post-fold resend of the folded original stays covered and pruned (#462 e2e)", () => {
-  const core = createCore();
-  const state = seededFoldState();
-  // Pass A: the original "都按推荐来" still live (pre-fold shape).
-  const passA = core.processTurn({
-    messages: [msg(EARLY, "帮我看看这段代码"), msg(HASH, "都按推荐来")],
-    state,
-    config: defaultConfig(100000),
-    tokenCount: 300,
-  });
-  // Pass B: the stateless host resends the SAME raw history. This is the
-  // folded original's echo — #459 renumbered it, prune then missed it, and
-  // the summarized content re-inflated the wire every turn.
-  const result = core.processTurn({
-    messages: [msg(EARLY, "帮我看看这段代码"), msg(HASH, "都按推荐来")],
-    state: passA.state,
-    config: defaultConfig(100000),
-    tokenCount: 300,
-  });
-  assert.ok(
-    !result.messages.some((m) => m.id === HASH || m.id === `${HASH}_1`),
-    "echo of the folded original must stay pruned, not renumbered back onto the wire",
-  );
-  assert.ok(
-    !result.state.messageRefs.byRaw[`${HASH}_1`],
-    "no fresh ref may be minted for the echo",
-  );
-  assert.equal(
-    result.state.messageRefs.byRaw[HASH],
-    "m00001",
-    "the folded original keeps its original ref (no churn)",
-  );
-});
-
-test("first-user pinned echo keeps its id and ref across post-fold passes (#462 e2e)", () => {
-  const core = createCore();
-  const state = createInitialState();
-  state.messageRefs.byRaw[HASH] = "m00001";
-  state.messageRefs.byRef["m00001"] = HASH;
-  state.blocks.push(folded([HASH]));
-  const history = [msg(HASH, "开场白"), msg(EARLY, "后续")];
-  const passA = core.processTurn({
-    messages: history,
-    state,
-    config: defaultConfig(100000),
-    tokenCount: 300,
-  });
-  const passB = core.processTurn({
-    messages: history,
-    state: passA.state,
-    config: defaultConfig(100000),
-    tokenCount: 300,
-  });
-  const pinned = passB.messages.find((m) => (m.text ?? "").includes("开场白"));
-  assert.ok(pinned, "pinned first user message stays on the wire");
-  assert.equal(pinned.id, HASH, "pinned first user message keeps its id");
-  assert.equal(
-    passB.state.messageRefs.byRaw[HASH],
-    "m00001",
-    "pinned first user message keeps its ref (no per-turn churn)",
-  );
-});
-
-test("processTurn writes this pass's inbound ids into state.lastPassIds (#462)", () => {
-  const core = createCore();
-  const out = core.processTurn({
-    messages: [msg(EARLY, "帮我看看这段代码"), msg(HASH, "都按推荐来")],
-    state: createInitialState(),
-    config: defaultConfig(100000),
-    tokenCount: 300,
-  });
-  assert.deepEqual(out.state.lastPassIds, [EARLY, HASH]);
-});
-
-test("missing lastPassIds falls back to renumber-nothing for one pass (#462)", () => {
-  const state = seededFoldState();
-  const out = remintCoveredLiveIds([msg(HASH, "都按推荐来")], state);
-  assert.equal(
-    out[0].id,
-    HASH,
-    "0.0.95 semantics: untouched without a snapshot",
-  );
-  assert.equal(out.length, 1);
 });

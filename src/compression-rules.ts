@@ -13,6 +13,13 @@
  * Sidecar showed a multi-block merge (b22 ⊇ b13) dropping a still-open user pivot that
  * b13 had recorded, and the trust-guardrail wording deprioritized objectives living only
  * in summaries. Quotes stay historical; open-objective STATUS is current.
+ *
+ * 2026-09-28 amendment (billion-context#1563): identifier-fidelity rule added at every
+ * tier — session ids, commit hashes, PR/issue numbers and other opaque machine-generated
+ * strings must be copied character-for-character. Incident: a fold summary copied a
+ * `ses_` session id short (24 → 12 chars); subagent resume-by-id then failed. The class
+ * is named explicitly because weak models abbreviated ids even though "exact values"
+ * was already listed. T2 re-carries identifiers still referenced by kept facts.
  */
 
 export const COMPRESS_PHILOSOPHY = `Compression Philosophy:
@@ -27,6 +34,7 @@ When you call \`compress\`, the summary you write becomes the only record of the
 
 KEEP VERBATIM — never paraphrase or abbreviate these:
 - Full file paths with line numbers, directory prefix on every mention (\`lib/hooks.ts:347\`, \`src/index.ts:12-18\`, \`gatenet_v3/model.py:45\`). Never abbreviate to a bare filename (\`hooks.ts\`, \`model.py\`) — they are ambiguous and cannot be grepped or decompressed-to later.
+- Identifiers (session ids, commit hashes, PR/issue numbers, and any other opaque machine-generated string): copy character-for-character — never truncate, abbreviate, or ellipsize. A shortened identifier fails silently at the point of reuse (subagent resume with a truncated \`ses_\` id finds nothing), long after the summary that mangled it.
 - Function, class, and type signatures (exact names, params, return types) AND critical code lines that encode logic — the line that IS the finding, not just the function name (e.g. \`kv_keys += define_gate * a_key[i](emb)\` is more useful than "see model_kvnet.py").
 - Error messages and stack traces (exact text — you need the literal string to grep for it later).
 - Key details from reports and analyses — not just the conclusion. Keep the comparison numbers and the mechanism, not "X is worse" alone (write "1.76× PPL gap because KV store is static", not "KVNet underperforms").
@@ -73,6 +81,7 @@ KEEP — these are the only things that survive distillation:
 - Open objectives — if ANY source block's summary names a user-requested objective that no later source block marks completed or superseded, the distilled summary MUST keep a one-line \`Open objectives:\` entry re-carrying each still-open objective verbatim with its original ref. They are the last thing to drop and the first thing to restore.
 - Whether content is OBSOLETE or SUPERSEDED — mark with one line: "[SUPERSEDED by PR #NNN]" or "[OBSOLETE: deleted in vX.Y.Z]". Do NOT keep the obsolete content's details — just the marker and reason.
 - Function/class/type names and module paths that are the SUBJECT of the work — e.g., "fixed filterCompressedRanges in prune.ts", "added SessionStateRegistry in state.ts". Not exact line numbers or full signatures — just enough to LOCATE the code without searching.
+- Live identifiers still referenced by kept content — session ids, commit hashes, PR/issue numbers named in a surviving fact: re-carry them character-for-character from the source blocks; never re-derive, shorten, or "tidy." An identifier no kept fact references may drop with its context.
 - Exploration findings: if a block was exploratory with no decision, keep the CONCLUSION in one line ("explored X, not viable because Y"). Do not keep the exploration process.
 
 DROP — these were useful during the work but are no longer needed:

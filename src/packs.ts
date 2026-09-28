@@ -222,6 +222,7 @@ INTEGRITY — record facts and state only, never a simulated transcript of the d
 
 KEEP VERBATIM — never paraphrase or abbreviate:
 - File paths with line numbers and directory prefix on every mention (lib/hooks.ts:347); never a bare filename — ambiguous, un-greppable.
+- Identifiers (session ids, commit hashes, PR/issue numbers, other opaque machine-generated strings): character-for-character — never truncated or abbreviated; a shortened id fails silently at reuse.
 - Function/class/type signatures AND the critical code lines that encode logic (the line that IS the finding).
 - Error messages and stack traces (exact text — needed to grep later).
 - Report details: comparison numbers plus mechanism, not "X is worse" ("1.76× PPL gap because KV store is static").

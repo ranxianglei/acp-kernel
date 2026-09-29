@@ -14,12 +14,14 @@
  * b13 had recorded, and the trust-guardrail wording deprioritized objectives living only
  * in summaries. Quotes stay historical; open-objective STATUS is current.
  *
- * 2026-09-28 amendment (billion-context#1563): identifier-fidelity rule added at every
- * tier — session ids, commit hashes, PR/issue numbers and other opaque machine-generated
+ * 2026-09-28 amendment (billion-context#1563): identifier-fidelity rule added to the
+ * T1 + lean-pack channels — session ids, commit hashes, PR/issue numbers and other opaque machine-generated
  * strings must be copied character-for-character. Incident: a fold summary copied a
  * `ses_` session id short (24 → 12 chars); subagent resume-by-id then failed. The class
  * is named explicitly because weak models abbreviated ids even though "exact values"
- * was already listed. T2 re-carries identifiers still referenced by kept facts.
+ * was already listed. T2 distill rules are deliberately NOT amended (owner review):
+ * subagent content is consumed on return — resume-by-id happens while the dispatch
+ * pair is still in the fresh zone, long before tier-2 re-distillation is reachable.
  */
 
 export const COMPRESS_PHILOSOPHY = `Compression Philosophy:
@@ -81,7 +83,6 @@ KEEP — these are the only things that survive distillation:
 - Open objectives — if ANY source block's summary names a user-requested objective that no later source block marks completed or superseded, the distilled summary MUST keep a one-line \`Open objectives:\` entry re-carrying each still-open objective verbatim with its original ref. They are the last thing to drop and the first thing to restore.
 - Whether content is OBSOLETE or SUPERSEDED — mark with one line: "[SUPERSEDED by PR #NNN]" or "[OBSOLETE: deleted in vX.Y.Z]". Do NOT keep the obsolete content's details — just the marker and reason.
 - Function/class/type names and module paths that are the SUBJECT of the work — e.g., "fixed filterCompressedRanges in prune.ts", "added SessionStateRegistry in state.ts". Not exact line numbers or full signatures — just enough to LOCATE the code without searching.
-- Live identifiers still referenced by kept content — session ids, commit hashes, PR/issue numbers named in a surviving fact: re-carry them character-for-character from the source blocks; never re-derive, shorten, or "tidy." An identifier no kept fact references may drop with its context.
 - Exploration findings: if a block was exploratory with no decision, keep the CONCLUSION in one line ("explored X, not viable because Y"). Do not keep the exploration process.
 
 DROP — these were useful during the work but are no longer needed:

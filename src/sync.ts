@@ -1,9 +1,32 @@
 import { baseIdOf, summaryMessageId } from "./prune.js";
-import type { CompressionState, CoreMessage } from "./types.js";
+import type {
+  CompressionBlock,
+  CompressionState,
+  CoreMessage,
+} from "./types.js";
 
 export interface SyncResult {
   state: CompressionState;
   deactivated: string[];
+}
+
+/**
+ * Whether a block still has any visible representation in a message pass: at
+ * least one of its covered raws is present (matched by base id, so sub-id
+ * projections count), or its rendered summary is. A block whose raw messages
+ * were replaced by its rendered summary (pruned view) is still present — the
+ * summary IS the block's visible representation. Without this, hosts passing
+ * pruned views would lose block activity every turn.
+ */
+export function isBlockStillPresent(
+  block: CompressionBlock,
+  presentBases: ReadonlySet<string>,
+  presentIds: ReadonlySet<string>,
+): boolean {
+  return (
+    block.effectiveMessageIds.some((id) => presentBases.has(baseIdOf(id))) ||
+    presentIds.has(summaryMessageId(block.blockId))
+  );
 }
 
 export function syncBlocks(
@@ -84,14 +107,7 @@ export function syncBlocks(
       continue;
     }
     block.active = true;
-    // A block whose raw messages were replaced by its rendered summary
-    // (pruned view) is still present — the summary IS the block's visible
-    // representation. Without this, hosts passing pruned views would lose
-    // block activity every turn.
-    const stillPresent =
-      block.effectiveMessageIds.some((id) => presentBases.has(baseIdOf(id))) ||
-      presentIds.has(summaryMessageId(block.blockId));
-    if (!stillPresent) {
+    if (!isBlockStillPresent(block, presentBases, presentIds)) {
       block.active = false;
       deactivated.push(block.blockId);
     }

@@ -1236,3 +1236,179 @@ test("line-form split still breaks on headers after blank lines and element resi
     ],
   );
 });
+
+// #1559: three string-ladder rungs (billion-context#1559) — weak-model drift
+// shapes the 0.0.98 ladder still rejected: single-line slot string (G1),
+// top-level bare line-form string (G2), truncated string-slot prefix (G3).
+// ---------------------------------------------------------------------------
+
+test("G1: single-line slot string takes the text after the refs as inline summary (#1559)", () => {
+  const { ranges, diagnostics } = parseCompressArgs({
+    content: "m00150-m00220 topic: summary here",
+  });
+  assert.equal(diagnostics.kind, "ok");
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.startRef, "m00150");
+  assert.equal(ranges[0]?.endRef, "m00220");
+  assert.equal(ranges[0]?.summary, "topic: summary here");
+  assert.equal(ranges[0]?.topic, "topic: summary here");
+  assert.equal(diagnostics.contentSalvage, undefined);
+  assert.equal(diagnostics.stringSalvage, undefined);
+});
+
+test("G1: en-dash and single-ref variants of the single-line slot string (#1559)", () => {
+  const a = parseCompressArgs({ content: "m00150–m00220 inline body text" });
+  assert.equal(a.diagnostics.kind, "ok");
+  assert.equal(a.ranges.length, 1);
+  assert.equal(a.ranges[0]?.startRef, "m00150");
+  assert.equal(a.ranges[0]?.endRef, "m00220");
+  assert.equal(a.ranges[0]?.summary, "inline body text");
+  const b = parseCompressArgs({ content: "m00042 lone ref with inline body" });
+  assert.equal(b.ranges.length, 1);
+  assert.equal(b.ranges[0]?.startRef, "m00042");
+  assert.equal(b.ranges[0]?.endRef, "m00042");
+  assert.equal(b.ranges[0]?.summary, "lone ref with inline body");
+});
+
+test("G1: single-line slot string with nothing after the refs stays rejected (#1559)", () => {
+  const { ranges, diagnostics } = parseCompressArgs({ content: "m1–m5 …" });
+  assert.equal(ranges.length, 0);
+  assert.equal(diagnostics.kind, "content-not-array");
+  assert.match(
+    String(diagnostics.invalidReasons?.[0] ?? ""),
+    /missing summary/,
+  );
+});
+
+test("G1: a collapsed multi-block single line recovers the first block only, never splits (#1559)", () => {
+  // Embedded ref pairs inside prose are indistinguishable from headers;
+  // splitting would corrupt a legitimate summary, so the whole remainder is
+  // the first block's summary and the rest stays visible for a retry.
+  const { ranges, diagnostics } = parseCompressArgs({
+    content:
+      "m00150–m00220 Auth summary one here m00300–m00350 Deploy summary two here",
+  });
+  assert.equal(diagnostics.kind, "ok");
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.startRef, "m00150");
+  assert.equal(ranges[0]?.endRef, "m00220");
+  assert.equal(
+    ranges[0]?.summary,
+    "Auth summary one here m00300–m00350 Deploy summary two here",
+  );
+});
+
+test("G1: a single-line ARRAY element is still header-only, not inline (#1559)", () => {
+  // Array transport has sibling adoption (#1001); inline interpretation
+  // would invent a summary from the topic. Header-only stays rejected.
+  const { ranges, diagnostics } = parseCompressArgs({
+    content: ["m00001–m00002 topic"],
+  });
+  assert.equal(ranges.length, 0);
+  assert.equal(diagnostics.kind, "no-valid-ranges");
+});
+
+test("G2: top-level bare line-form string recovers with stringSalvage (#1559)", () => {
+  const { ranges, diagnostics } = parseCompressArgs(
+    "m00150–m00220 Auth\nsummary one\nm00300–m00350 Deploy\nsummary two",
+  );
+  assert.equal(diagnostics.kind, "ok");
+  assert.equal(diagnostics.stringSalvage, true);
+  assert.equal(ranges.length, 2);
+  assert.equal(ranges[0]?.topic, "Auth");
+  assert.equal(ranges[0]?.summary, "summary one");
+  assert.equal(ranges[1]?.startRef, "m00300");
+  assert.equal(ranges[1]?.summary, "summary two");
+});
+
+test("G2: top-level bare single-line string uses the inline summary (#1559)", () => {
+  const { ranges, diagnostics } = parseCompressArgs(
+    "m00150-m00220 topic: summary here",
+  );
+  assert.equal(diagnostics.kind, "ok");
+  assert.equal(diagnostics.stringSalvage, true);
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.summary, "topic: summary here");
+});
+
+test("G2: a JSON string literal decoding to line-form text recovers (#1559)", () => {
+  const input = JSON.stringify("m00150–m00220 t\nsum");
+  const { ranges, diagnostics } = parseCompressArgs(input);
+  assert.equal(diagnostics.kind, "ok");
+  assert.equal(diagnostics.stringSalvage, true);
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.summary, "sum");
+});
+
+test("G2: prose without refs stays rejected, verdicts unchanged (#1559)", () => {
+  const a = parseCompressArgs("please compress the old stuff");
+  assert.equal(a.ranges.length, 0);
+  assert.equal(a.diagnostics.kind, "malformed-json");
+  assert.equal(a.diagnostics.stringSalvage, undefined);
+  const b = parseCompressArgs(JSON.stringify("just a string"));
+  assert.equal(b.ranges.length, 0);
+  assert.equal(b.diagnostics.kind, "not-object");
+});
+
+test("G3: truncated stringified args with a string slot recover complete leading blocks (#1559)", () => {
+  const input =
+    '{"content": "m00150–m00220 Auth\nfull summary one\nm00300–m00350 Dep';
+  const { ranges, diagnostics } = parseCompressArgs(input);
+  assert.equal(diagnostics.kind, "truncated");
+  assert.equal(diagnostics.ok, true);
+  assert.equal(diagnostics.contentSalvage, true);
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.startRef, "m00150");
+  assert.equal(ranges[0]?.endRef, "m00220");
+  assert.equal(ranges[0]?.summary, "full summary one");
+});
+
+test("G3: a single cut block in an unterminated string slot is dropped, not guessed (#1559)", () => {
+  const input = '{"content": "m00150–m00220 Auth\npart';
+  const { ranges, diagnostics } = parseCompressArgs(input);
+  assert.equal(diagnostics.kind, "truncated");
+  assert.equal(ranges.length, 0);
+  assert.equal(diagnostics.contentSalvage, undefined);
+});
+
+test("G3: a terminated string slot inside a truncated outer object keeps all blocks (#1559)", () => {
+  const input =
+    '{"content": "m00150–m00220 Auth\nfull summary one","topic": "x';
+  const { ranges, diagnostics } = parseCompressArgs(input);
+  assert.equal(diagnostics.kind, "truncated");
+  assert.equal(diagnostics.contentSalvage, true);
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.summary, "full summary one");
+});
+
+test("G3: escaped backslash-n in the surviving prefix decodes to line breaks (#1559)", () => {
+  const input =
+    '{"content": "m00150–m00220 Auth\\nfull summary one\\nm00300–m00350 Dep';
+  const { ranges, diagnostics } = parseCompressArgs(input);
+  assert.equal(diagnostics.kind, "truncated");
+  assert.equal(diagnostics.contentSalvage, true);
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.summary, "full summary one");
+});
+
+test("G3: single-quoted truncated string slot recovers through the quote-repair retry (#1559)", () => {
+  const input = `{'content': "m00150–m00220 Auth\nfull summary one\nm00300–m00350 Dep`;
+  const { ranges, diagnostics } = parseCompressArgs(input);
+  assert.equal(diagnostics.kind, "truncated");
+  assert.equal(diagnostics.quoteSalvage, true);
+  assert.equal(diagnostics.contentSalvage, true);
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.summary, "full summary one");
+});
+
+test("canonical multi-line slot string stays unflagged (#1559 control)", () => {
+  const { ranges, diagnostics } = parseCompressArgs({
+    content: "m00150–m00220 topic\nsummary line one\nmore summary",
+  });
+  assert.equal(diagnostics.kind, "ok");
+  assert.equal(ranges.length, 1);
+  assert.equal(ranges[0]?.topic, "topic");
+  assert.equal(ranges[0]?.summary, "summary line one\nmore summary");
+  assert.equal(diagnostics.stringSalvage, undefined);
+  assert.equal(diagnostics.contentSalvage, undefined);
+});

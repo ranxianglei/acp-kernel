@@ -341,9 +341,11 @@ test("prune: first user message pruned when covered (no duplication)", () => {
   const result = prune(messages, state);
 
   const resultIds = result.map((m) => m.id);
+  // No user survives behind the covered pin (a1 is an assistant), so the
+  // conditional pin holds and u0 stays on the wire (DESIGN.md §8.1).
   assert.ok(
     resultIds.includes("u0"),
-    "first user message always survives (even when covered — some providers reject 0-user)",
+    "covered first user survives when no other user would lead (some providers reject 0-user)",
   );
   assert.ok(!resultIds.includes("a0"), "covered assistant message is pruned");
   assert.ok(!resultIds.includes("u1"), "covered second user message is pruned");

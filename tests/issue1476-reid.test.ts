@@ -200,13 +200,53 @@ test("post-fold resend of the folded original stays covered and pruned (#462 e2e
   );
 });
 
-test("first-user pinned echo keeps its id and ref across post-fold passes (#462 e2e)", () => {
+test("covered first user echo stays pruned across post-fold passes (#1869)", () => {
   const core = createCore();
   const state = createInitialState();
   state.messageRefs.byRaw[HASH] = "m00001";
   state.messageRefs.byRef["m00001"] = HASH;
   state.blocks.push(folded([HASH]));
+  // A user message survives behind the covered opening message, so the
+  // conditional pin yields and the fold applies fully (#1869).
   const history = [msg(HASH, "开场白"), msg(EARLY, "后续")];
+  const passA = core.processTurn({
+    messages: history,
+    state,
+    config: defaultConfig(100000),
+    tokenCount: 300,
+  });
+  assert.ok(
+    !passA.messages.some((m) => (m.text ?? "").includes("开场白")),
+    "covered first user drops once another user leads behind it",
+  );
+  const passB = core.processTurn({
+    messages: history,
+    state: passA.state,
+    config: defaultConfig(100000),
+    tokenCount: 300,
+  });
+  assert.ok(
+    !passB.messages.some(
+      (m) => m.id === HASH || (m.text ?? "").includes("开场白"),
+    ),
+    "echo of the covered first user stays pruned, not pinned back onto the wire",
+  );
+  assert.equal(
+    passB.state.messageRefs.byRaw[HASH],
+    "m00001",
+    "dropped first user keeps its ref (no per-turn churn)",
+  );
+});
+
+test("pinned first user echo keeps its id and ref when no other user survives (#462 e2e)", () => {
+  const core = createCore();
+  const state = createInitialState();
+  state.messageRefs.byRaw[HASH] = "m00001";
+  state.messageRefs.byRef["m00001"] = HASH;
+  state.blocks.push(folded([HASH]));
+  // Only an assistant survives behind the covered pin, so the conditional
+  // pin holds (DESIGN.md §8.1 residual limitation) and id/ref stay stable.
+  const history = [msg(HASH, "开场白"), msg(EARLY, "回复", "assistant")];
   const passA = core.processTurn({
     messages: history,
     state,

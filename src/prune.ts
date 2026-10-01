@@ -215,6 +215,28 @@ function pairSafeAnchorIndex(messages: CoreMessage[], index: number): number {
   return safe;
 }
 
+/**
+ * True when dropping a covered first-user pin leaves the rebuilt wire opening
+ * with a user message: the earliest message behind it that survives prune
+ * (not covered, not a rendered summary) must itself be a plain user text
+ * core — only that shape cannot be stripped again downstream. Rendered
+ * summaries are skipped because they are re-voiced downstream (proxy mode) or
+ * stripped entirely (plugin mode), never the user lead themselves.
+ */
+function firstUserDropSafe(
+  messages: CoreMessage[],
+  firstUserIndex: number,
+  coveredBases: Set<string>,
+): boolean {
+  for (let i = firstUserIndex + 1; i < messages.length; i++) {
+    const message = messages[i]!;
+    if (isCovered(message.id, coveredBases)) continue;
+    if (isRenderedSummaryMessage(message)) continue;
+    return message.role === "user" && message.contentType === "text";
+  }
+  return false;
+}
+
 function rebuildMessages(
   messages: CoreMessage[],
   coveredBases: Set<string>,
@@ -238,13 +260,25 @@ function rebuildMessages(
       result.push(renderSummary(pending.shift()!));
     }
     // First-user-message pin: the session's opening user message survives
-    // prune even when covered by an active block. This check deliberately
-    // PRECEDES the covered check below — swapping them would let a compress
-    // range strip the last guaranteed user message off the wire. Strict
-    // providers reject conversations with no user message. See DESIGN.md §8.1.
+    // prune even when covered by an active block, so the rebuilt wire keeps
+    // at least one user message when the input had one — strict providers
+    // reject conversations with no user message. The pin yields only when the
+    // covered pin can be dropped without losing that guarantee: another user
+    // message still survives behind it. Unconditional pinning defeated
+    // coverage forever once a covered message became the view's first user
+    // (the client trimmed earlier history, or the fold targeted the opening
+    // message directly): the block stayed active while its payload re-sent
+    // itself every turn (billion-context#1869). See DESIGN.md §8.1.
     if (index === firstUserIndex && firstUserIndex >= 0) {
-      result.push(messages[index]!);
-      continue;
+      const pinned = messages[index]!;
+      if (
+        !isCovered(pinned.id, coveredBases) ||
+        !firstUserDropSafe(messages, index, coveredBases)
+      ) {
+        result.push(pinned);
+        continue;
+      }
+      // Covered and safe to drop: fall through to the covered skip below.
     }
     if (isCovered(messages[index]!.id, coveredBases)) continue;
     // A stale copy of this block's summary from a previously-pruned view:

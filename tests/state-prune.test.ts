@@ -133,17 +133,68 @@ test("prune removes covered messages and injects summary at anchor", () => {
   assert.equal(result[2]!.id, "m4");
 });
 
-test("prune preserves first user message even when covered", () => {
+test("prune preserves first user message when it is the only surviving user (covered)", () => {
   const state = createInitialState();
   state.blocks.push(
     makeBlock({ blockId: "b1", effectiveMessageIds: ["m1", "m2"] }),
   );
-  const messages = [msg("m1", "user"), msg("m2"), msg("m3")];
+  // No user survives behind the covered pin: dropping it would leave an
+  // assistant lead, so the pin holds (DESIGN.md §8.1 residual limitation).
+  const messages = [
+    msg("m1", "user"),
+    msg("m2", "assistant"),
+    msg("m3", "assistant"),
+  ];
   const result = prune(messages, state, { injectSummaries: false });
 
-  assert.equal(result.length, 2);
-  assert.equal(result[0]!.id, "m1");
-  assert.equal(result[1]!.id, "m3");
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["m1", "m3"],
+  );
+});
+
+test("prune drops covered first user message when another user survives behind it (#1869)", () => {
+  const state = createInitialState();
+  state.blocks.push(
+    makeBlock({ blockId: "b1", effectiveMessageIds: ["m1", "m2"] }),
+  );
+  const messages = [msg("m1", "user"), msg("m2", "user"), msg("m3", "user")];
+  const result = prune(messages, state, { injectSummaries: false });
+
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["m3"],
+  );
+
+  const injected = prune(messages, state);
+  assert.deepEqual(
+    injected.map((m) => m.id),
+    ["acp_summary_b1", "m3"],
+  );
+});
+
+test("prune drops covered first user past a stale rendered summary copy (#1869)", () => {
+  const state = createInitialState();
+  state.blocks.push(makeBlock({ blockId: "b1", effectiveMessageIds: ["m1"] }));
+  // Host passes a previously-pruned view: the stale summary copy sits
+  // between the covered pin and the surviving user and must not count as
+  // the user lead nor survive as a second copy.
+  const messages: CoreMessage[] = [
+    msg("m1", "user"),
+    {
+      id: "acp_summary_b1",
+      role: "system",
+      contentType: "text",
+      text: `${SUMMARY_HEADER}\nstale`,
+    },
+    msg("m3", "user"),
+  ];
+  const result = prune(messages, state);
+
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["acp_summary_b1", "m3"],
+  );
 });
 
 test("prune without summary injection only removes covered messages", () => {

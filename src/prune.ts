@@ -232,17 +232,25 @@ function rebuildMessages(
   const anchoredSummaryIds = new Set(
     anchors.map((anchor) => summaryMessageId(anchor.blockId)),
   );
+  // First-user-message pin (DESIGN.md §8.1): strict providers reject
+  // conversations with no user message, so the rebuilt wire must retain a
+  // leading user whenever one can lead. An UNCOVERED first user survives via
+  // the covered check below anyway; the pin only bites when it is COVERED,
+  // and even then only when dropping it would leave no user able to lead.
+  // The pre-#489 unconditional pin voided fold coverage whenever a covered
+  // message became the view's first user (divergent resend, direct opening
+  // fold): syncBlocks kept the block active — the base id is present in the
+  // pre-prune view by definition — while the payload re-sent verbatim forever.
+  const pinFirstUser =
+    firstUserIndex < 0 ||
+    !isCovered(messages[firstUserIndex]!.id, coveredBases) ||
+    !firstUserDropSafe(messages, firstUserIndex, coveredBases);
 
   for (let index = 0; index < messages.length; index++) {
     while (pending.length > 0 && pending[0]!.insertAt === index) {
       result.push(renderSummary(pending.shift()!));
     }
-    // First-user-message pin: the session's opening user message survives
-    // prune even when covered by an active block. This check deliberately
-    // PRECEDES the covered check below — swapping them would let a compress
-    // range strip the last guaranteed user message off the wire. Strict
-    // providers reject conversations with no user message. See DESIGN.md §8.1.
-    if (index === firstUserIndex && firstUserIndex >= 0) {
+    if (pinFirstUser && index === firstUserIndex) {
       result.push(messages[index]!);
       continue;
     }
@@ -264,6 +272,30 @@ function rebuildMessages(
   }
 
   return result;
+}
+
+/**
+ * Whether dropping the covered first user leaves the rebuilt wire valid: the
+ * earliest message that would survive AFTER it must itself be a user, so the
+ * conversation still leads with a user. Covered messages and rendered
+ * summaries are skipped — summaries are system-channel on every supported
+ * wire format (hoisted by all four codecs) and never lead the conversation.
+ * Degenerate shapes (assistant-led survivors, no surviving follower) return
+ * false → the pin keeps its pre-#489 behavior there (DESIGN.md §8.1 residual
+ * limitation).
+ */
+function firstUserDropSafe(
+  messages: CoreMessage[],
+  firstUserIndex: number,
+  coveredBases: Set<string>,
+): boolean {
+  for (let i = firstUserIndex + 1; i < messages.length; i++) {
+    const message = messages[i]!;
+    if (isCovered(message.id, coveredBases)) continue;
+    if (isRenderedSummaryMessage(message)) continue;
+    return message.role === "user";
+  }
+  return false;
 }
 
 function renderSummary(anchor: SummaryAnchor): CoreMessage {

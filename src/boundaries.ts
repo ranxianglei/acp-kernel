@@ -380,8 +380,9 @@ export function visibleBlockAnchor(
 // A block participates in a range when ANY of its visible representations
 // (rendered summary or earliest surviving raw) falls inside it. The summary
 // alone is not sufficient: when a block covers the session's first user
-// message, prune keeps that one raw and inserts the summary BEFORE it, so the
-// summary index can sit outside a range that still contains the raw.
+// message AND the pin keeps that raw (degenerate shape, DESIGN.md §8.1),
+// prune inserts the summary BEFORE the pinned raw, so the summary index can
+// sit outside a range that still contains the raw.
 export function blockVisibleInRange(
   block: CompressionBlock,
   indexByMessageId: Map<string, number>,

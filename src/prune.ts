@@ -278,8 +278,9 @@ function rebuildMessages(
  * Whether dropping the covered first user leaves the rebuilt wire valid: the
  * earliest message that would survive AFTER it must itself be a user, so the
  * conversation still leads with a user. Covered messages and rendered
- * summaries are skipped — summaries are system-channel on every supported
- * wire format (hoisted by all four codecs) and never lead the conversation.
+ * summaries are skipped — no codec lets a summary lead: anthropic/google fold
+ * non-assistant roles into user-side content, openai/responses keep them as
+ * system/developer items, which those wires accept in leading position.
  * Degenerate shapes (assistant-led survivors, no surviving follower) return
  * false → the pin keeps its pre-#489 behavior there (DESIGN.md §8.1 residual
  * limitation).

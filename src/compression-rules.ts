@@ -13,17 +13,28 @@
  * Sidecar showed a multi-block merge (b22 ⊇ b13) dropping a still-open user pivot that
  * b13 had recorded, and the trust-guardrail wording deprioritized objectives living only
  * in summaries. Quotes stay historical; open-objective STATUS is current.
+ *
+ * 2026-10-02 amendment (#493): source-language preservation added to the shared
+ * philosophy and every tier (T1/T2/T3). Incident: a Chinese conversation switched to
+ * English on the model turn right after a compression fold — the contract governed
+ * summary content and structure but never the language a summary must be written in.
+ * A monolingual conversation stays summarized in its own language unless the user asks
+ * for translation; mixed-language passages, code, commands, identifiers, and quoted
+ * text keep their original form.
  */
 
 export const COMPRESS_PHILOSOPHY = `Compression Philosophy:
 - All compression serves the primary task, but be frugal.
 - Context capacity is precious. Save context by compressing consumed outputs, not by avoiding tools.
 - Compress by need, not by percentage.
-- Work from summaries, not raw tool outputs. All listed ranges (user prompts, tool outputs, code, logs, exploration, intermediate steps) should be compressed to summary format — the ONLY exceptions are protected content, content the current step is actively using, or critical content you cannot reconstruct.`;
+- Work from summaries, not raw tool outputs. All listed ranges (user prompts, tool outputs, code, logs, exploration, intermediate steps) should be compressed to summary format — the ONLY exceptions are protected content, content the current step is actively using, or critical content you cannot reconstruct.
+- Preserve the conversation's language: write each summary in the primary language of the conversation it replaces; do not translate a monolingual conversation unless the user explicitly asks.`;
 
 export const HOW_TO_COMPRESS_RULES = `HOW TO COMPRESS
 
 When you call \`compress\`, the summary you write becomes the only record of the replaced conversation. Make it self-contained and complete: every user request, experiment purpose, and work task in the range must be accurately captured. A later reader (or you, after decompressing) should be able to continue the task WITHOUT needing the original. The summary records the PAST as of this block's creation: label recorded task state as history ("TASK AS OF THIS BLOCK: ...") — never as a live instruction, so a later reader treats it as settled context, not something to re-execute. Write plain text with real unicode characters; never copy \\uXXXX escape sequences or JSON-escaped fragments out of tool output.
+
+LANGUAGE — write the summary in the PRIMARY LANGUAGE of the conversation being compressed. Do not translate a monolingual conversation into another language unless the user explicitly asked for translation (a Chinese conversation stays summarized in Chinese; an English one stays English). In a mixed-language conversation, keep each passage in its original language — a bilingual summary is fine. Code, commands, identifiers, error strings, config keys, and verbatim quotes always stay exactly as written, whatever the surrounding language.
 
 KEEP VERBATIM — never paraphrase or abbreviate these:
 - Full file paths with line numbers, directory prefix on every mention (\`lib/hooks.ts:347\`, \`src/index.ts:12-18\`, \`gatenet_v3/model.py:45\`). Never abbreviate to a bare filename (\`hooks.ts\`, \`model.py\`) — they are ambiguous and cannot be grepped or decompressed-to later.
@@ -63,6 +74,8 @@ export const TIER2_DISTILL_RULES = `TIER 2 COMPRESSION — DISTILLATION
 
 You are compressing historical summaries (not raw conversation). These summaries have already captured the details. Your job is to DISTILL them: extract only what matters for future work, discard the process.
 
+LANGUAGE — keep every distilled fact in the language of its source summaries (the conversation's primary language); do not translate when distilling across tiers. Code, identifiers, error strings, and quoted text stay exactly as written.
+
 KEEP — these are the only things that survive distillation:
 - Decisions and their rationale ("chose X over Y because Z" — the "because" is load-bearing).
 - Final outcomes: version numbers shipped, PR numbers merged/closed, bugs fixed or deferred.
@@ -95,6 +108,8 @@ SIZE TARGET: 50-150 tokens per source block (excluding the header). If you can't
 export const TIER3_CONDENSE_RULES = `TIER 3 COMPRESSION — ULTRA-CONDENSATION
 
 You are compressing distilled summaries (Tier 2) into ultra-condensed facts (Tier 3). The distilled summaries already contain only decisions and outcomes. Your job is to reduce them to bare factual references.
+
+LANGUAGE — write each fact in the language of its source blocks (the conversation's primary language); do not translate. Identifiers, versions, error strings, and quoted fragments stay exactly as written.
 
 PRIORITY — when a source block has more facts than the size target allows, keep in this order:
 1. Shipped outcomes (versions released, PRs merged) — these are permanent record.

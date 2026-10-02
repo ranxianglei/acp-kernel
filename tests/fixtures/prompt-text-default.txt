@@ -3,10 +3,13 @@ Compression Philosophy:
 - Context capacity is precious. Save context by compressing consumed outputs, not by avoiding tools.
 - Compress by need, not by percentage.
 - Work from summaries, not raw tool outputs. All listed ranges (user prompts, tool outputs, code, logs, exploration, intermediate steps) should be compressed to summary format — the ONLY exceptions are protected content, content the current step is actively using, or critical content you cannot reconstruct.
+- Preserve the conversation's language: write each summary in the primary language of the conversation it replaces; do not translate a monolingual conversation unless the user explicitly asks.
 
 HOW TO COMPRESS
 
 When you call `compress`, the summary you write becomes the only record of the replaced conversation. Make it self-contained and complete: every user request, experiment purpose, and work task in the range must be accurately captured. A later reader (or you, after decompressing) should be able to continue the task WITHOUT needing the original. The summary records the PAST as of this block's creation: label recorded task state as history ("TASK AS OF THIS BLOCK: ...") — never as a live instruction, so a later reader treats it as settled context, not something to re-execute. Write plain text with real unicode characters; never copy \uXXXX escape sequences or JSON-escaped fragments out of tool output.
+
+LANGUAGE — write the summary in the PRIMARY LANGUAGE of the conversation being compressed. Do not translate a monolingual conversation into another language unless the user explicitly asked for translation (a Chinese conversation stays summarized in Chinese; an English one stays English). In a mixed-language conversation, keep each passage in its original language — a bilingual summary is fine. Code, commands, identifiers, error strings, config keys, and verbatim quotes always stay exactly as written, whatever the surrounding language.
 
 KEEP VERBATIM — never paraphrase or abbreviate these:
 - Full file paths with line numbers, directory prefix on every mention (`lib/hooks.ts:347`, `src/index.ts:12-18`, `gatenet_v3/model.py:45`). Never abbreviate to a bare filename (`hooks.ts`, `model.py`) — they are ambiguous and cannot be grepped or decompressed-to later.

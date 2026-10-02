@@ -208,7 +208,8 @@ const LEAN_TOOL_PROMPTS: ToolPrompts = {
  *
  * Distillation of HOW_TO_COMPRESS_RULES (~5.2K chars → ~2.5K) that keeps every
  * load-bearing class — all KEEP VERBATIM items, DROP rules, one-line CONTENT
- * descriptions, PRIORITY order, format rules — plus two integrity rules exposed
+ * descriptions, PRIORITY order, format rules, source-language preservation — plus
+ * two integrity rules exposed
  * by session 01a09989: with no style contract at summary-writing time, the model
  * transcribed follow-up Q&A as an enumerated "(answered)" list, recorded an unsent
  * reply as sent, then pattern-completed the list into a fabricated user turn.
@@ -237,6 +238,8 @@ KEEP VERBATIM — never paraphrase or abbreviate:
 DROP — keep the signal, discard the vessel: verbose logs once the error/result is captured; duplicate reads; consumed exploration (search hits, agent returns, successful outputs); dead ends (one lesson line: "tried X, failed because Y"); back-and-forth once the final position is kept; repeated status checks. For each dropped item add one line of CONTENT: what it covers ("probe.py: tests n-gram baseline..."), not where it lives.
 
 PRIORITY when compacting: 1. user goal/evolution/intent/hard constraints · 2. decisions + rationale · 3. exact artifacts (paths, signatures, errors, values) · 4. conclusions · 5. lessons learned (what failed and why).
+
+Language: write the summary in the conversation's PRIMARY LANGUAGE; never translate a monolingual conversation without an explicit user request; mixed-language passages, code, commands, identifiers, and quotes stay as written.
 
 Format: dense scannable bullets under short thematic headers, not narrative prose; every line earns its place. Do not mimic the style of existing summaries in context; follow these rules.`;
 

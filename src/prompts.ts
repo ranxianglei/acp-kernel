@@ -1,6 +1,7 @@
 import {
   COMPRESS_PHILOSOPHY,
   HOW_TO_COMPRESS_RULES,
+  LANGUAGE_PRESERVATION_RULE,
   TIER2_DISTILL_RULES,
   TIER3_CONDENSE_RULES,
 } from "./compression-rules.js";
@@ -47,6 +48,12 @@ export interface ResolvePromptsOptions {
    * programming error and throws.
    */
   acknowledgeRisk?: boolean;
+  /** Opt in to the language-preservation rule (#493): appends
+   * {@link LANGUAGE_PRESERVATION_RULE} to all four canonical rule texts.
+   * Additive only — it cannot remove or replace load-bearing wording, so it
+   * does NOT require `acknowledgeRisk`. Default off: the resolved prompts are
+   * byte-identical to {@link defaultPrompts}. */
+  languagePreservation?: boolean;
 }
 
 /**
@@ -79,5 +86,14 @@ export function resolvePrompts(
         `changing them can degrade summary quality and break retrieval (summaries may lose paths, signatures, decisions).`,
     );
   }
-  return { ...defaultPrompts, ...clean };
+  const merged: Prompts = { ...defaultPrompts, ...clean };
+  if (options.languagePreservation) {
+    return {
+      compressPhilosophy: `${merged.compressPhilosophy}\n- ${LANGUAGE_PRESERVATION_RULE}`,
+      howToCompressRules: `${merged.howToCompressRules}\n\n${LANGUAGE_PRESERVATION_RULE}`,
+      tier2DistillRules: `${merged.tier2DistillRules}\n\n${LANGUAGE_PRESERVATION_RULE}`,
+      tier3CondenseRules: `${merged.tier3CondenseRules}\n\n${LANGUAGE_PRESERVATION_RULE}`,
+    };
+  }
+  return merged;
 }

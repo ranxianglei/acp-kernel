@@ -66,6 +66,7 @@ export {
 export {
   COMPRESS_PHILOSOPHY,
   HOW_TO_COMPRESS_RULES,
+  LANGUAGE_PRESERVATION_RULE,
   TIER2_DISTILL_RULES,
   TIER3_CONDENSE_RULES,
 } from "./compression-rules.js";
@@ -89,6 +90,7 @@ export {
   defaultPack,
   leanPack,
   LEAN_HOW_TO_COMPRESS,
+  leanHowToCompress,
   builtinSource,
   createDirPackSource,
   createPackResolver,

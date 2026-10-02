@@ -5,6 +5,7 @@ import { renderNudgeText } from "../src/nudge-text.js";
 import {
   COMPRESS_PHILOSOPHY,
   HOW_TO_COMPRESS_RULES,
+  LANGUAGE_PRESERVATION_RULE,
   TIER2_DISTILL_RULES,
   TIER3_CONDENSE_RULES,
 } from "../src/compression-rules.js";
@@ -38,6 +39,70 @@ test("defaultPrompts mirrors the verbatim rule constants", () => {
   assert.equal(defaultPrompts.howToCompressRules, HOW_TO_COMPRESS_RULES);
   assert.equal(defaultPrompts.tier2DistillRules, TIER2_DISTILL_RULES);
   assert.equal(defaultPrompts.tier3CondenseRules, TIER3_CONDENSE_RULES);
+});
+
+test("language preservation is opt-in and off by default (#493)", () => {
+  for (const rules of [
+    COMPRESS_PHILOSOPHY,
+    HOW_TO_COMPRESS_RULES,
+    TIER2_DISTILL_RULES,
+    TIER3_CONDENSE_RULES,
+  ]) {
+    assert.ok(!rules.includes(LANGUAGE_PRESERVATION_RULE));
+  }
+  const resolved = resolvePrompts();
+  assert.equal(resolved.compressPhilosophy, COMPRESS_PHILOSOPHY);
+  assert.equal(resolved.howToCompressRules, HOW_TO_COMPRESS_RULES);
+  assert.equal(resolved.tier2DistillRules, TIER2_DISTILL_RULES);
+  assert.equal(resolved.tier3CondenseRules, TIER3_CONDENSE_RULES);
+  for (const text of Object.values(resolved)) {
+    assert.ok(!text.includes(LANGUAGE_PRESERVATION_RULE));
+  }
+});
+
+test("languagePreservation: true appends the rule to all canonical rules (#493)", () => {
+  const resolved = resolvePrompts(undefined, { languagePreservation: true });
+  assert.ok(
+    resolved.compressPhilosophy.endsWith(`\n- ${LANGUAGE_PRESERVATION_RULE}`),
+  );
+  assert.ok(
+    resolved.howToCompressRules.endsWith(`\n\n${LANGUAGE_PRESERVATION_RULE}`),
+  );
+  assert.ok(
+    resolved.tier2DistillRules.endsWith(`\n\n${LANGUAGE_PRESERVATION_RULE}`),
+  );
+  assert.ok(
+    resolved.tier3CondenseRules.endsWith(`\n\n${LANGUAGE_PRESERVATION_RULE}`),
+  );
+  // Additive on top of an acknowledged override — the rule rides the custom
+  // text instead of being dropped by it.
+  const custom = resolvePrompts(
+    { howToCompressRules: "CUSTOM RULES" },
+    { acknowledgeRisk: true, languagePreservation: true },
+  );
+  assert.equal(
+    custom.howToCompressRules,
+    `CUSTOM RULES\n\n${LANGUAGE_PRESERVATION_RULE}`,
+  );
+});
+
+test("nudge voices carry the rule only when opted in (#493)", () => {
+  const prompts = resolvePrompts(undefined, { languagePreservation: true });
+  for (const decision of [
+    makeDecision(),
+    makeDecision({ contextUsage: 0.99, breakdown: { emergencyOverride: 1 } }),
+    makeDecision({ tier: 2 }),
+    makeDecision({ tier: 3 }),
+  ]) {
+    assert.ok(
+      renderNudgeText(decision, prompts).text.includes(
+        LANGUAGE_PRESERVATION_RULE,
+      ),
+    );
+    assert.ok(
+      !renderNudgeText(decision).text.includes(LANGUAGE_PRESERVATION_RULE),
+    );
+  }
 });
 
 test("resolvePrompts with no overrides returns the defaults", () => {

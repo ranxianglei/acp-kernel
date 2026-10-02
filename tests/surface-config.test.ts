@@ -15,6 +15,8 @@ import {
   ACP_TOOLS_OPENAI,
   ACP_TOOLS_RESPONSES,
 } from "../src/compress-tools.js";
+import { resolvePrompts } from "../src/prompts.js";
+import { LANGUAGE_PRESERVATION_RULE } from "../src/compression-rules.js";
 
 const SECTIONS: ReadonlyArray<readonly [string, string]> = [
   ["alpha", "ALPHA\n\nalpha body"],
@@ -79,6 +81,18 @@ test("default builders are byte-stable against checked-in fixtures", () => {
     buildCompressHybridSystemPrompt(),
     fixture("prompt-hybrid-default.txt"),
   );
+});
+
+test("system prompt builders carry the language rule only when opted in (#493)", () => {
+  const prompts = resolvePrompts(undefined, { languagePreservation: true });
+  for (const build of [
+    buildCompressSystemPrompt,
+    buildCompressTextSystemPrompt,
+    buildCompressHybridSystemPrompt,
+  ]) {
+    assert.ok(build(prompts).includes(LANGUAGE_PRESERVATION_RULE));
+    assert.ok(!build().includes(LANGUAGE_PRESERVATION_RULE));
+  }
 });
 
 test("function builder honors section replace and remove", () => {

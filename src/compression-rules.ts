@@ -15,6 +15,15 @@
  * in summaries. Quotes stay historical; open-objective STATUS is current.
  */
 
+/** Opt-in language-preservation rule (#493): summaries must be written in the
+ * source conversation's primary language. NOT part of the canonical constants —
+ * hosts opt in via `resolvePrompts(…, { languagePreservation: true })` so the
+ * default prompt surface stays byte-identical (zero token cost, no prefix-cache
+ * shift on kernel bumps). Single source of truth for every delivery point
+ * (philosophy/T1/T2/T3 via resolvePrompts; lean pack via leanHowToCompress). */
+export const LANGUAGE_PRESERVATION_RULE =
+  "Preserve the source conversation's primary language. Do not translate a monolingual conversation without a user request. For mixed-language source, preserve each segment's language. Keep code, commands, identifiers, and quoted text verbatim when the tier's fidelity rules retain them.";
+
 export const COMPRESS_PHILOSOPHY = `Compression Philosophy:
 - All compression serves the primary task, but be frugal.
 - Context capacity is precious. Save context by compressing consumed outputs, not by avoiding tools.

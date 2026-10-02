@@ -1045,6 +1045,71 @@ test("re-baseline after a tokenCount scale drop also resets per-tier cadence sta
   );
 });
 
+test("downward reset re-anchors when count drops below the shown reference even if still above baseline (#478)", () => {
+  const core = createCore();
+  const config = buildConfig();
+  const messages = makeMessages(10);
+  let state = createInitialState();
+
+  // turn1: baseline stamped at 10000. turn2: T1 injected at 55000 → shown=55000.
+  state = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 10_000,
+  }).state;
+  state = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 55_000,
+  }).state;
+  assert.equal(
+    state.nudge.lastNudgeShownTokens,
+    55_000,
+    "shown reference stamped at inject",
+  );
+
+  // Real usage settles far below the shown reference but still ABOVE
+  // baseline - interval (10000 - 6000 = 4000): the old baseline-keyed reset
+  // never fires while growthReference stays pinned at 55000 → growth negative
+  // forever → every non-pressure inject dead until context regrows past 55000.
+  const turn3 = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 9_000,
+  });
+  assert.equal(
+    turn3.state.nudge.lastPerMessageNudgeTokens,
+    9_000,
+    "baseline re-anchored at the settled level",
+  );
+  assert.equal(
+    turn3.state.nudge.lastNudgeShownTokens,
+    0,
+    "stale shown reference cleared",
+  );
+  assert.deepEqual(
+    turn3.state.nudge.lastShownByTier,
+    {},
+    "per-tier stamps cleared with the shown reference",
+  );
+
+  // Cadence must be alive again: growth 6000 >= floor 5000 from the fresh reference.
+  const turn4 = core.processTurn({
+    messages,
+    state: turn3.state,
+    config,
+    tokenCount: 15_000,
+  });
+  assert.equal(
+    turn4.nudge.shouldInject,
+    true,
+    `re-anchored cadence re-fires after regrowth, got reason: ${turn4.nudge.reason}`,
+  );
+});
+
 test("arbitration: 5 summary blocks stay silent with default triggers (#379 — count path default-off)", () => {
   const core = createCore();
   const config = buildConfig({

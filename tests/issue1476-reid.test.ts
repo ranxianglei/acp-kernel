@@ -206,7 +206,10 @@ test("first-user pinned echo keeps its id and ref across post-fold passes (#462 
   state.messageRefs.byRaw[HASH] = "m00001";
   state.messageRefs.byRef["m00001"] = HASH;
   state.blocks.push(folded([HASH]));
-  const history = [msg(HASH, "开场白"), msg(EARLY, "后续")];
+  // Degenerate pin shape (#489): no user survives behind the covered first
+  // user (the follower is an assistant), so the conditional pin still keeps
+  // it on the wire and this test tracks its id/ref stability across passes.
+  const history = [msg(HASH, "开场白"), msg(EARLY, "回复", "assistant")];
   const passA = core.processTurn({
     messages: history,
     state,

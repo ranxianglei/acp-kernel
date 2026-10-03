@@ -118,7 +118,8 @@ test("anthropic: redacted_thinking block is restored verbatim in position", () =
   };
   const { msgs } = anthropicToCore(body);
   const rdt = msgs.find(
-    (m) => (m.rawAnthropicBlock as { type?: string })?.type === "redacted_thinking",
+    (m) =>
+      (m.rawAnthropicBlock as { type?: string })?.type === "redacted_thinking",
   );
   assert.ok(rdt, "redacted_thinking tracked as a core message");
   assert.equal(rdt?.text, "[redacted_thinking]");

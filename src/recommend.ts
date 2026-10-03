@@ -21,6 +21,8 @@ import type {
 } from "./types.js";
 import type { CompressionState } from "./types.js";
 import { isToolMessage } from "./message-kind.js";
+import { coveredMessageIds } from "./state.js";
+import { SUMMARY_HEADER } from "./prune.js";
 import {
   collectLatestProtected,
   collectProtectedToolCallIds,
@@ -41,17 +43,15 @@ function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+// Precompute the covered-id set once per call (#498): the old per-message
+// `state.blocks.some(...)` scan made both recommend paths O(visible × blocks ×
+// coverage). Exact-ID lookup is preserved — base-ID normalization is #234.
 function isSyntheticOrPruned(
   message: CoreMessage,
-  state: CompressionState,
+  covered: Set<string>,
 ): boolean {
-  if (message.text?.startsWith("[Compressed conversation section]"))
-    return true;
-  for (const block of state.blocks) {
-    if (block.active && block.effectiveMessageIds.includes(message.id))
-      return true;
-  }
-  return false;
+  if (message.text?.startsWith(SUMMARY_HEADER)) return true;
+  return covered.has(message.id);
 }
 
 // ─── 1. Protected Refs (soft protection zone) ─────────────────────────────────
@@ -74,12 +74,13 @@ export function computeProtectedRefs(
 ): Set<string> {
   const preserveN = config.preserveRecentMessages;
   const preserveTokens = config.preserveRecentTokens;
+  const covered = coveredMessageIds(state);
 
   const result = new Set<string>();
   const visible: { ref: string; tokens: number }[] = [];
 
   for (const msg of messages) {
-    if (isSyntheticOrPruned(msg, state)) continue;
+    if (isSyntheticOrPruned(msg, covered)) continue;
     // Exclude configured large-result tools from the recent-zone window.
     // These are big inline payloads (restorations, file bodies, command
     // output) that the model should be free to compress again immediately;
@@ -131,7 +132,7 @@ export function computeProtectedRefs(
   if (preserveN > 0) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]!;
-      if (msg.role !== "user" || isSyntheticOrPruned(msg, state)) continue;
+      if (msg.role !== "user" || isSyntheticOrPruned(msg, covered)) continue;
       const ref = state.messageRefs.byRaw[msg.id];
       if (ref && ref !== "BLOCKED") result.add(ref);
       break;
@@ -180,6 +181,8 @@ export function buildCompressibleRanges(
     index: number;
   }[] = [];
 
+  const covered = coveredMessageIds(state);
+
   // Pairing: a tool-result may carry only toolCallId (no toolName). Collect the
   // callIds of protected tool-calls first, then protect matching results too.
   const protectedCallIds = collectProtectedToolCallIds(messages, config);
@@ -204,7 +207,7 @@ export function buildCompressibleRanges(
     msgIndex++;
     const ref = state.messageRefs.byRaw[msg.id];
     if (!ref || ref === "BLOCKED") continue;
-    if (isSyntheticOrPruned(msg, state)) {
+    if (isSyntheticOrPruned(msg, covered)) {
       skipSinceCompressible = true;
       skipSinceProtected = true;
       continue;

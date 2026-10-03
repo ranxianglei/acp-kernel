@@ -127,16 +127,21 @@ export interface AbsorbRecord {
 }
 
 export interface AbsorbConfig {
+  /** Activation switch. Gated everywhere with `=== true`; absent/disabled = feature off. */
   enabled: boolean;
-  /** Model-facing absorb tool name (adapters may rename, e.g. acp_absorb). */
-  toolName: string;
-  /** Only tool results >= this many tokens get the forced absorb prompt. 0 = all. */
-  minToolTokens: number;
-  /** Only prompt when context usage >= this fraction of modelContextLimit. 0 = size gate alone. */
-  contextThresholdPct: number;
-  /** Tool-name patterns (glob suffix allowed) never absorbable, independent of protectedTools. */
-  excludeTools: string[];
+  /** Model-facing absorb tool name (adapters may rename, e.g. acp_absorb). Default "absorb" (ABSORB_TOOL_NAME). */
+  toolName?: string;
+  /** Only tool results >= this many tokens get the forced absorb prompt. 0 = all. Default 4000. */
+  minToolTokens?: number;
+  /** Only prompt when context usage >= this fraction of modelContextLimit. 0 = size gate alone. Default 0. */
+  contextThresholdPct?: number;
+  /** Tool-name patterns (glob suffix allowed) never absorbable, independent of protectedTools. Default []. */
+  excludeTools?: string[];
 }
+
+/** Fully-populated AbsorbConfig: what resolveAbsorbConfig / defaultConfig produce and what
+ *  kernel entry points consuming a resolved config require (#502). */
+export type ResolvedAbsorbConfig = Required<AbsorbConfig>;
 
 /** Emitted when the session's irreducible floor (system prompt + block
  *  summaries + protected zones + small uncompressible tail) exceeds

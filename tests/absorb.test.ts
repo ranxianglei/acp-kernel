@@ -8,8 +8,10 @@ import {
   hideAbsorbedMessages,
   isAbsorbCandidate,
   parseAbsorbInput,
+  resolveAbsorbConfig,
   ABSORB_PROMPT_MARKER,
 } from "../src/absorb.js";
+import { ABSORB_TOOL_NAME } from "../src/compress-tools.js";
 import { createCore } from "../src/compress.js";
 import { createInitialState } from "../src/state.js";
 import { defaultConfig, validateConfig } from "../src/config.js";
@@ -478,4 +480,50 @@ test("absorb config validation reports range errors", () => {
     "expected minToolTokens error",
   );
   assert.ok(errors.some((e) => e.includes("absorb.contextThresholdPct")));
+});
+
+test("partial AbsorbConfig block resolves to full defaults (#502)", () => {
+  const cfg = defaultConfig(200000, { absorb: { enabled: true } });
+  assert.deepEqual(validateConfig(cfg), []);
+  const resolved = resolveAbsorbConfig(cfg);
+  assert.equal(resolved.enabled, true);
+  assert.equal(resolved.toolName, ABSORB_TOOL_NAME);
+  assert.equal(resolved.minToolTokens, 4000);
+  assert.equal(resolved.contextThresholdPct, 0);
+  assert.deepEqual(resolved.excludeTools, []);
+});
+
+test("partial AbsorbConfig overrides merge over defaults field-by-field (#502)", () => {
+  const cfg = defaultConfig(200000, {
+    absorb: { enabled: true, minToolTokens: 100, excludeTools: ["bash"] },
+  });
+  const resolved = resolveAbsorbConfig(cfg);
+  assert.equal(resolved.minToolTokens, 100);
+  assert.deepEqual(resolved.excludeTools, ["bash"]);
+  assert.equal(resolved.toolName, ABSORB_TOOL_NAME);
+  assert.equal(resolved.contextThresholdPct, 0);
+});
+
+test("validateConfig accepts partial absorb blocks but rejects explicit bad values (#502)", () => {
+  assert.deepEqual(
+    validateConfig(defaultConfig(200000, { absorb: { enabled: true } })),
+    [],
+  );
+  assert.ok(
+    validateConfig(
+      defaultConfig(200000, { absorb: { enabled: true, minToolTokens: -1 } }),
+    ).some((e) => e.includes("absorb.minToolTokens")),
+  );
+  assert.ok(
+    validateConfig(
+      defaultConfig(200000, {
+        absorb: { enabled: true, contextThresholdPct: 2 },
+      }),
+    ).some((e) => e.includes("absorb.contextThresholdPct")),
+  );
+  assert.ok(
+    validateConfig(
+      defaultConfig(200000, { absorb: { enabled: true, toolName: "" } }),
+    ).some((e) => e.includes("absorb.toolName")),
+  );
 });

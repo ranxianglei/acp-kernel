@@ -137,18 +137,24 @@ export function validateConfig(config: Config): string[] {
     errors.push("preserveRecentTools must be a string array");
   }
   if (config.absorb) {
-    if (config.absorb.enabled && !config.absorb.toolName) {
+    if (
+      config.absorb.enabled &&
+      config.absorb.toolName !== undefined &&
+      !config.absorb.toolName
+    ) {
       errors.push("absorb.toolName must be a non-empty string when enabled");
     }
     if (
-      !Number.isFinite(config.absorb.minToolTokens) ||
-      config.absorb.minToolTokens < 0
+      config.absorb.minToolTokens !== undefined &&
+      (!Number.isFinite(config.absorb.minToolTokens) ||
+        config.absorb.minToolTokens < 0)
     ) {
       errors.push("absorb.minToolTokens must be >= 0");
     }
     if (
-      config.absorb.contextThresholdPct < 0 ||
-      config.absorb.contextThresholdPct > 1
+      config.absorb.contextThresholdPct !== undefined &&
+      (config.absorb.contextThresholdPct < 0 ||
+        config.absorb.contextThresholdPct > 1)
     ) {
       errors.push("absorb.contextThresholdPct must be in [0, 1]");
     }

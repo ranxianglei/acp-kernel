@@ -24,8 +24,10 @@ import type { CoreMessage } from "acp-kernel";
  *  reverse conversion can reconstruct losslessly. Every field is optional —
  *  plain text messages (the common case) have none set. */
 export interface BiliMessage extends CoreMessage {
-  /** Anthropic: the original content block for an image or a structured
-   *  tool_result. Restored verbatim by coreToAnthropic. */
+  /** Anthropic: the original content block for an image, a structured
+   *  tool_result, or a redacted_thinking block. Restored verbatim by
+   *  coreToAnthropic (redacted_thinking must reach the wire byte-exact —
+   *  Anthropic rejects modified thinking-family blocks). */
   rawAnthropicBlock?: unknown;
   /** OpenAI chat: the original content part for an image_url (data: or
    *  remote URL) or the original message object for a developer-role

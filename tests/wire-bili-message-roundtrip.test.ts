@@ -92,6 +92,78 @@ test("anthropic: thinking signature is restored", () => {
   );
 });
 
+// 2b. Anthropic redacted_thinking round-trips verbatim in position (was
+// previously DROPPED by anthropicToCore — dropping it rewrites the latest
+// assistant message and Anthropic rejects every subsequent request with
+// "`thinking` or `redacted_thinking` blocks ... cannot be modified";
+// billion-context#1960).
+test("anthropic: redacted_thinking block is restored verbatim in position", () => {
+  const body: AnthropicRequestBody = {
+    model: "claude",
+    max_tokens: 100,
+    messages: [
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "considering", signature: "sig_A" },
+          { type: "redacted_thinking", data: "RDT_BLOB_1" },
+          { type: "tool_use", id: "t1", name: "compress", input: {} },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
+      },
+    ],
+  };
+  const { msgs } = anthropicToCore(body);
+  const rdt = msgs.find(
+    (m) => (m.rawAnthropicBlock as { type?: string })?.type === "redacted_thinking",
+  );
+  assert.ok(rdt, "redacted_thinking tracked as a core message");
+  assert.equal(rdt?.text, "[redacted_thinking]");
+  const rebuilt = coreToAnthropic(msgs);
+  const asst = rebuilt.find((m) => m.role === "assistant")!;
+  assert.deepEqual(
+    asst.content,
+    body.messages[0]!.content,
+    "latest assistant message rebuilt byte-identical (redacted slot kept in order)",
+  );
+});
+
+// 2c. Multiple redacted_thinking blocks in one message get distinct ids that
+// are stable across turns (ClusterCounter disambiguation, image precedent).
+test("anthropic: multiple redacted_thinking blocks get distinct stable ids", () => {
+  const mk = (): AnthropicRequestBody => ({
+    model: "claude",
+    max_tokens: 100,
+    messages: [
+      {
+        role: "assistant",
+        content: [
+          { type: "redacted_thinking", data: "A" },
+          { type: "redacted_thinking", data: "B" },
+          { type: "text", text: "hi" },
+        ],
+      },
+    ],
+  });
+  const a = anthropicToCore(mk()).msgs;
+  const b = anthropicToCore(mk()).msgs;
+  assert.deepEqual(
+    a.map((m) => m.id),
+    b.map((m) => m.id),
+    "ids stable across turns",
+  );
+  assert.equal(new Set(a.map((m) => m.id)).size, 3, "distinct ids");
+  const rebuilt = coreToAnthropic(a);
+  assert.deepEqual(
+    rebuilt[0]!.content,
+    mk().messages[0]!.content,
+    "both redacted blocks re-emitted verbatim in order",
+  );
+});
+
 // 3. Anthropic tool_result.is_error round-trips (was previously dropped).
 test("anthropic: tool_result.is_error is restored", () => {
   const body: AnthropicRequestBody = {

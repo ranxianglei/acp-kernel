@@ -9,11 +9,11 @@ import {
   type LatestProtected,
 } from "./protected.js";
 import type {
-  AbsorbConfig,
   AbsorbRecord,
   Config,
   CompressionState,
   CoreMessage,
+  ResolvedAbsorbConfig,
 } from "./types.js";
 
 /**
@@ -29,7 +29,7 @@ import type {
 
 export const ABSORB_PROMPT_MARKER = "[ACP absorb]";
 
-export const DEFAULT_ABSORB_CONFIG: AbsorbConfig = {
+export const DEFAULT_ABSORB_CONFIG: ResolvedAbsorbConfig = {
   enabled: false,
   toolName: ABSORB_TOOL_NAME,
   // Raised 1000 → 4000 (issue #352): lossless CCR takes over large-result
@@ -39,7 +39,7 @@ export const DEFAULT_ABSORB_CONFIG: AbsorbConfig = {
   excludeTools: [],
 };
 
-export function resolveAbsorbConfig(config: Config): AbsorbConfig {
+export function resolveAbsorbConfig(config: Config): ResolvedAbsorbConfig {
   return { ...DEFAULT_ABSORB_CONFIG, ...(config.absorb ?? {}) };
 }
 
@@ -74,7 +74,7 @@ Some tool results end with a ${ABSORB_PROMPT_MARKER} instruction. When you see o
 
 function isAcpOrConfiguredTool(
   toolName: string | undefined,
-  cfg: AbsorbConfig,
+  cfg: ResolvedAbsorbConfig,
 ): boolean {
   if (!toolName) return false;
   if (toolName === cfg.toolName) return true;

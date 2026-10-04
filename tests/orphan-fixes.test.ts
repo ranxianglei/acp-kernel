@@ -343,7 +343,7 @@ test("prune: first user message pruned when covered (no duplication)", () => {
   const resultIds = result.map((m) => m.id);
   assert.ok(
     resultIds.includes("u0"),
-    "first user message always survives (even when covered — some providers reject 0-user)",
+    "covered first user stays pinned when no user survives behind it (earliest survivor is an assistant — DESIGN.md §8.1 residual limitation)",
   );
   assert.ok(!resultIds.includes("a0"), "covered assistant message is pruned");
   assert.ok(!resultIds.includes("u1"), "covered second user message is pruned");

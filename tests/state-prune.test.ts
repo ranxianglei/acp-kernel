@@ -133,7 +133,7 @@ test("prune removes covered messages and injects summary at anchor", () => {
   assert.equal(result[2]!.id, "m4");
 });
 
-test("prune preserves first user message even when covered", () => {
+test("prune drops covered first user when another user survives (#489)", () => {
   const state = createInitialState();
   state.blocks.push(
     makeBlock({ blockId: "b1", effectiveMessageIds: ["m1", "m2"] }),
@@ -141,9 +141,22 @@ test("prune preserves first user message even when covered", () => {
   const messages = [msg("m1", "user"), msg("m2"), msg("m3")];
   const result = prune(messages, state, { injectSummaries: false });
 
-  assert.equal(result.length, 2);
-  assert.equal(result[0]!.id, "m1");
-  assert.equal(result[1]!.id, "m3");
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["m3"],
+  );
+});
+
+test("prune keeps covered first user when no user survives behind it (#489)", () => {
+  const state = createInitialState();
+  state.blocks.push(makeBlock({ blockId: "b1", effectiveMessageIds: ["m1"] }));
+  const messages = [msg("m1", "user"), msg("m2", "assistant")];
+  const result = prune(messages, state, { injectSummaries: false });
+
+  assert.deepEqual(
+    result.map((m) => m.id),
+    ["m1", "m2"],
+  );
 });
 
 test("prune without summary injection only removes covered messages", () => {

@@ -716,16 +716,11 @@ export function createCore(ports: Ports = {}): CompressionCore {
     // message texts receive an <acp> tag.
     const strategy: RenderStrategy = input.renderTags ?? "all";
     const nodes = buildNodes(strategy);
-    // #462: snapshot the raw inbound ids BEFORE any node runs — reconcile-
-    // live-ids consumes the PREVIOUS pass's snapshot (echo continuity), and the
-    // returned state carries THIS pass's snapshot for the next one.
-    const inboundIds = input.messages.map((m) => m.id);
     const result = runPipeline(nodes, initial, ctx);
-    const state = { ...result.state, lastPassIds: inboundIds };
     const ccrEffect = result.effects.ccr as CcrEffect | undefined;
     return {
       messages: result.messages,
-      state,
+      state: result.state,
       nudge: result.effects.nudge,
       terminalEscape: result.effects.terminalEscape,
       truncationSkipped: result.effects.truncationSkipped,

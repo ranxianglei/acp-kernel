@@ -299,6 +299,7 @@ Summaries are model-generated, fallible historical metadata — NOT current user
           decompress: { promptSnippet: "", promptGuidelines: [] },
           search_context: { promptSnippet: "", promptGuidelines: [] },
           acp_status: { promptSnippet: "", promptGuidelines: [] },
+          acp_cache: { promptSnippet: "", promptGuidelines: [] },
         },
       },
     },

@@ -12,6 +12,10 @@
 //     billion-context#603 / omp#121)
 //   - a single entry OBJECT where the content array belongs (retry drift,
 //     billion-context#1494 / acp-kernel#470)
+//   - line-form text with no JSON shell at all: a bare top-level string, a
+//     string literal decoding to text, or a single-line slot string whose
+//     summary sits inline after the refs (weak-model syntax drift,
+//     billion-context#1559)
 //   - the stream cut off mid-arguments, leaving a truncated JSON prefix
 //
 // Hosts parse this on their own today: rebuild.ts (strict, silent skip),
@@ -21,8 +25,13 @@
 //
 // Salvage semantics: for truncated input, the complete entries of the
 // `content` array are recovered from the surviving prefix. A partially
-// written entry is dropped, never guessed. Diagnostics are data, not logs:
-// adapters decide where to emit them (log line, debug event, tool text).
+// written entry is dropped, never guessed. Line-form salvage follows the
+// same rule: a cut string-slot prefix keeps every complete leading block
+// and drops the trailing partial one; a single line is never split on
+// embedded ref pairs, because prose citations are indistinguishable from
+// headers and mis-splitting corrupts a legitimate summary. Diagnostics are
+// data, not logs: adapters decide where to emit them (log line, debug
+// event, tool text).
 
 import { clampPrefix } from "./truncate.js";
 import type { CompressRangeSpec } from "./types.js";
@@ -47,6 +56,9 @@ export interface CompressParseDiagnostics {
   /** True when a non-array `content` value (single entry object or nested
    *  `ranges` array) was recovered into the canonical array form (#470). */
   contentSalvage?: boolean;
+  /** True when line-form text outside any JSON shell was recovered: a bare
+   *  top-level string or a string literal decoding to text (#1559). */
+  stringSalvage?: boolean;
   /** First 800 chars of the raw string input (string inputs only). */
   rawPrefix?: string;
   /** Raw string input length (string inputs only). */
@@ -155,15 +167,37 @@ function parseStringCore(
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
     return parseObjectValue(value as Record<string, unknown>, callId, diag);
   }
+  if (typeof value === "string") {
+    // #1559 G2: a JSON string literal that decodes to line-form text
+    // (double-wrapped bare string, or a gateway quoting the payload).
+    const recovered = salvageLineFormEntries(value, callId);
+    if (recovered.ranges.length > 0)
+      return finishLineFormSalvage(recovered, diag, false);
+  }
   if (value !== undefined) {
     // Parsed, but not to an object: bare array, number, boolean, null.
     diag.kind = "not-object";
     return finish([], diag);
   }
 
-  // Unparseable prefix: salvage the complete content-array entries.
-  const entries = salvageContentEntries(cleaned);
-  return finishSalvage(entries, callId, diag, looksTruncated(cleaned));
+  // Unparseable prefix: salvage in order of specificity — complete
+  // content-array objects, then a string-slot line-form prefix (#1559 G3),
+  // then bare line-form text with no shell at all (#1559 G2).
+  let entries = salvageContentEntries(cleaned);
+  let fromStringSlot = false;
+  if (entries.length === 0) {
+    entries = salvageStringSlotEntries(cleaned);
+    fromStringSlot = entries.length > 0;
+  }
+  if (entries.length > 0) {
+    const out = finishSalvage(entries, callId, diag, true);
+    if (fromStringSlot && out.ranges.length > 0) diag.contentSalvage = true;
+    return out;
+  }
+  const recovered = salvageLineFormEntries(cleaned, callId);
+  if (recovered.ranges.length > 0)
+    return finishLineFormSalvage(recovered, diag, looksTruncated(cleaned));
+  return finishSalvage([], callId, diag, looksTruncated(cleaned));
 }
 
 function parseObjectValue(
@@ -201,13 +235,15 @@ function parseObjectValue(
       // Not a JSON array (or nothing salvageable): bare line-form text.
       // Strip JSON-wrapper residue (stringified ["…"] with broken
       // escaping) — the line form needs structure only in the refs
-      // header line, so the summary body never has to parse.
+      // header line, so the summary body never has to parse. #1559 G1:
+      // a single-line payload takes the text after the refs as its
+      // inline summary (weak models and lossy gateways drop the break).
       const bare = stripJsonWrapperResidue(content);
-      const entries = splitLineEntries(bare);
+      const entries = inlineSingleLineEntry(splitLineEntries(bare));
       const { ranges, invalid, reasons } = validateEntries(entries, callId);
+      diag.invalidItems = invalid;
+      if (reasons.length > 0) diag.invalidReasons = reasons;
       if (ranges.length > 0) {
-        diag.invalidItems = invalid;
-        if (reasons.length > 0) diag.invalidReasons = reasons;
         diag.kind = "ok";
         return finish(ranges, diag);
       }
@@ -838,6 +874,87 @@ function looksTruncated(s: string): boolean {
     else if (ch === "}" || ch === "]") depth--;
   }
   return depth > 0 || inString;
+}
+
+// #1559 G1: the line-form path received exactly ONE part and it holds no
+// line break — the model or gateway collapsed the documented "header line
+// + body" into one line. Re-home the text after the refs header as the
+// summary body by synthesizing the missing break. A header whose remainder
+// holds no letter or digit (empty, or punctuation like "…") stays
+// header-only and is rejected as before. Never splits on embedded ref
+// pairs: prose citations look identical to headers, and mis-splitting
+// would corrupt a legitimate summary — under-recovery (first block only)
+// stays visible in the receipt and retries cleanly.
+function inlineSingleLineEntry(entries: unknown[]): unknown[] {
+  if (entries.length !== 1) return entries;
+  const e = entries[0];
+  if (typeof e !== "string" || e.includes("\n")) return entries;
+  const head = e.trim();
+  const m = REF_PAIR_IN_LINE.exec(head) ?? SINGLE_REF_IN_LINE.exec(head);
+  if (m === null) return entries;
+  const rest = head.slice(m.index + m[0].length).trim();
+  if (!/\p{L}|\p{N}/u.test(rest)) return entries;
+  return [m[0] + "\n" + rest];
+}
+
+// #1559 G2: line-form entries recovered from a bare (non-JSON) string —
+// the raw input with no JSON shell, or a JSON string literal that decoded
+// to text. Zero ranges means "keep your own verdict".
+function salvageLineFormEntries(
+  text: string,
+  callId: string | undefined,
+): { ranges: CompressRangeSpec[]; invalid: number; reasons: string[] } {
+  return validateEntries(
+    inlineSingleLineEntry(splitLineEntries(stripJsonWrapperResidue(text))),
+    callId,
+  );
+}
+
+function finishLineFormSalvage(
+  result: { ranges: CompressRangeSpec[]; invalid: number; reasons: string[] },
+  diag: CompressParseDiagnostics,
+  truncatedShape: boolean,
+): ParsedCompressInput {
+  diag.stringSalvage = true;
+  diag.invalidItems = result.invalid;
+  if (result.reasons.length > 0) diag.invalidReasons = result.reasons;
+  diag.kind = truncatedShape ? "truncated" : "ok";
+  return finish(result.ranges, diag);
+}
+
+/**
+ * #1559 G3: the stream cut a STRINGIFIED call whose content slot held a
+ * string rather than an array. Extracts the surviving slot prefix (up to
+ * the closing quote, or EOF when unterminated), decodes \n escapes, and
+ * returns the line-form blocks. Never-guess rule: while the slot is
+ * unterminated the trailing block may be mid-write and is dropped; an
+ * unterminated single block yields nothing.
+ */
+function salvageStringSlotEntries(raw: string): unknown[] {
+  const match = /"content"\s*:\s*"/.exec(raw);
+  if (match === null) return [];
+  const start = match.index + match[0].length;
+  let i = start;
+  let terminated = false;
+  while (i < raw.length) {
+    const ch = raw.charAt(i);
+    if (ch === "\\") {
+      i += 2;
+      continue;
+    }
+    if (ch === '"') {
+      terminated = true;
+      break;
+    }
+    i++;
+  }
+  const body = raw.slice(start, i).replace(/\\n/g, "\n");
+  const parts = splitLineEntries(body);
+  if (!terminated) {
+    if (parts.length <= 1) return [];
+    parts.pop();
+  }
+  return parts;
 }
 
 /**

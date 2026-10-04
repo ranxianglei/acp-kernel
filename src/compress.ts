@@ -37,6 +37,11 @@ import { adjustBoundariesForToolPairs } from "./tool-pairs.js";
 import { adjustBoundariesForReasoningPairs } from "./reasoning-pairs.js";
 import { computeIntegrityWithdrawals } from "./turn-integrity.js";
 import {
+  buildFidelityAppendix,
+  extractFidelityIds,
+  fidelitySourceTexts,
+} from "./preserved-ids.js";
+import {
   computeProtectedRefs,
   buildCompressibleRanges,
   mergeRangesToThreshold,
@@ -312,27 +317,53 @@ function evaluateRefold(
 
 /** In-place refold (#398): same block id/coverage/tier, new summary (+topic),
  * fresh runId, restoredInline flag cleared. Summary passes the same length
- * checks as a fresh compression. */
+ * checks as a fresh compression. Returns the #481 fidelity appendix appended
+ * ("" when none was needed). */
 function applyRefolds(input: {
   spec: ApplyCompressionInput["ranges"][number];
   state: CompressionState;
   runId: string;
   config: Config;
   blockIds: string[];
-}): void {
+  messages: CoreMessage[];
+}): string {
   validateSummaryLength(input.spec, input.config.compress);
   const targets = new Set(input.blockIds);
+  // #481: extract from the OLD summaries and still-visible tool messages
+  // before the map rewrites them — a re-fold must not drop ids.
+  const fidelityTexts: string[] = [];
+  for (const block of input.state.blocks) {
+    if (!targets.has(block.blockId)) continue;
+    fidelityTexts.push(block.summary);
+    const coverage = new Set(block.effectiveMessageIds);
+    for (const message of input.messages) {
+      if (!coverage.has(message.id)) continue;
+      fidelityTexts.push(...fidelitySourceTexts([message]));
+    }
+  }
+  const appendix = buildFidelityAppendix(
+    input.spec.summary,
+    extractFidelityIds(fidelityTexts),
+  );
+  const summary =
+    appendix === "" ? input.spec.summary : input.spec.summary + appendix;
   input.state.blocks = input.state.blocks.map((block) =>
     targets.has(block.blockId)
       ? {
           ...block,
-          summary: input.spec.summary,
+          summary,
           topic: input.spec.topic ?? block.topic,
           runId: input.runId,
           restoredInline: false,
         }
       : block,
   );
+  return appendix;
+}
+
+function fidelityNote(appendix: string): string | undefined {
+  if (appendix === "") return undefined;
+  return `Kernel appended mechanically-preserved identifier(s) to the block summary: ${appendix.trim()}`;
 }
 
 export function createCore(ports: Ports = {}): CompressionCore {
@@ -606,14 +637,17 @@ export function createCore(ports: Ports = {}): CompressionCore {
         const decision = refoldDecisions.get(spec);
         if (decision?.kind === "refold") {
           try {
-            applyRefolds({
+            const appendix = applyRefolds({
               spec,
               state,
               runId,
               config: input.config,
               blockIds: decision.blocks.map((block) => block.blockId),
+              messages: input.messages,
             });
             blocksCreated += decision.blocks.length;
+            const note = fidelityNote(appendix);
+            if (note) notes.push(note);
           } catch (error) {
             errors.push(
               rangeError(
@@ -651,6 +685,7 @@ export function createCore(ports: Ports = {}): CompressionCore {
         blocksCreated += outcome.refolded ? outcome.refolded.length : 1;
         tokensCompressed += outcome.tokens;
         warnings.push(...outcome.warnings);
+        if (outcome.notes) notes.push(...outcome.notes);
       } catch (error) {
         errors.push(
           rangeError(
@@ -1146,6 +1181,8 @@ interface SingleRangeOutcome {
   /** #400: set when the range ended as an in-place refold instead of creating
    * a fresh block — the ids of the blocks updated (caller counts these, not 1). */
   refolded?: string[];
+  /** Kernel-side transparency notes to surface to the caller (#481). */
+  notes?: string[];
 }
 
 function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
@@ -1384,17 +1421,20 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     // blocks in place; everything else keeps the legacy rejection verbatim.
     const decision = evaluateRefold(input.state, input.spec);
     if (decision.kind === "refold") {
-      applyRefolds({
+      const appendix = applyRefolds({
         spec: input.spec,
         state: input.state,
         runId: input.runId,
         config: input.config,
         blockIds: decision.blocks.map((block) => block.blockId),
+        messages: input.messages,
       });
+      const note = fidelityNote(appendix);
       return {
         tokens: 0,
         warnings,
         refolded: decision.blocks.map((block) => block.blockId),
+        ...(note !== undefined ? { notes: [note] } : {}),
       };
     }
     const first = consumedBlockIds[0]!;
@@ -1422,13 +1462,32 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     }
   }
 
+  // Mechanical fidelity (#481): fold-commit post-processing. Extract verbatim
+  // identifiers from the folded source texts — live tool messages plus
+  // consumed blocks' summaries (tier distillation carries ids forward through
+  // summaries on pruned hosts) — and append any id missing from the model
+  // summary as a machine line the model never transcribes.
+  const foldedMessages = filteredIds
+    .map((id) => input.messages.find((entry) => entry.id === id))
+    .filter((m): m is CoreMessage => m !== undefined);
+  const fidelityTexts = [
+    ...fidelitySourceTexts(foldedMessages),
+    ...consumedBlockIds
+      .map((id) => blockById(input.state, id)?.summary)
+      .filter((s): s is string => s !== undefined),
+  ];
+  const fidelityAppendix = buildFidelityAppendix(
+    input.spec.summary,
+    extractFidelityIds(fidelityTexts),
+  );
+
   const blockId = allocateBlockId(input.state);
   const block: CompressionBlock = {
     blockId,
     runId: input.runId,
     tier: outputTier,
     topic: input.spec.topic,
-    summary: input.spec.summary,
+    summary: input.spec.summary + fidelityAppendix,
     directMessageIds: filteredIds,
     effectiveMessageIds: [...effectiveMessageIds],
     directBlockIds: [...consumedBlockIds],
@@ -1448,7 +1507,12 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
     if (consumed) consumed.active = false;
   }
 
-  return { tokens: compressedTokens, warnings };
+  const note = fidelityNote(fidelityAppendix);
+  return {
+    tokens: compressedTokens,
+    warnings,
+    ...(note !== undefined ? { notes: [note] } : {}),
+  };
 }
 
 function applyPairBoundaryAdjustments(

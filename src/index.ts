@@ -149,6 +149,13 @@ export type {
 export { renderHandoff, renderMessage, matchSession } from "./handoff.js";
 export type { HandoffInput, HandoffMeta, HandoffBlockFull } from "./handoff.js";
 export { isToolMessage } from "./message-kind.js";
+export {
+  DEFAULT_FIDELITY_EXTRACTORS,
+  fidelitySourceTexts,
+  extractFidelityIds,
+  buildFidelityAppendix,
+} from "./preserved-ids.js";
+export type { FidelityExtractor } from "./preserved-ids.js";
 export { hideConsumedCompressCalls } from "./hide-consumed.js";
 export type { HideConsumedResult } from "./hide-consumed.js";
 export {

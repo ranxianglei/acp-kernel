@@ -51,6 +51,7 @@ acp-kernel/
 │   ├── keep-markers.ts       # KEEP/REF marker preservation in summaries
 │   ├── ccr.ts                # CCR: placeholder contract, storeLargeResults, retrieveByRef, applyRetrieve, ccrStoreNode
 │   ├── content-store.ts      # MessageContentStore — per-session content-addressed dedup store (per-ref append-only)
+│   ├── preserved-ids.ts      # Mechanical fidelity (#481): verbatim id extraction from folded tool content + block appendix
 │   ├── prompts.ts            # Prompts (4 load-bearing rules) + defaultPrompts + resolvePrompts
 │   ├── compress-tools.ts     # ACP tool schemas (3 wire shapes) + standing-prompt builders
 │   ├── surface-config.ts     # Surface-text overrides: applySectionOverrides, cloneWithDescriptions, applyAcpToolOverrides

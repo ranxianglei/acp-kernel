@@ -162,9 +162,17 @@ export interface FoldEconomics {
   perTurnSavingUnits: number;
   /** Breakeven turns n* = max(0,oneTimeCost)/perTurnSaving; null when S ≤ σ. */
   breakevenTurns: number | null;
-  /** paidBack: measured cadence reached the breakeven point.
-   *  null while unobservable (no post-fold request yet / S ≤ σ). */
+  /** paidBack: lifetime payback verdict — post-fold requests observed so far
+   *  (requestsAfter) reached the breakeven point n*. Same window as
+   *  savedSoFar, so the verdict and the token figures on one row agree
+   *  (billion-context#2044). null while unobservable (S ≤ σ). */
   paidBack: boolean | null;
+  /** cadenceOk: the original short-window verdict — folds until the NEXT
+   *  fold (turnsToNextFold) reached n*. This is an interleave-cadence
+   *  signal (folded too soon after the previous one), NOT a payback
+   *  verdict; null while there is no next fold. Guard-signal candidate for
+   *  billion-context#1280 / #2044. */
+  cadenceOk: boolean | null;
 }
 
 export interface EconomicsSummary {
@@ -255,7 +263,12 @@ export function computeFoldEconomics(
     perTurnSavingUnits > 0
       ? Math.max(0, oneTimeCostUnits) / perTurnSavingUnits
       : null;
+  // #2044: paidBack uses the FULL post-fold window (requestsAfter), the
+  // same window savedSoFar uses, so verdict and token figures agree.
+  // The old short-window verdict survives as cadenceOk (diagnostics only).
   const paidBack =
+    breakevenTurns !== null ? f.requestsAfter >= breakevenTurns : null;
+  const cadenceOk =
     f.turnsToNextFold !== null && breakevenTurns !== null
       ? f.turnsToNextFold >= breakevenTurns
       : null;
@@ -275,6 +288,7 @@ export function computeFoldEconomics(
     perTurnSavingUnits: round1(perTurnSavingUnits),
     breakevenTurns,
     paidBack,
+    cadenceOk,
   };
 }
 
@@ -523,7 +537,7 @@ function formatCacheReportFull(report: CacheReport): string {
     );
     for (const f of report.folds) {
       const nstar =
-        f.breakevenTurns === null ? "n/a" : f.breakevenTurns.toFixed(1);
+        f.breakevenTurns === null ? "n/a" : f.breakevenTurns.toFixed(2);
       const k = f.turnsToNextFold === null ? "—" : String(f.turnsToNextFold);
       const verdict =
         f.paidBack === null ? "?" : f.paidBack ? "PAID BACK" : "NOT PAID BACK";
@@ -612,12 +626,12 @@ function formatCacheReportSummary(report: CacheReport): string {
     );
     if (e.notPaidBackCount > 0)
       out.push(
-        `  NOT PAID BACK = measured post-fold cadence never reached n* (end-of-session / back-to-back folds — one-time cost, not data loss)`,
+        `  NOT PAID BACK = post-fold requests so far have not reached n* (early fold or session ended before payback — one-time cost, not data loss)`,
       );
     if (report.folds.length <= SUMMARY_FOLD_TOPS * 2) {
       for (const f of report.folds) {
         const nstar =
-          f.breakevenTurns === null ? "n/a" : f.breakevenTurns.toFixed(1);
+          f.breakevenTurns === null ? "n/a" : f.breakevenTurns.toFixed(2);
         const k = f.turnsToNextFold === null ? "—" : String(f.turnsToNextFold);
         const h = f.hPct === null ? "n/a" : `${f.hPct.toFixed(1)}%`;
         out.push(

@@ -148,7 +148,7 @@ test("multiple folds in one window: earliest divergence point wins", () => {
   assert.equal(r.folds[1].T, 5_000);
 });
 
-test("fold without post-fold request is unobserved", () => {
+test("fold without post-fold request: zero one-time cost is instantly paid back, cadence unobserved (#2044)", () => {
   const samples = [sample(0, 10_000, 9_000)];
   const folds: FoldEvent[] = [
     {
@@ -161,11 +161,33 @@ test("fold without post-fold request is unobserved", () => {
   const f = r.folds[0];
   assert.equal(f.hPct, null);
   assert.equal(f.T, 0);
+  // S=50K σ=0 T=0 → ΔC₁ = −500 → n* = 0 → trivially paid back.
+  assert.equal(f.paidBack, true);
+  // No next fold yet → cadence stays unobserved.
+  assert.equal(f.cadenceOk, null);
+  assert.equal(r.economics.paidBackCount, 1);
+  assert.equal(r.economics.unobservedCount, 0);
+});
+
+test("fold with S ≤ σ has null verdict (unobservable payback horizon)", () => {
+  const samples = [sample(0, 70_000, 60_000), sample(1, 22_000, 5_000)];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 2_000,
+      summaryTokens: 3_000,
+      firstFoldStartTokens: 5_000,
+    },
+  ];
+  const r = buildCacheReport(samples, folds);
+  const f = r.folds[0];
+  assert.equal(f.breakevenTurns, null);
   assert.equal(f.paidBack, null);
+  assert.equal(f.cadenceOk, null);
   assert.equal(r.economics.unobservedCount, 1);
 });
 
-test("breakeven verdict: measured cadence vs n*", () => {
+test("payback verdict uses the full post-fold window (#2044)", () => {
   // S=50K σ=2K, X=5K. Post-fold request: input 22667, cached 7000 → missed
   // 15667 = compRepay (excess 17667 clamps to it). Defaults w=1,r=0.1,q=4:
   // ΔC₁ = 0.9·15667 + 4·2000 − 0.1·50000 ≈ 17100 ; Δs = 48000·0.1 = 4800 → n*≈3.6
@@ -188,7 +210,83 @@ test("breakeven verdict: measured cadence vs n*", () => {
     f.breakevenTurns !== null && f.breakevenTurns > 0 && f.breakevenTurns < 10,
   );
   assert.equal(f.turnsToNextFold, null);
-  assert.equal(f.paidBack, null);
+  // requestsAfter = 1 < n*≈3.6 → NOT PAID BACK under the full window
+  // (previously unobserved forever — the last fold can now be evaluated).
+  assert.equal(f.paidBack, false);
+  assert.equal(f.cadenceOk, null);
+  assert.equal(r.economics.notPaidBackCount, 1);
+});
+
+test("last fold with enough post-fold requests flips to PAID BACK (#2044)", () => {
+  const samples = [
+    sample(0, 70_000, 60_000),
+    sample(1, 22_667, 7_000),
+    sample(2, 24_000, 22_000),
+    sample(3, 26_000, 24_000),
+    sample(4, 28_000, 26_000),
+    sample(5, 30_000, 28_000),
+  ];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 50_000,
+      summaryTokens: 2_000,
+      firstFoldStartTokens: 5_000,
+      viewBefore: 70_000,
+      viewAfter: 20_000,
+    },
+  ];
+  const r = buildCacheReport(samples, folds);
+  const f = r.folds[0];
+  assert.equal(f.turnsToNextFold, null);
+  assert.equal(f.requestsAfter, 5);
+  assert.ok(f.breakevenTurns !== null && f.requestsAfter >= f.breakevenTurns);
+  assert.equal(f.paidBack, true);
+  assert.equal(f.cadenceOk, null);
+});
+
+test("back-to-back fold: lifetime verdict PAID BACK, cadence NOT ok (#2044 regression)", () => {
+  // The incident shape from the report: a fold that paid back long ago got
+  // NOT PAID BACK purely because the NEXT fold arrived in the same batch
+  // (k small), while savedSoFar on the same row kept growing.
+  const samples = [
+    sample(0, 70_000, 60_000),
+    sample(1, 22_667, 7_000),
+    sample(2, 24_000, 22_000),
+    sample(3, 26_000, 24_000),
+    sample(4, 28_000, 26_000),
+    sample(5, 30_000, 28_000),
+    sample(6, 32_000, 30_000),
+    sample(7, 34_000, 32_000),
+    sample(8, 36_000, 34_000),
+    sample(9, 38_000, 36_000),
+  ];
+  const folds: FoldEvent[] = [
+    {
+      at: T0 + 0.5 * min,
+      tokensCompressed: 50_000,
+      summaryTokens: 2_000,
+      firstFoldStartTokens: 5_000,
+      viewBefore: 70_000,
+      viewAfter: 20_000,
+    },
+    {
+      // arrives in the same batch, right after one post-fold request of fold #1
+      at: T0 + 1.5 * min,
+      tokensCompressed: 10_000,
+      summaryTokens: 800,
+      firstFoldStartTokens: 3_000,
+    },
+  ];
+  const r = buildCacheReport(samples, folds);
+  const f1 = r.folds[0];
+  assert.equal(f1.turnsToNextFold, 1); // short window: the next fold came early
+  assert.equal(f1.requestsAfter, 9); // full window: kept counting
+  // Old behavior: 1 < n*≈3.6 → NOT PAID BACK despite savedSoFar ≈ 48K×9.
+  // New behavior: 9 ≥ 3.6 → PAID BACK; the too-soon signal moves to cadenceOk.
+  assert.equal(f1.paidBack, true);
+  assert.equal(f1.cadenceOk, false);
+  assert.equal(r.economics.paidBackCount >= 1, true);
 });
 
 test("economics summary aggregates fold economics", () => {
@@ -345,8 +443,25 @@ test("computeFoldEconomics matches #359 formulas under default profile", () => {
   assert.equal(e.perTurnSavingUnits, 4_800);
   assert.ok(Math.abs(e.breakevenTurns! - 18_300 / 4_800) < 1e-9);
   assert.equal(e.paidBack, true);
+  assert.equal(e.cadenceOk, true);
   assert.equal(e.savedSoFar, 48_000 * 21);
   assert.equal(e.netTokenDelta, 17_000 + 2_000 - 50_000);
+
+  // #2044: the incident shape — next fold arrives immediately (k=0) but the
+  // fold has long since paid back across the full post-fold horizon.
+  const e2 = computeFoldEconomics({
+    seq: 1,
+    at: 1_000_000,
+    S: 50_000,
+    sigma: 2_000,
+    hPct: 33,
+    T: 17_000,
+    requestsAfter: 21,
+    turnsToNextFold: 0,
+  });
+  assert.equal(e2.paidBack, true);
+  assert.equal(e2.cadenceOk, false);
+  assert.equal(e2.savedSoFar, 48_000 * 21);
 });
 
 function round1(n: number): number {

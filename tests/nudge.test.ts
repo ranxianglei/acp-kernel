@@ -1236,15 +1236,27 @@ test("arbitration: T1 keeps first pick over count-ready T2, then rotates (#509)"
   });
   const messages = makeMessages(10);
   // First sight of the 50K backlog fires T1 (fresh rotation memory).
-  const first = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 50000 });
+  const first = core.processTurn({
+    messages,
+    state: createInitialState(),
+    config,
+    tokenCount: 50000,
+  });
   assert.equal(first.nudge.shouldInject, true, `reason: ${first.nudge.reason}`);
   assert.equal(first.nudge.tier, 1, "first slot goes to T1 raw pending");
-  let state = { ...first.state, blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 400) };
+  let state = {
+    ...first.state,
+    blocks: t1Blocks([["m1"], ["m2"], ["m3"], ["m4"], ["m5"]], 400),
+  };
   // T1 has gone -> the next slot hands to the count-ready T2 (pre-#509 this
   // returned T1 forever while t1Eff stayed >= nudgeGrowthTokens).
   const turn = core.processTurn({ messages, state, config, tokenCount: 60000 });
   assert.equal(turn.nudge.shouldInject, true, `reason: ${turn.nudge.reason}`);
-  assert.equal(turn.nudge.tier, 2, "rotation hands the slot to count-ready T2 after T1 went");
+  assert.equal(
+    turn.nudge.tier,
+    2,
+    "rotation hands the slot to count-ready T2 after T1 went",
+  );
   assert.match(turn.nudge.reason ?? "", /T2 distill ready/);
   // And back to T1 the cycle after that.
   state = turn.state;
@@ -1350,36 +1362,74 @@ test("arbitration: tiers disabled -> count trigger cannot fire T2", () => {
 test("arbitration: count-ready T2 is heard while t1Eff stays high (#509)", () => {
   const core = createCore();
   const config = buildConfig({
-    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    compress: {
+      minCompressRange: 5000,
+      maxSummaryLength: 0,
+      minSummaryLength: 0,
+    },
     preserveRecentMessages: 0,
   });
   const messages = makeMessages(10);
-  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 10_000 }).state;
-  state = { ...state, blocks: t1Blocks([["m0"], ["m1"], ["m2"], ["m3"], ["m4"]], 400) };
+  let state = core.processTurn({
+    messages,
+    state: createInitialState(),
+    config,
+    tokenCount: 10_000,
+  }).state;
+  state = {
+    ...state,
+    blocks: t1Blocks([["m0"], ["m1"], ["m2"], ["m3"], ["m4"]], 400),
+  };
 
   // Fresh stamps tie -> lower tier keeps the first pick (legacy behavior).
-  const turnA = core.processTurn({ messages, state, config, tokenCount: 60_000 });
+  const turnA = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 60_000,
+  });
   assert.equal(turnA.nudge.shouldInject, true, `reason: ${turnA.nudge.reason}`);
   assert.equal(turnA.nudge.tier, 1);
 
   // T1 still ready AND 5 blocks >= tier2Trigger 5. Pre-fix this returned T1
   // forever — the explicit trigger was dead. Rotation hands the slot to the
   // never-shown T2.
-  const turnB = core.processTurn({ messages, state: turnA.state, config, tokenCount: 66_000 });
+  const turnB = core.processTurn({
+    messages,
+    state: turnA.state,
+    config,
+    tokenCount: 66_000,
+  });
   assert.equal(turnB.nudge.shouldInject, true, `reason: ${turnB.nudge.reason}`);
-  assert.equal(turnB.nudge.tier, 2, `expected rotated T2: ${turnB.nudge.reason}`);
+  assert.equal(
+    turnB.nudge.tier,
+    2,
+    `expected rotated T2: ${turnB.nudge.reason}`,
+  );
   assert.match(turnB.nudge.reason ?? "", /5 tier-1 blocks >= tier2Trigger 5/);
 });
 
 test("arbitration: T1/T2 rotation alternates — neither side starves (#509)", () => {
   const core = createCore();
   const config = buildConfig({
-    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    compress: {
+      minCompressRange: 5000,
+      maxSummaryLength: 0,
+      minSummaryLength: 0,
+    },
     preserveRecentMessages: 0,
   });
   const messages = makeMessages(10);
-  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 10_000 }).state;
-  state = { ...state, blocks: t1Blocks([["m0"], ["m1"], ["m2"], ["m3"], ["m4"]], 400) };
+  let state = core.processTurn({
+    messages,
+    state: createInitialState(),
+    config,
+    tokenCount: 10_000,
+  }).state;
+  state = {
+    ...state,
+    blocks: t1Blocks([["m0"], ["m1"], ["m2"], ["m3"], ["m4"]], 400),
+  };
 
   const seen: number[] = [];
   for (const tc of [60_000, 66_000, 72_000, 78_000]) {
@@ -1388,52 +1438,98 @@ test("arbitration: T1/T2 rotation alternates — neither side starves (#509)", (
     seen.push(turn.nudge.tier ?? 0);
     state = turn.state;
   }
-  assert.deepEqual(seen, [1, 2, 1, 2], "oldest-stamp rotation alternates T1/T2");
+  assert.deepEqual(
+    seen,
+    [1, 2, 1, 2],
+    "oldest-stamp rotation alternates T1/T2",
+  );
 });
 
 test("arbitration: count-ready T3 rotates in under high t1Eff (#509)", () => {
   const core = createCore();
   const config = buildConfig({
     tiers: { enabled: true, tier2Trigger: 5, tier3Trigger: 3 },
-    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    compress: {
+      minCompressRange: 5000,
+      maxSummaryLength: 0,
+      minSummaryLength: 0,
+    },
     preserveRecentMessages: 0,
   });
   const messages = makeMessages(10);
-  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 10_000 }).state;
+  let state = core.processTurn({
+    messages,
+    state: createInitialState(),
+    config,
+    tokenCount: 10_000,
+  }).state;
   // 2 T1 blocks (< tier2Trigger 5 → T2 not count-ready) + 4 T2 blocks (>= 3).
   // t3Pen ~400 << 9000 mass gate — only the count path is live.
   state = {
     ...state,
     blocks: [...t1Blocks([["m0"], ["m1"]], 400), ...t2Blocks(4, 400, ["m2"])],
   };
-  const turnA = core.processTurn({ messages, state, config, tokenCount: 60_000 });
+  const turnA = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 60_000,
+  });
   assert.equal(turnA.nudge.shouldInject, true, `reason: ${turnA.nudge.reason}`);
   assert.equal(turnA.nudge.tier, 1, "fresh stamps -> T1 first pick");
-  const turnB = core.processTurn({ messages, state: turnA.state, config, tokenCount: 66_000 });
+  const turnB = core.processTurn({
+    messages,
+    state: turnA.state,
+    config,
+    tokenCount: 66_000,
+  });
   assert.equal(turnB.nudge.shouldInject, true, `reason: ${turnB.nudge.reason}`);
-  assert.equal(turnB.nudge.tier, 3, `expected rotated T3: ${turnB.nudge.reason}`);
+  assert.equal(
+    turnB.nudge.tier,
+    3,
+    `expected rotated T3: ${turnB.nudge.reason}`,
+  );
   assert.match(turnB.nudge.reason ?? "", /4 tier-2 blocks >= tier3Trigger 3/);
 });
 
 test("arbitration: T2 slot survives repeated T1 compressions (#509 rotation memory)", () => {
   const core = createCore();
   const config = buildConfig({
-    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    compress: {
+      minCompressRange: 5000,
+      maxSummaryLength: 0,
+      minSummaryLength: 0,
+    },
     preserveRecentMessages: 0,
   });
   const messages = makeMessages(20);
-  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 10_000 }).state;
+  let state = core.processTurn({
+    messages,
+    state: createInitialState(),
+    config,
+    tokenCount: 10_000,
+  }).state;
   // 5 count-ready T1 blocks over m0-m4; m5-m19 raw (~100K) keep t1Eff high.
-  state = { ...state, blocks: t1Blocks([["m0"], ["m1"], ["m2"], ["m3"], ["m4"]], 400) };
+  state = {
+    ...state,
+    blocks: t1Blocks([["m0"], ["m1"], ["m2"], ["m3"], ["m4"]], 400),
+  };
 
-  const turnA = core.processTurn({ messages, state, config, tokenCount: 60_000 });
+  const turnA = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 60_000,
+  });
   assert.equal(turnA.nudge.shouldInject, true, `reason: ${turnA.nudge.reason}`);
   assert.equal(turnA.nudge.tier, 1, "fresh rotation memory -> T1 first");
 
   // Model complies: compresses a raw slice. Success resets baselines and the
   // per-tier cadence stamps — but NOT the rotation memory.
   const compressed = core.applyCompression({
-    ranges: [{ startRef: "m00006", endRef: "m00010", summary: "drained a raw slice" }],
+    ranges: [
+      { startRef: "m00006", endRef: "m00010", summary: "drained a raw slice" },
+    ],
     messages,
     state: turnA.state,
     config,
@@ -1447,28 +1543,63 @@ test("arbitration: T2 slot survives repeated T1 compressions (#509 rotation memo
 
   // Backlog still high (m10-m19 uncovered ~50K) and 5 blocks still count-ready:
   // the slot goes to T2 — exactly what billion-context-pi#628 never received.
-  const turnB = core.processTurn({ messages, state: compressed.state, config, tokenCount: 66_000 });
+  const turnB = core.processTurn({
+    messages,
+    state: compressed.state,
+    config,
+    tokenCount: 66_000,
+  });
   assert.equal(turnB.nudge.shouldInject, true, `reason: ${turnB.nudge.reason}`);
-  assert.equal(turnB.nudge.tier, 2, `expected rotated T2 after a compliant T1 compress: ${turnB.nudge.reason}`);
+  assert.equal(
+    turnB.nudge.tier,
+    2,
+    `expected rotated T2 after a compliant T1 compress: ${turnB.nudge.reason}`,
+  );
 });
 
 test("arbitration: default triggers (1000/2000) keep T1-first under high t1Eff (#509 no default drift)", () => {
   const core = createCore();
   const config = buildConfig({
     tiers: { enabled: true, tier2Trigger: 1000, tier3Trigger: 2000 },
-    compress: { minCompressRange: 5000, maxSummaryLength: 0, minSummaryLength: 0 },
+    compress: {
+      minCompressRange: 5000,
+      maxSummaryLength: 0,
+      minSummaryLength: 0,
+    },
     preserveRecentMessages: 0,
   });
   const messages = makeMessages(10);
-  let state = core.processTurn({ messages, state: createInitialState(), config, tokenCount: 10_000 }).state;
-  state = { ...state, blocks: t1Blocks([["m0"], ["m1"], ["m2"], ["m3"], ["m4"]], 400) };
+  let state = core.processTurn({
+    messages,
+    state: createInitialState(),
+    config,
+    tokenCount: 10_000,
+  }).state;
+  state = {
+    ...state,
+    blocks: t1Blocks([["m0"], ["m1"], ["m2"], ["m3"], ["m4"]], 400),
+  };
 
-  const turnA = core.processTurn({ messages, state, config, tokenCount: 60_000 });
+  const turnA = core.processTurn({
+    messages,
+    state,
+    config,
+    tokenCount: 60_000,
+  });
   assert.equal(turnA.nudge.shouldInject, true, `reason: ${turnA.nudge.reason}`);
   assert.equal(turnA.nudge.tier, 1);
-  const turnB = core.processTurn({ messages, state: turnA.state, config, tokenCount: 66_000 });
+  const turnB = core.processTurn({
+    messages,
+    state: turnA.state,
+    config,
+    tokenCount: 66_000,
+  });
   assert.equal(turnB.nudge.shouldInject, true, `reason: ${turnB.nudge.reason}`);
-  assert.equal(turnB.nudge.tier, 1, "5 < 1000: count path off by default, T1 continues");
+  assert.equal(
+    turnB.nudge.tier,
+    1,
+    "5 < 1000: count path off by default, T1 continues",
+  );
 });
 
 // #194 first-sight mass bypass: a session that ARRIVES with a huge ready mass

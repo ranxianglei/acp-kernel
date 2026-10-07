@@ -308,11 +308,15 @@ export interface CompressionState {
 export interface TierConfig {
   enabled: boolean;
   /** Distill to tier 2 once the count of ACTIVE tier-1 blocks reaches this.
-   *  Default 5. Independent of raw-message pending: summaries are ~10:1
-   *  condensed, so a token-mass comparison against T1 pending would starve. */
+   *  Default 1000 (#379: block count is not a need signal, so the path
+   *  defaults OFF; lowering it explicitly opts back in, and a count-ready
+   *  tier then alternates slots with a ready T1 on the growth path instead
+   *  of being short-circuited behind it — #509). Independent of raw-message
+   *  pending: summaries are ~10:1 condensed, so a token-mass comparison
+   *  against T1 pending would starve. */
   tier2Trigger: number;
   /** Condense to tier 3 once the count of ACTIVE tier-2 blocks reaches this.
-   *  Default 10. */
+   *  Default 2000 (#379, see tier2Trigger). */
   tier3Trigger: number;
 }
 

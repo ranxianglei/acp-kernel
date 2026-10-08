@@ -611,7 +611,9 @@ test("full anchor view: batch of a refoldable span plus a qualifying fresh part 
     ],
     messages: fullView,
     state: marked,
-    config: config({ compress: { minCompressRange: 0 } }),
+    // Size gate kept live (fresh part = 230 tokens clears 200) so the named
+    // "qualifying fresh part" property stays exercised (#511 token units).
+    config: config({ compress: { minCompressRange: 200 } }),
   });
 
   assert.deepEqual(result.result.errors, []);
@@ -722,7 +724,10 @@ test("a batch whose fresh part meets minCompressRange applies the refold AND com
     ],
     messages: visible,
     state: marked,
-    config: config({ compress: { minCompressRange: 0 } }),
+    // Size gate kept live: only the fresh part counts here (the refold span
+    // classifies consumed) — 230 tokens clears 200, so "meets minCompressRange"
+    // stays true under token units (#511).
+    config: config({ compress: { minCompressRange: 200 } }),
   });
 
   assert.deepEqual(result.result.errors, []);

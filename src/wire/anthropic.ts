@@ -27,12 +27,18 @@ export type AnthropicThinking = {
   thinking: string;
   signature?: string;
 };
+export type AnthropicRedactedThinking = {
+  type: "redacted_thinking";
+  data: string;
+  cache_control?: unknown;
+};
 export type AnthropicBlock =
   | AnthropicTextBlock
   | AnthropicToolUse
   | AnthropicToolResult
   | AnthropicImage
-  | AnthropicThinking;
+  | AnthropicThinking
+  | AnthropicRedactedThinking;
 
 export type AnthropicMessage = {
   role: "user" | "assistant";
@@ -169,6 +175,23 @@ export function anthropicToCore(body: AnthropicRequestBody): Flat {
             role: m.role,
             contentType: "text",
             text: "[image]",
+            rawAnthropicBlock: b,
+          });
+          break;
+        }
+        case "redacted_thinking": {
+          // Opaque payload (base64). Anthropic verifies it verbatim on replay
+          // and rejects any modification of the latest assistant message that
+          // carries thinking-family blocks ("thinking blocks ... cannot be
+          // modified"). Dropping it here silently rewrites that message, so it
+          // rides the sidecar exactly like images (#366) — coreToAnthropic
+          // re-emits rawAnthropicBlock verbatim.
+          const base = deriveMessageId(m.role, "text", "[redacted_thinking]");
+          msgs.push({
+            id: clusters.next(base),
+            role: m.role,
+            contentType: "text",
+            text: "[redacted_thinking]",
             rawAnthropicBlock: b,
           });
           break;

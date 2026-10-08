@@ -169,20 +169,20 @@ function collectSummaryAnchors(
  *   back to the API"), so an anchor inside an assistant run is moved back to the
  *   run's start.
  */
-function pairSafeAnchorIndex(messages: CoreMessage[], index: number): number {
-  let safe = index;
-  // Only assistant cores that reach the wire matter; a covered core between
-  // them is dropped, and the runs then merge in the rendered view. Both steps
-  // below therefore walk the input, where the covered ids are still present.
-  while (
-    safe > 0 &&
-    safe < messages.length &&
-    messages[safe - 1]!.role === "assistant" &&
-    messages[safe]!.role === "assistant"
-  ) {
-    safe--;
-  }
+// Per-rebuild indexes for anchor pairing (#498). Building these once per
+// rebuild costs O(N); rebuilding them per anchor made prune O(anchors × N).
+interface AnchorPairingIndex {
+  /** Start of the maximal consecutive assistant-role run containing i; -1 when `messages[i]` is not assistant. */
+  runStart: Int32Array;
+  /** Farthest `firstResultIndex(callId) + 1` across assistant tool-call messages at positions `< i`; 0 when none. Length N+1. */
+  prefixEnd: Int32Array;
+}
 
+function buildAnchorPairingIndex(messages: CoreMessage[]): AnchorPairingIndex {
+  const n = messages.length;
+
+  // A duplicate call id can appear on multiple results; the earliest position
+  // is the pairing boundary.
   const resultIndexByCallId = new Map<string, number>();
   messages.forEach((message, at) => {
     if (message.contentType !== "tool-result") return;
@@ -191,26 +191,66 @@ function pairSafeAnchorIndex(messages: CoreMessage[], index: number): number {
       resultIndexByCallId.set(message.toolCallId, at);
     }
   });
-  // Each move lands just past a result, so the loop reaches a fixed point; the
-  // bound only guards against a malformed message list.
-  for (let guard = 0; guard < messages.length; guard++) {
-    let moved = safe;
-    for (let at = 0; at < safe && at < messages.length; at++) {
-      const message = messages[at]!;
-      if (message.role !== "assistant") continue;
-      if (message.contentType !== "tool-call") continue;
-      if (typeof message.toolCallId !== "string") continue;
-      const resultIndex = resultIndexByCallId.get(message.toolCallId);
-      if (
-        resultIndex !== undefined &&
-        resultIndex >= safe &&
-        resultIndex + 1 > moved
-      ) {
-        moved = resultIndex + 1;
-      }
+
+  const runStart = new Int32Array(n).fill(-1);
+  for (let i = 0; i < n;) {
+    if (messages[i]!.role !== "assistant") {
+      i++;
+      continue;
     }
-    if (moved === safe) break;
-    safe = moved;
+    let j = i;
+    while (j + 1 < n && messages[j + 1]!.role === "assistant") j++;
+    for (let k = i; k <= j; k++) runStart[k] = i;
+    i = j + 1;
+  }
+
+  const prefixEnd = new Int32Array(n + 1);
+  for (let i = 0; i < n; i++) {
+    const message = messages[i]!;
+    let end = 0;
+    if (
+      message.role === "assistant" &&
+      message.contentType === "tool-call" &&
+      typeof message.toolCallId === "string"
+    ) {
+      const resultIndex = resultIndexByCallId.get(message.toolCallId);
+      if (resultIndex !== undefined) end = resultIndex + 1;
+    }
+    prefixEnd[i + 1] = Math.max(prefixEnd[i]!, end);
+  }
+
+  return { runStart, prefixEnd };
+}
+
+function pairSafeAnchorIndex(
+  messages: CoreMessage[],
+  index: number,
+  ix: AnchorPairingIndex,
+): number {
+  const n = messages.length;
+  let safe = index;
+  // Only assistant cores that reach the wire matter; a covered core between
+  // them is dropped, and the runs then merge in the rendered view. Both steps
+  // below therefore walk the input, where the covered ids are still present.
+  if (safe > 0 && safe < n) {
+    const start = ix.runStart[safe]!;
+    if (start >= 0 && messages[safe - 1]!.role === "assistant") {
+      safe = start;
+    }
+  }
+
+  // Degenerate inputs outside [0, n] have no prefix to scan; the original
+  // full-scan behavior returned them unchanged.
+  if (safe < 0 || safe > n) return safe;
+
+  // Each move lands just past a result, so the loop reaches a fixed point; the
+  // bound only guards against a malformed message list. Entries whose result
+  // ends at or before `safe` contribute ≤ safe and are absorbed by
+  // max(safe, ·), so the unfiltered prefix max agrees with the filtered scan.
+  for (let guard = 0; guard < n; guard++) {
+    const next = Math.max(safe, ix.prefixEnd[safe]!);
+    if (next === safe) break;
+    safe = next;
   }
   return safe;
 }
@@ -221,10 +261,13 @@ function rebuildMessages(
   firstUserIndex: number,
   anchors: SummaryAnchor[],
 ): CoreMessage[] {
+  const ix = anchors.length > 0 ? buildAnchorPairingIndex(messages) : null;
   const safeAnchors = anchors
     .map((anchor) => ({
       ...anchor,
-      insertAt: pairSafeAnchorIndex(messages, anchor.insertAt),
+      insertAt: ix
+        ? pairSafeAnchorIndex(messages, anchor.insertAt, ix)
+        : anchor.insertAt,
     }))
     .sort((left, right) => left.insertAt - right.insertAt);
   const result: CoreMessage[] = [];

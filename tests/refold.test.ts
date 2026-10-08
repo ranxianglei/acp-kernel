@@ -499,7 +499,7 @@ test("full anchor view: range mixing a restored block with live tail creates a f
     ranges: [{ startRef: "m00001", endRef: "m00012", summary: NEW_SUMMARY }],
     messages: fullView,
     state: marked,
-    config: config(),
+    config: config({ compress: { minCompressRange: 0 } }),
   });
 
   assert.deepEqual(result.result.errors, []);
@@ -534,7 +534,7 @@ test("full anchor view: unmarked block keeps the legacy livelock rejection verba
     ranges: [{ startRef: "m00001", endRef: "m00010", summary: NEW_SUMMARY }],
     messages: fullView,
     state,
-    config: config(),
+    config: config({ compress: { minCompressRange: 0 } }),
   });
 
   assert.match(
@@ -611,7 +611,7 @@ test("full anchor view: batch of a refoldable span plus a qualifying fresh part 
     ],
     messages: fullView,
     state: marked,
-    config: config(),
+    config: config({ compress: { minCompressRange: 0 } }),
   });
 
   assert.deepEqual(result.result.errors, []);
@@ -722,7 +722,7 @@ test("a batch whose fresh part meets minCompressRange applies the refold AND com
     ],
     messages: visible,
     state: marked,
-    config: config(),
+    config: config({ compress: { minCompressRange: 0 } }),
   });
 
   assert.deepEqual(result.result.errors, []);

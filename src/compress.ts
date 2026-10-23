@@ -2,6 +2,7 @@ import { assignRefs, highestUsedIndex, indexToRef } from "./refs.js";
 import { remintCoveredLiveIds } from "./instance-reid.js";
 import { prune, isSummaryMessageId } from "./prune.js";
 import { syncBlocks } from "./sync.js";
+import { findOffBranchBlocks } from "./branch-awareness.js";
 import { advanceSurvival, activeBlocks, blockById } from "./state.js";
 import { allocateBlockId, allocateRunId, createInitialState } from "./state.js";
 import { countMessageTokens, defaultCountTokens } from "./tokenize.js";
@@ -107,6 +108,17 @@ export interface ProcessTurnInput {
   /** Per-session CCR content store (pass result.contentStore back here).
    *  Omit for pre-CCR sessions — an empty store is used. */
   contentStore?: MessageContentStore;
+  /** Opt-in branch awareness: the ids of all session entries the host has
+   *  persisted (the full session tree, not just the current branch). When
+   *  provided, blocks whose covered messages are partly in view and partly
+   *  persisted-but-elsewhere (a rewind into a block's range, e.g. pi's
+   *  `/tree`) are masked as expanded for this turn — their in-view messages
+   *  show raw instead of being replaced by a summary that describes the
+   *  other branch. The mask is not persisted: the result state keeps the
+   *  original `expanded` flags, so returning to the full branch reactivates
+   *  the block. Omit for hosts without rewindable session trees — zero
+   *  behaviour change. */
+  persistedMessageIds?: ReadonlySet<string>;
 }
 
 export interface ApplyCompressionInput {
@@ -711,6 +723,26 @@ export function createCore(ports: Ports = {}): CompressionCore {
       state: input.state,
       effects: {},
     };
+    // Branch-aware masking (opt-in): force off-branch blocks expanded so
+    // syncBlocks keeps their in-view messages raw this turn. The mask is
+    // never persisted — the original expanded flags are restored on the
+    // result state below.
+    const offBranch = input.persistedMessageIds
+      ? findOffBranchBlocks(
+          input.messages,
+          input.state,
+          input.persistedMessageIds,
+        )
+      : [];
+    const offSet = new Set(offBranch);
+    if (offSet.size > 0) {
+      initial.state = {
+        ...input.state,
+        blocks: input.state.blocks.map((b) =>
+          offSet.has(b.blockId) && !b.expanded ? { ...b, expanded: true } : b,
+        ),
+      };
+    }
     // Conversion (assign-refs) and rendering (render-refs) are separate
     // concerns. Refs are always assigned; renderTags only controls which
     // message texts receive an <acp> tag.
@@ -721,7 +753,26 @@ export function createCore(ports: Ports = {}): CompressionCore {
     // returned state carries THIS pass's snapshot for the next one.
     const inboundIds = input.messages.map((m) => m.id);
     const result = runPipeline(nodes, initial, ctx);
-    const state = { ...result.state, lastPassIds: inboundIds };
+    let outState = result.state;
+    if (offSet.size > 0) {
+      // Restore the original expanded flags: the mask is turn-scoped, so a
+      // later turn back on the full branch reactivates the block.
+      const originalExpanded = new Map(
+        input.state.blocks
+          .filter((b) => offSet.has(b.blockId))
+          .map((b): [string, boolean | undefined] => [b.blockId, b.expanded]),
+      );
+      outState = {
+        ...outState,
+        blocks: outState.blocks.map((b) => {
+          if (!originalExpanded.has(b.blockId)) return b;
+          const { expanded: _masked, ...rest } = b;
+          const orig = originalExpanded.get(b.blockId);
+          return orig === undefined ? rest : { ...rest, expanded: orig };
+        }),
+      };
+    }
+    const state = { ...outState, lastPassIds: inboundIds };
     const ccrEffect = result.effects.ccr as CcrEffect | undefined;
     return {
       messages: result.messages,

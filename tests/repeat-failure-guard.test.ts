@@ -293,6 +293,38 @@ test("already-compressed no-op retries also count and escalate (#311)", () => {
   assert.match(r2.result.errors[1]!, /already compressed/);
 });
 
+test("unparseable-ref requests count and escalate on the zero-counted gate (#311)", () => {
+  const core = createCore();
+  const messages = [msg("u", "the task"), msg("a", "alpha"), msg("b", "beta")];
+  let state = seededState(messages);
+
+  const g1 = core.applyCompression({
+    ranges: [{ startRef: "zzz", endRef: "qqq", summary: "garbage" }],
+    messages,
+    state,
+    config: config(),
+  });
+  assert.equal(g1.result.blocksCreated, 0);
+  assert.equal(g1.result.errors.length, 1);
+  assert.match(g1.result.errors[0]!, /Invalid boundary ref/);
+  assert.doesNotMatch(g1.result.errors[0]!, /Repeat-failure guard/);
+  assert.deepEqual(g1.state.repeatFailures, { "zzz..qqq": 1 });
+
+  const g2 = core.applyCompression({
+    ranges: [{ startRef: "ZZZ", endRef: "qqq", summary: "garbage" }],
+    messages,
+    state: g1.state,
+    config: config(),
+  });
+  assert.equal(g2.result.errors.length, 2);
+  assert.match(
+    g2.result.errors[0]!,
+    /Repeat-failure guard: you have now requested this exact range set 2 time\(s\)/,
+  );
+  assert.match(g2.result.errors[1]!, /Invalid boundary ref/);
+  assert.deepEqual(g2.state.repeatFailures, { "zzz..qqq": 2 });
+});
+
 test("mergeCompressionState carries repeatFailures through load (#311)", () => {
   const withCounter = mergeCompressionState({
     ...createInitialState(),

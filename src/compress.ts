@@ -229,6 +229,55 @@ function tierActionHint(config: Config, state: CompressionState): string {
   return "";
 }
 
+/** #311: failures of the SAME normalized range set recorded before the error
+ *  output escalates. The first failure is counted silently; from the second
+ *  on the model gets an explicit do-not-retry directive — a verbatim-repeating
+ *  error is itself the strongest behavioral cue, which is what drove the 7×
+ *  self-reinforcing loop of ranxianglei/billion-context#847. */
+const REPEAT_FAILURE_ESCALATE_AFTER = 2;
+
+/** Canonical per-range key: endpoints normalized through parseBoundary so
+ *  m5 ≡ m00005, b7 ≡ b007, direction-insensitive (m9..m5 ≡ m5..m9); each
+ *  endpoint keeps its kind so mN and bN never collide. Unparseable refs fall
+ *  back to their trimmed lowercase literal (garbage input keeps its own key). */
+function normalizeRangeKey(spec: { startRef: string; endRef: string }): string {
+  const start = parseBoundary(spec.startRef);
+  const end = parseBoundary(spec.endRef);
+  if (!start || !end) {
+    return `${spec.startRef.trim().toLowerCase()}..${spec.endRef.trim().toLowerCase()}`;
+  }
+  const order =
+    start.numericId !== end.numericId
+      ? start.numericId - end.numericId
+      : start.kind.localeCompare(end.kind);
+  const [lo, hi] = order <= 0 ? [start, end] : [end, start];
+  const tag = (kind: "message" | "block", n: number): string =>
+    `${kind === "message" ? "m" : "b"}${n}`;
+  return `${tag(lo.kind, lo.numericId)}..${tag(hi.kind, hi.numericId)}`;
+}
+
+/** Whole-request key: per-range keys sorted, so batch order never matters. */
+function normalizeRangeSetKey(ranges: ApplyCompressionInput["ranges"]): string {
+  return ranges.map(normalizeRangeKey).sort().join("|");
+}
+
+function repeatFailureEscalation(count: number): string {
+  return `Repeat-failure guard: you have now requested this exact range set ${count} time(s); it deterministically fails. Do NOT re-issue it. Call acp_status first and pick from its CURRENT compressible ranges.`;
+}
+
+/** #311: record one more failed attempt of this exact range set on the
+ *  working (cloned) state; returns the new count for that key. */
+function recordRepeatFailure(
+  state: CompressionState,
+  ranges: ApplyCompressionInput["ranges"],
+): number {
+  const key = normalizeRangeSetKey(ranges);
+  const prev = state.repeatFailures ?? {};
+  const count = (prev[key] ?? 0) + 1;
+  state.repeatFailures = { ...prev, [key]: count };
+  return count;
+}
+
 type RefoldDecision =
   | { kind: "refold"; blocks: CompressionBlock[] }
   | { kind: "blocked"; reasons: string[] };
@@ -558,19 +607,24 @@ export function createCore(ports: Ports = {}): CompressionCore {
                 ? `Requested range(s) cannot be anchored (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — the refs exist in this session's ref map, but the messages they point to are no longer in the visible context and no active block covers them: the message content changed (or the message was filtered out of the view) and now carries a new ref, leaving your old refs dangling. ${diagnostics} Run acp_status, then call the compress tool again using only the refs it reports.`
                 : `Requested range(s) already compressed (e.g. ${firstConsumed!.startRef}..${firstConsumed!.endRef}) — ${coverDetail}${refoldDetail}. Nothing new to compress in that window. ${diagnostics} Continue the task, or run acp_status and target one of the CURRENT compressible ranges it reports.${tierActionHint(input.config, state)}`
               : countedRanges > 0
-                ? `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold.${refoldSuffix(okBlockedReasons)}`
+                ? `Total compressible content too small (${totalRangeChars} chars across ${countedRanges} range(s), min ${input.config.compress.minCompressRange}). Combine more messages into your range(s) to meet the threshold — or run acp_status and target one of the CURRENT compressible ranges it reports, instead of re-issuing a range that keeps coming up short.${refoldSuffix(okBlockedReasons)}`
                 : null;
         if (gateMessage === null) {
           // No range was counted (every spec failed classification, e.g.
           // unparseable refs). The per-range errors name the real cause; a
           // "too small" verdict here would mislead the model into combining
           // more messages instead of fixing its refs (#310).
+          const repeatCount = recordRepeatFailure(state, input.ranges);
+          const gateErrors =
+            repeatCount >= REPEAT_FAILURE_ESCALATE_AFTER
+              ? [repeatFailureEscalation(repeatCount), ...classificationErrors]
+              : [...classificationErrors];
           return {
-            state: input.state,
+            state,
             result: {
               blocksCreated: 0,
               tokensCompressed: 0,
-              errors: [...classificationErrors],
+              errors: gateErrors,
               warnings: [],
             },
           };
@@ -586,12 +640,21 @@ export function createCore(ports: Ports = {}): CompressionCore {
           gateMessage += ` ${reversalNotes.join(" ")}`;
         }
 
+        const repeatCount = recordRepeatFailure(state, input.ranges);
+        const gateErrors =
+          repeatCount >= REPEAT_FAILURE_ESCALATE_AFTER
+            ? [
+                repeatFailureEscalation(repeatCount),
+                gateMessage,
+                ...classificationErrors,
+              ]
+            : [gateMessage, ...classificationErrors];
         return {
-          state: input.state,
+          state,
           result: {
             blocksCreated: 0,
             tokensCompressed: 0,
-            errors: [gateMessage, ...classificationErrors],
+            errors: gateErrors,
             warnings: [],
           },
         };
@@ -678,6 +741,14 @@ export function createCore(ports: Ports = {}): CompressionCore {
       // the terminal-floor streak so the escape signal can only fire again
       // after N fresh stuck events (#300).
       state.terminalStreak = 0;
+      // Any success invalidates prior failure counts (#311): the context
+      // moved, so a previously-deterministic range set may now be viable.
+      state.repeatFailures = {};
+    } else {
+      const repeatCount = recordRepeatFailure(state, input.ranges);
+      if (repeatCount >= REPEAT_FAILURE_ESCALATE_AFTER) {
+        errors.unshift(repeatFailureEscalation(repeatCount));
+      }
     }
 
     return {
@@ -1995,6 +2066,9 @@ function cloneState(state: CompressionState): CompressionState {
     rules: (state.rules ?? []).map((rule) => ({ ...rule })),
     nextRuleId: state.nextRuleId,
     terminalStreak: state.terminalStreak,
+    repeatFailures: state.repeatFailures
+      ? { ...state.repeatFailures }
+      : undefined,
     nextBlockId: state.nextBlockId,
     nextRunId: state.nextRunId,
     hiddenOrphanRefs: state.hiddenOrphanRefs

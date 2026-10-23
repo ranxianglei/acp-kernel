@@ -428,9 +428,15 @@ test("mergeCompressionState keeps parsed values over defaults", () => {
     ...createInitialState(),
     nextBlockId: 41,
     stats: { tokensCompressed: 1234, compressionCount: 7 },
+    hiddenOrphanRefs: ["m00009"],
+    lastPassIds: ["raw-1", "raw-2"],
+    repeatFailures: { "m2..m3": 2 },
   };
   const merged = mergeCompressionState(parsed);
   assert.equal(merged.nextBlockId, 41);
+  assert.deepEqual(merged.hiddenOrphanRefs, ["m00009"]);
+  assert.deepEqual(merged.lastPassIds, ["raw-1", "raw-2"]);
+  assert.deepEqual(merged.repeatFailures, { "m2..m3": 2 });
   assert.deepEqual(merged.stats, {
     tokensCompressed: 1234,
     compressionCount: 7,

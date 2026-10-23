@@ -264,6 +264,18 @@ export interface CompressionState {
    *  threshold, viable compression appearing, truncation savings, or a
    *  successful applyCompression. Optional for pre-existing persisted states. */
   terminalStreak?: number;
+  /** Repeat-failure guard (#311): normalized range-set key → how many times
+   *  this exact request has already failed in this session. Incremented on
+   *  every applyCompression call that creates no block; once the count
+   *  reaches 2 the returned errors gain a leading "Repeat-failure guard"
+   *  directive telling the model to stop re-issuing the range and consult
+   *  acp_status instead — the verbatim-repeating error is what drove the
+   *  self-reinforcing retry loop of ranxianglei/billion-context#847. Cleared
+   *  entirely on any successful compression (the context moved). Lives in
+   *  state so plugin-mode hosts, which persist the returned state and own no
+   *  error path of their own, get the circuit breaker from the kernel.
+   *  Optional: pre-feature persisted states lack it. */
+  repeatFailures?: Record<string, number>;
   /** Persistent reminders recorded via acp_rule (see rules.ts). Optional:
    *  pre-rules persisted states lack it. */
   rules?: RuleRecord[];

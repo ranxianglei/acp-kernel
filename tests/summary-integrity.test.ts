@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createCore, detectTruncatedSummary } from "../src/compress.js";
 import { createInitialState } from "../src/state.js";
 import { assignRefs } from "../src/refs.js";
-import type { Config, CoreMessage } from "../src/types.js";
+import type { CompressionBlock, Config, CoreMessage } from "../src/types.js";
 
 function msg(id: string, text: string): CoreMessage {
   return { id, role: "user", contentType: "text", text };
@@ -27,7 +27,6 @@ function config(compress: Partial<Config["compress"]> = {}): Config {
     },
     promotionThreshold: 5,
     truncate: { threshold: 1 },
-    merge: { maxSummaryLength: 3000, minOldGenBlocks: 3 },
     compress: {
       minCompressRange: 0,
       maxSummaryLength: 0,
@@ -108,5 +107,45 @@ test("ratio floor is capped at half of maxSummaryLength", () => {
 
 test("minSummaryRatio is off by default", () => {
   const r = run("short.");
+  assert.equal(r.blocksCreated, 1);
+});
+
+test("minSummaryRatio floor counts direct messages only, not consumed blocks", () => {
+  const core = createCore({ countTokens: (text: string) => text.length });
+  const state = createInitialState();
+  const messages = Array.from({ length: 10 }, (_, i) =>
+    msg(`m${i + 1}`, "x".repeat(100)),
+  );
+  state.messageRefs = assignRefs(messages, {
+    existing: state.messageRefs,
+    nextIndex: 1,
+  }).map;
+  const covered = messages.slice(0, 5).map((m) => m.id);
+  state.blocks.push({
+    blockId: "b1",
+    runId: "r1",
+    tier: 1,
+    summary: "y".repeat(400),
+    directMessageIds: covered,
+    effectiveMessageIds: covered,
+    directBlockIds: [],
+    compressedTokens: 500,
+    createdAt: 1,
+    survivedCount: 0,
+    generation: "young",
+    active: true,
+  } satisfies CompressionBlock);
+  // 300 chars clears the direct-only floor (5 × 100 tokens × 0.5 = 250) but
+  // would fail if the consumed block's summary tokens were counted too
+  // ((500 + 400) × 0.5 = 450).
+  const r = core.applyCompression({
+    ranges: [
+      { startRef: "m00001", endRef: "m00010", summary: "y".repeat(300) },
+    ],
+    messages,
+    state,
+    config: config({ minSummaryRatio: 0.5 }),
+  }).result;
+  assert.equal(r.errors.length, 0);
   assert.equal(r.blocksCreated, 1);
 });

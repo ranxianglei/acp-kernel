@@ -358,6 +358,16 @@ export interface CompressValidationConfig {
   maxSummaryLength: number;
   /** Minimum summary length (chars). Summary shorter than this is rejected. 0 = disabled. Default 50. */
   minSummaryLength: number;
+  /** Proportional floor: minimum summary chars per original token of the
+   *  range's DIRECT messages (consumed blocks are excluded — tier-2/3
+   *  distillation is meant to be short). The floor is capped at half of
+   *  maxSummaryLength so it can never conflict with the ceiling.
+   *  Example: 0.02 → a 20K-token range needs ≥ 400 chars. 0 = disabled. Default 0. */
+  minSummaryRatio?: number;
+  /** Reject summaries that look cut off: trailing "…" / "..." or an
+   *  unclosed ``` code fence. A truncated summary is silently lossy — it
+   *  becomes the only record of the range. Default true. */
+  rejectTruncatedSummary?: boolean;
 }
 
 export interface Config {

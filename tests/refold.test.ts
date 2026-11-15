@@ -772,3 +772,60 @@ test("a block-ref range (b1..b1) over a restored hidden block refolds in place",
   assert.equal(block.restoredInline, false);
   assert.equal(result.state.nextBlockId, 2, "no new block id allocated");
 });
+
+test("refold rejects a truncated summary and leaves the block untouched (#519)", () => {
+  const core = createCore();
+  const messages = makeMessages(10);
+  const ids = messages.map((m) => m.id);
+  const before = makeState(messages, [
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: ids,
+      startRef: "m00001",
+      endRef: "m00010",
+    }),
+  ]);
+  const { state: marked } = markBlockRestoredInline(before, "b1");
+
+  for (const summary of [
+    `${NEW_SUMMARY} and then the next step was to verify comm…`,
+    `${NEW_SUMMARY}\n\`\`\`ts\nconst x = 1;`,
+  ]) {
+    const result = core.applyCompression({
+      ranges: [{ startRef: "m00001", endRef: "m00010", summary }],
+      messages: [],
+      state: marked,
+      config: config(),
+    });
+    assert.equal(result.result.blocksCreated, 0);
+    assert.match(result.result.errors.join("\n"), /looks truncated/);
+    assert.equal(result.state.blocks[0]!.summary, OLD_SUMMARY);
+    assert.equal(result.state.blocks[0]!.restoredInline, true);
+  }
+});
+
+test("refold accepts a truncated-looking summary when rejectTruncatedSummary is false", () => {
+  const core = createCore();
+  const messages = makeMessages(10);
+  const before = makeState(messages, [
+    makeBlock({
+      blockId: "b1",
+      effectiveMessageIds: messages.map((m) => m.id),
+      startRef: "m00001",
+      endRef: "m00010",
+    }),
+  ]);
+  const { state: marked } = markBlockRestoredInline(before, "b1");
+  const summary = `${NEW_SUMMARY} to be continued...`;
+  const base = config();
+  const result = core.applyCompression({
+    ranges: [{ startRef: "m00001", endRef: "m00010", summary }],
+    messages: [],
+    state: marked,
+    config: config({
+      compress: { ...base.compress, rejectTruncatedSummary: false },
+    }),
+  });
+  assert.deepEqual(result.result.errors, []);
+  assert.equal(result.state.blocks[0]!.summary, summary);
+});

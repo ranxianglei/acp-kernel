@@ -312,7 +312,8 @@ function evaluateRefold(
 
 /** In-place refold (#398): same block id/coverage/tier, new summary (+topic),
  * fresh runId, restoredInline flag cleared. Summary passes the same length
- * checks as a fresh compression. */
+ * and truncation checks as a fresh compression (the proportional floor does
+ * not apply: a refold has no new direct messages). */
 function applyRefolds(input: {
   spec: ApplyCompressionInput["ranges"][number];
   state: CompressionState;
@@ -321,6 +322,7 @@ function applyRefolds(input: {
   blockIds: string[];
 }): void {
   validateSummaryLength(input.spec, input.config.compress);
+  validateSummaryNotTruncated(input.spec, input.config.compress);
   const targets = new Set(input.blockIds);
   input.state.blocks = input.state.blocks.map((block) =>
     targets.has(block.blockId)
@@ -1556,20 +1558,28 @@ export function detectTruncatedSummary(summary: string): string | null {
   return null;
 }
 
+/** Shared by fresh compression and in-place refold so a truncated summary
+ *  cannot slip in through either path (#519). */
+function validateSummaryNotTruncated(
+  spec: { summary: string },
+  cfg: Config["compress"],
+): void {
+  if (cfg.rejectTruncatedSummary === false) return;
+  const why = detectTruncatedSummary(spec.summary?.trim() ?? "");
+  if (why) {
+    throw new Error(
+      `Summary looks truncated (${why}). It would become the only record of this range — finish the last sentence/fence and resubmit.`,
+    );
+  }
+}
+
 function validateSummaryProportion(
   spec: { summary: string; summaryMaxChars?: number },
   cfg: Config["compress"],
   directTokens: number,
 ): void {
+  validateSummaryNotTruncated(spec, cfg);
   const summary = spec.summary?.trim() ?? "";
-  if (cfg.rejectTruncatedSummary !== false) {
-    const why = detectTruncatedSummary(summary);
-    if (why) {
-      throw new Error(
-        `Summary looks truncated (${why}). It would become the only record of this range — finish the last sentence/fence and resubmit.`,
-      );
-    }
-  }
   const ratio = cfg.minSummaryRatio ?? 0;
   if (ratio > 0 && directTokens > 0) {
     const ceiling = spec.summaryMaxChars ?? cfg.maxSummaryLength;

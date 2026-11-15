@@ -1417,7 +1417,11 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
   }
   // Direct-message tokens only (consumed blocks not yet added): the
   // proportional floor must not punish tier-2/3 distillation.
-  validateSummaryProportion(input.spec, input.config.compress, compressedTokens);
+  validateSummaryProportion(
+    input.spec,
+    input.config.compress,
+    compressedTokens,
+  );
   for (const consumedId of consumedBlockIds) {
     const consumed = blockById(input.state, consumedId);
     if (consumed) {

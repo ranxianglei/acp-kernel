@@ -1415,6 +1415,9 @@ function applySingleRange(input: SingleRangeInput): SingleRangeOutcome {
       ? countMessageTokens(message, input.countTokens)
       : 0;
   }
+  // Direct-message tokens only (consumed blocks not yet added): the
+  // proportional floor must not punish tier-2/3 distillation.
+  validateSummaryProportion(input.spec, input.config.compress, compressedTokens);
   for (const consumedId of consumedBlockIds) {
     const consumed = blockById(input.state, consumedId);
     if (consumed) {
@@ -1536,6 +1539,43 @@ function validateSummaryLength(
     throw new Error(
       `Summary too long (${summary.length} chars, max ${effectiveMax}). Strip noise — keep critical paths, decisions, errors, and code references. Or pass summaryMaxChars to increase the limit — don't lose critical info just to fit.`,
     );
+  }
+}
+
+/** Heuristic truncation detector. Deliberately narrow (low false-positive):
+ *  only an ellipsis tail or an odd number of ``` fences counts. */
+export function detectTruncatedSummary(summary: string): string | null {
+  const s = summary.trimEnd();
+  if (/(?:…|\.\.\.)$/.test(s)) return "ends with an ellipsis";
+  const fences = s.match(/^\s*```/gm)?.length ?? 0;
+  if (fences % 2 === 1) return "has an unclosed ``` code fence";
+  return null;
+}
+
+function validateSummaryProportion(
+  spec: { summary: string; summaryMaxChars?: number },
+  cfg: Config["compress"],
+  directTokens: number,
+): void {
+  const summary = spec.summary?.trim() ?? "";
+  if (cfg.rejectTruncatedSummary !== false) {
+    const why = detectTruncatedSummary(summary);
+    if (why) {
+      throw new Error(
+        `Summary looks truncated (${why}). It would become the only record of this range — finish the last sentence/fence and resubmit.`,
+      );
+    }
+  }
+  const ratio = cfg.minSummaryRatio ?? 0;
+  if (ratio > 0 && directTokens > 0) {
+    const ceiling = spec.summaryMaxChars ?? cfg.maxSummaryLength;
+    let floor = Math.ceil(directTokens * ratio);
+    if (ceiling > 0) floor = Math.min(floor, Math.floor(ceiling / 2));
+    if (summary.length < floor) {
+      throw new Error(
+        `Summary too short for its range (${summary.length} chars for ~${directTokens} tokens of direct messages; min ${floor} at minSummaryRatio ${ratio}). Keep paths, decisions, exact values and open objectives.`,
+      );
+    }
   }
 }
 
